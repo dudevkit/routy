@@ -1,0 +1,4 @@
+{
+  "endpoint": "/v1/chat/completions",
+  "headers": {}
+}

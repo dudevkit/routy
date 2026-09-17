@@ -1,0 +1,23 @@
+{
+  "endpoint": "/v1/chat/completions",
+  "headers": {
+    "anthropic-version": "2023-06-01"
+  },
+  "body": {
+    "model": "bench/test-model",
+    "stream": true,
+    "max_tokens": 60,
+    "system": "You are a coding assistant.",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Say hello."
+          }
+        ]
+      }
+    ]
+  }
+}

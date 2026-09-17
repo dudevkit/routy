@@ -9,3 +9,4 @@ node_modules/
 /scratch/bench-data/
 /scratch/golden-data/
 tests/golden/.tmp-data/
+/tests/golden/.tmp-data/

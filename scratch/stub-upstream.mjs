@@ -15,11 +15,10 @@ http.createServer((req, res) => {
   req.on("end", () => {
     connections++;
     res.writeHead(200, {
-      "content-type": "text/event-stream",
       "cache-control": "no-cache",
       connection: "keep-alive",
     });
-    const id = "chatcmpl-stub-" + connections;
+    const id = "chatcmpl-stub-fixture";
     const chunk = (delta, finish) =>
       `data: ${JSON.stringify({ id, object: "chat.completion.chunk", created: 1, model: "test-model", choices: [{ index: 0, delta, finish_reason: finish ?? null }] })}\n\n`;
     res.write(chunk({ role: "assistant" }));

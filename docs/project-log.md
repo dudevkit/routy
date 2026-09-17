@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** P0 harness ~done (fixtures+tests+baseline ✅; RTK-on bench + L2 capture pending).
+- **Phase:** **P0 COMPLETE** (gate passed: golden tests green + baseline recorded). Next: P1 — `re-e-core/` skeleton.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -73,7 +73,13 @@ axolotl/
 - 2026-09-17 (P0 bench): baseline measured — production build, isolated instance
   (DATA_DIR=scratch/bench-data), stub upstream, 40 reqs/stream: direct TTFT p50 ~0-1ms;
   routed TTFT p50/p90/p99 = 16ms; total p50 662 vs 657ms; 40/40 ok. Results:
-  `scratch/bench-results.json`. RTK-on bench variant + L2 client-facing capture: pending.
+  `scratch/bench-results.json`.
+- 2026-09-17 (P0 done): RTK bench variant — rtk on vs off on 8KB tool_result: TTFT p50
+  16→15ms, total identical → RTK processing cost <1ms (free latency-wise). L2 end-to-end
+  captures: 5 client-facing fixtures through full pipeline (openai/claude × stream/nonstream
+  × tools), verified deterministic across runs after normalization
+  (`tests/golden/fixtures-l2/`, capture: `scratch/capture-l2.mjs`). Stub id made
+  deterministic; meta timing dropped from fixtures. **P0 gate passed.**
 
 ## Knowledge Gained
 
