@@ -1,32 +1,57 @@
 import type { ReactNode } from "react";
 import { cn } from "../../utils/cn";
 
-type Variant = "success" | "warning" | "error" | "neutral";
+const variants = {
+  default: "bg-surface-2 text-text-muted",
+  primary: "bg-brand-500/10 text-brand-600 dark:text-brand-300",
+  success: "bg-green-500/10 text-green-600 dark:text-green-400",
+  warning: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400",
+  error: "bg-red-500/10 text-red-600 dark:text-red-400",
+  info: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+};
 
-const variantClasses: Record<Variant, string> = {
-  success: "bg-green-100 text-green-800",
-  warning: "bg-amber-100 text-amber-900",
-  error: "bg-red-100 text-red-800",
-  neutral: "bg-gray-alpha-200 text-gray-700",
+const sizes = {
+  sm: "px-2 py-0.5 text-[10px]",
+  md: "px-2.5 py-1 text-xs",
+  lg: "px-3 py-1.5 text-sm",
+};
+
+const dotColors: Record<string, string> = {
+  success: "bg-green-500",
+  warning: "bg-yellow-500",
+  error: "bg-red-500",
+  info: "bg-blue-500",
+  primary: "bg-brand-500",
+  default: "bg-gray-500",
 };
 
 export function Badge({
-  variant = "neutral",
+  variant = "default",
+  size = "md",
+  dot = false,
+  icon,
   className,
   children,
 }: {
-  variant?: Variant;
+  variant?: keyof typeof variants;
+  size?: keyof typeof sizes;
+  dot?: boolean;
+  /** Material Symbol ligature name */
+  icon?: string;
   className?: string;
-  children: ReactNode;
+  children?: ReactNode;
 }) {
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center rounded-full px-2 py-px font-mono text-11",
-        variantClasses[variant],
+        "inline-flex items-center gap-1.5 rounded-full font-semibold",
+        variants[variant],
+        sizes[size],
         className,
       )}
     >
+      {dot && <span className={cn("size-1.5 rounded-full", dotColors[variant])} />}
+      {icon && <span className="material-symbols-outlined text-[14px]">{icon}</span>}
       {children}
     </span>
   );

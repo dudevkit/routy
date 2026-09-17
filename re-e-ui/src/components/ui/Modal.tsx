@@ -1,51 +1,116 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { X } from "lucide-react";
+import { cn } from "../../utils/cn";
 
-interface ModalProps {
-  open: boolean;
+const sizes = {
+  sm: "max-w-sm",
+  md: "max-w-md",
+  lg: "max-w-lg",
+  xl: "max-w-xl",
+  full: "max-w-4xl",
+};
+
+export function Modal({
+  isOpen,
+  onClose,
+  title,
+  children,
+  footer,
+  size = "md",
+  closeOnOverlay = true,
+  showTrafficLights = true,
+  className,
+}: {
+  isOpen: boolean;
   onClose: () => void;
-  title: string;
+  title?: string;
   children: ReactNode;
   footer?: ReactNode;
-  width?: number;
-}
-
-export function Modal({ open, onClose, title, children, footer, width = 440 }: ModalProps) {
+  size?: keyof typeof sizes;
+  closeOnOverlay?: boolean;
+  showTrafficLights?: boolean;
+  className?: string;
+}) {
   useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+    if (isOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [isOpen]);
 
-  if (!open) return null;
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isOpen) onClose();
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="re-overlay-in absolute inset-0 bg-black/60" onClick={onClose} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Overlay */}
+      <div
+        className="absolute inset-0 bg-black/50 backdrop-blur-[2px] fade-in"
+        onClick={closeOnOverlay ? onClose : undefined}
+      />
+
+      {/* Modal content */}
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={title}
-        style={{ width }}
-        className="re-modal-in relative rounded-lg border border-gray-alpha-400 bg-background-200 shadow-[0_0_0_1px_rgba(255,255,255,0.06),0_24px_48px_rgba(0,0,0,0.6)]"
+        className={cn(
+          "relative w-full bg-surface",
+          "border border-border-subtle",
+          "rounded-[14px] shadow-[var(--shadow-elev)]",
+          "fade-in",
+          sizes[size],
+          className,
+        )}
       >
-        <div className="flex items-center justify-between border-b border-gray-alpha-200 px-4 py-3">
-          <h2 className="text-14 font-semibold">{title}</h2>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="cursor-pointer rounded-sm p-1 text-gray-600 transition-colors duration-150 hover:text-gray-1000 focus-ring"
-          >
-            <X size={14} />
-          </button>
-        </div>
-        <div className="px-4 py-4">{children}</div>
+        {/* Header */}
+        {(title || showTrafficLights) && (
+          <div className="flex items-center justify-between p-2 border-b border-border-subtle">
+            <div className="flex items-center">
+              {/* Traffic lights — desktop only */}
+              {showTrafficLights && (
+                <div className="hidden md:flex items-center gap-2 mr-4 ml-2">
+                  <button
+                    onClick={onClose}
+                    aria-label="Close"
+                    title="Close"
+                    className="w-4 h-4 rounded-full bg-[#FF5F56] hover:brightness-90 transition-all cursor-pointer flex items-center justify-center group/dot"
+                  >
+                    <span className="text-[9px] font-bold text-white opacity-0 group-hover/dot:opacity-100 transition-opacity leading-none">✕</span>
+                  </button>
+                  <div className="w-4 h-4 rounded-full bg-[#3a3a3a]/20 dark:bg-white/15 cursor-not-allowed" />
+                  <div className="w-4 h-4 rounded-full bg-[#3a3a3a]/20 dark:bg-white/15 cursor-not-allowed" />
+                </div>
+              )}
+              {title && <h2 className="text-lg font-semibold text-text-main">{title}</h2>}
+            </div>
+            {/* X button — mobile only */}
+            <button
+              onClick={onClose}
+              aria-label="Close"
+              className="md:hidden p-1.5 rounded-[10px] text-text-muted hover:bg-surface-2 hover:text-text-main transition-colors"
+            >
+              <span className="material-symbols-outlined text-[20px]">close</span>
+            </button>
+          </div>
+        )}
+
+        {/* Body */}
+        <div className="p-6 max-h-[calc(85vh-100px)] overflow-y-auto custom-scrollbar">{children}</div>
+
+        {/* Footer */}
         {footer && (
-          <div className="flex items-center justify-end gap-2 border-t border-gray-alpha-200 px-4 py-3">
+          <div className="flex items-center justify-end gap-3 p-6 border-t border-border-subtle">
             {footer}
           </div>
         )}

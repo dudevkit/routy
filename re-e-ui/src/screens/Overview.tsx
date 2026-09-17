@@ -1,6 +1,4 @@
 import { useState } from "react";
-import type { ReactNode } from "react";
-import { Check, Copy, Plus, Trash2 } from "lucide-react";
 import {
   useAddNode,
   useFailures,
@@ -16,23 +14,21 @@ import type { NodeStatus, TestResult, UpstreamNode } from "../api/types";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
-import { EmptyState } from "../components/ui/EmptyState";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { StatusDot } from "../components/ui/StatusDot";
 import { useToast } from "../components/ui/Toast";
-import { cn } from "../utils/cn";
 
-const statusBadge: Record<NodeStatus, { variant: "success" | "warning" | "error" | "neutral"; label: string }> = {
+const statusBadge: Record<NodeStatus, { variant: "success" | "warning" | "error" | "default"; label: string }> = {
   healthy: { variant: "success", label: "healthy" },
   degraded: { variant: "warning", label: "degraded" },
   down: { variant: "error", label: "breaker open" },
-  disabled: { variant: "neutral", label: "disabled" },
+  disabled: { variant: "default", label: "disabled" },
 };
 
-const dotTone: Record<NodeStatus, "green" | "amber" | "red" | "gray"> = {
+const dotTone: Record<NodeStatus, "green" | "yellow" | "red" | "gray"> = {
   healthy: "green",
-  degraded: "amber",
+  degraded: "yellow",
   down: "red",
   disabled: "gray",
 };
@@ -53,11 +49,11 @@ function CopyChip({ value }: { value: string }) {
         setTimeout(() => setCopied(false), 1500);
       }}
       title={`Copy ${value}`}
-      className={cn(
-        "inline-flex h-6 max-w-[280px] cursor-pointer items-center gap-1.5 rounded-sm bg-gray-alpha-200 px-2 font-mono text-11 text-gray-900 transition-colors duration-150 hover:bg-gray-alpha-300 focus-ring",
-      )}
+      className="inline-flex h-7 max-w-[280px] items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 text-xs font-mono text-text-main transition-colors hover:border-brand-500/40"
     >
-      {copied ? <Check size={11} className="shrink-0 text-green-700" /> : <Copy size={11} className="shrink-0 text-gray-600" />}
+      <span className="material-symbols-outlined shrink-0 text-[14px] text-text-muted">
+        {copied ? "check" : "content_copy"}
+      </span>
       <span className="truncate">{value}</span>
     </button>
   );
@@ -65,10 +61,12 @@ function CopyChip({ value }: { value: string }) {
 
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <Card className="flex flex-col gap-1 p-4">
-      <span className="text-12 text-gray-600">{label}</span>
-      <span className="font-mono text-20 tabular">{value}</span>
-      {sub && <span className="text-11 text-gray-600">{sub}</span>}
+    <Card padding="sm">
+      <div className="flex flex-col gap-1">
+        <span className="text-xs text-text-muted">{label}</span>
+        <span className="font-mono text-xl font-semibold tabular">{value}</span>
+        {sub && <span className="text-[10px] text-text-subtle">{sub}</span>}
+      </div>
     </Card>
   );
 }
@@ -92,21 +90,23 @@ function NodeCard({ node }: { node: UpstreamNode }) {
     });
 
   return (
-    <Card className="flex flex-col gap-2.5 p-4">
+    <Card padding="sm" className="flex flex-col gap-2.5">
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <StatusDot tone={dotTone[node.status]} />
-          <span className="truncate text-14 font-medium">{node.name}</span>
-          <Badge variant={badge.variant}>{badge.label}</Badge>
+          <span className="truncate text-sm font-semibold text-text-main">{node.name}</span>
+          <Badge variant={badge.variant} dot size="sm">
+            {badge.label}
+          </Badge>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <Button size="sm" variant="secondary" onClick={onTest} disabled={testNode.isPending}>
-            {testNode.isPending ? "Testing…" : "Test"}
+          <Button size="sm" variant="secondary" onClick={onTest} loading={testNode.isPending}>
+            {testNode.isPending ? "Testing" : "Test"}
           </Button>
           {node.status === "down" && (
             <Button
               size="sm"
-              variant="tertiary"
+              variant="ghost"
               onClick={() =>
                 resetBreaker.mutate(node.id, {
                   onSuccess: () => toast("Breaker reset"),
@@ -119,41 +119,38 @@ function NodeCard({ node }: { node: UpstreamNode }) {
           )}
           <Button
             size="sm"
-            variant="tertiary"
+            variant="ghost"
             aria-label={`Remove ${node.name}`}
-            className="hover:bg-red-100 hover:text-red-700"
+            className="hover:bg-red-500/10 hover:text-red-500"
+            icon="delete"
             onClick={() => setConfirmRemove(true)}
-          >
-            <Trash2 size={13} />
-          </Button>
+          />
         </div>
       </div>
 
-      <div className="truncate font-mono text-12 text-gray-600">{node.baseUrl}</div>
+      <div className="truncate font-mono text-xs text-text-muted">{node.baseUrl}</div>
 
-      <div className="flex items-center gap-4 text-12 text-gray-600">
-        <span className="font-mono tabular">
-          {node.latencyMs == null ? "—" : `${node.latencyMs}ms`}
-        </span>
+      <div className="flex items-center gap-4 text-xs text-text-muted">
+        <span className="font-mono tabular">{node.latencyMs == null ? "—" : `${node.latencyMs}ms`}</span>
         <span className="tabular">{node.modelCount} models</span>
         <span className="font-mono">{node.prefix ? `prefix ${node.prefix}` : "no prefix"}</span>
         <span className="ml-auto font-mono">{node.keyMasked}</span>
       </div>
 
-      {node.lastError && <p className="font-mono text-12 text-red-700">{node.lastError}</p>}
+      {node.lastError && <p className="font-mono text-xs text-red-500">{node.lastError}</p>}
 
       <Modal
-        open={confirmRemove}
+        isOpen={confirmRemove}
         onClose={() => setConfirmRemove(false)}
         title={`Remove ${node.name}?`}
-        width={380}
+        size="sm"
         footer={
           <>
-            <Button variant="tertiary" onClick={() => setConfirmRemove(false)}>
+            <Button variant="secondary" onClick={() => setConfirmRemove(false)}>
               Cancel
             </Button>
             <Button
-              variant="error"
+              variant="danger"
               onClick={() => {
                 removeNode.mutate(node.id, {
                   onSuccess: () => toast("Upstream removed"),
@@ -166,7 +163,7 @@ function NodeCard({ node }: { node: UpstreamNode }) {
           </>
         }
       >
-        <p className="text-13 text-gray-700">
+        <p className="text-sm text-text-muted">
           Requests routing to this node will fail until a replacement is added.
         </p>
       </Modal>
@@ -174,21 +171,11 @@ function NodeCard({ node }: { node: UpstreamNode }) {
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
-  return (
-    <label className="flex flex-col gap-1">
-      <span className="text-12 text-gray-700">{label}</span>
-      {children}
-      {hint && <span className="text-11 text-gray-600">{hint}</span>}
-    </label>
-  );
-}
-
 type TestState = null | "testing" | TestResult;
 
 const emptyForm = { name: "", baseUrl: "", apiKey: "", prefix: "" };
 
-function AddUpstreamModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function AddUpstreamModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const toast = useToast();
   const [form, setForm] = useState(emptyForm);
   const [test, setTest] = useState<TestState>(null);
@@ -217,17 +204,19 @@ function AddUpstreamModal({ open, onClose }: { open: boolean; onClose: () => voi
 
   return (
     <Modal
-      open={open}
+      isOpen={isOpen}
       onClose={close}
       title="Add Upstream"
       footer={
         <>
-          <Button variant="tertiary" onClick={close}>
+          <Button variant="secondary" onClick={close}>
             Cancel
           </Button>
           <Button
             variant="primary"
+            icon="add"
             disabled={!canSave || addNode.isPending}
+            loading={addNode.isPending}
             onClick={() =>
               addNode.mutate(form, {
                 onSuccess: () => {
@@ -237,66 +226,64 @@ function AddUpstreamModal({ open, onClose }: { open: boolean; onClose: () => voi
               })
             }
           >
-            {addNode.isPending ? "Adding…" : "Add Upstream"}
+            {addNode.isPending ? "Adding" : "Add Upstream"}
           </Button>
         </>
       }
     >
-      <div className="flex flex-col gap-3">
-        <Field label="Name">
-          <Input
-            autoFocus
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-            placeholder="My upstream"
-          />
-        </Field>
-        <Field label="Base URL">
-          <Input
-            mono
-            value={form.baseUrl}
-            onChange={(e) => {
-              setForm({ ...form, baseUrl: e.target.value });
-              setTest(null);
-            }}
-            placeholder="https://api.example.com/v1"
-          />
-        </Field>
-        <Field label="API Key">
-          <Input
-            mono
-            type="password"
-            value={form.apiKey}
-            onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
-            placeholder="sk-…"
-          />
-        </Field>
-        <Field label="Model Prefix" hint="Optional · models with this prefix route to the node">
-          <Input
-            mono
-            value={form.prefix}
-            onChange={(e) => setForm({ ...form, prefix: e.target.value })}
-            placeholder="or/"
-          />
-        </Field>
+      <div className="flex flex-col gap-4">
+        <Input
+          label="Name"
+          autoFocus
+          value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })}
+          placeholder="My upstream"
+        />
+        <Input
+          label="Base URL"
+          mono
+          value={form.baseUrl}
+          onChange={(e) => {
+            setForm({ ...form, baseUrl: e.target.value });
+            setTest(null);
+          }}
+          placeholder="https://api.example.com/v1"
+        />
+        <Input
+          label="API Key"
+          mono
+          type="password"
+          value={form.apiKey}
+          onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
+          placeholder="sk-…"
+        />
+        <Input
+          label="Model Prefix"
+          mono
+          hint="Optional · models with this prefix route to the node"
+          value={form.prefix}
+          onChange={(e) => setForm({ ...form, prefix: e.target.value })}
+          placeholder="or/"
+        />
 
-        <div className="flex min-h-7 items-center gap-3 pt-1">
+        <div className="flex min-h-7 items-center gap-3">
           <Button
-            variant="secondary"
+            variant="outline"
             size="sm"
+            icon="network_check"
             disabled={!urlLooksValid || test === "testing"}
             onClick={runTest}
           >
-            {test === "testing" ? "Testing…" : "Test Connection"}
+            {test === "testing" ? "Testing" : "Test Connection"}
           </Button>
           {test && test !== "testing" &&
             (test.ok ? (
-              <span className="flex items-center gap-1.5 font-mono text-12 text-green-700 tabular">
-                <Check size={13} />
+              <span className="flex items-center gap-1.5 font-mono text-xs text-green-600 dark:text-green-400 tabular">
+                <span className="material-symbols-outlined text-[14px]">check_circle</span>
                 200 · {test.latencyMs}ms · {test.modelCount} models
               </span>
             ) : (
-              <span className="text-12 text-red-700">{test.error}</span>
+              <span className="text-xs text-red-500">{test.error}</span>
             ))}
         </div>
       </div>
@@ -312,31 +299,28 @@ export function Overview() {
   const [addOpen, setAddOpen] = useState(false);
 
   const addButton = (
-    <Button variant="primary" icon={<Plus size={15} />} onClick={() => setAddOpen(true)}>
+    <Button variant="primary" icon="add" onClick={() => setAddOpen(true)}>
       Add Upstream
     </Button>
   );
 
   return (
-    <div className="mx-auto flex max-w-[1200px] flex-col gap-6 px-6 py-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-24 font-semibold">Overview</h1>
-        {addButton}
-      </header>
-
+    <div className="flex flex-col gap-6 px-1 sm:px-0">
+      {/* Endpoint strip */}
       {gateway.data && (
-        <Card className="flex items-center gap-3 p-3 text-12">
+        <Card padding="sm" className="flex items-center gap-3">
           <StatusDot tone={gateway.data.online ? "green" : "red"} pulse={gateway.data.online} />
-          <span className="text-gray-700">Proxy endpoint</span>
+          <span className="text-xs text-text-muted">Proxy endpoint</span>
           <CopyChip value={gateway.data.endpoint} />
-          <span className="text-gray-700">API key</span>
+          <span className="text-xs text-text-muted">API key</span>
           <CopyChip value={gateway.data.keyMasked} />
-          <span className="ml-auto font-mono text-11 text-gray-600">v{gateway.data.version}</span>
+          <span className="ml-auto font-mono text-[10px] text-text-subtle">v{gateway.data.version}</span>
         </Card>
       )}
 
+      {/* Stats */}
       {stats.data && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 sm:gap-4">
           <StatCard label="Requests · today" value={stats.data.requestsToday.toLocaleString()} />
           <StatCard label="Tokens · 7d" value={fmtTokens(stats.data.tokens7d)} />
           <StatCard label="Cost · 7d" value={`$${stats.data.costUsd7d.toFixed(2)}`} />
@@ -345,50 +329,56 @@ export function Overview() {
         </div>
       )}
 
-      <section className="flex flex-col gap-3">
+      {/* Upstreams */}
+      <section className="flex flex-col gap-3 sm:gap-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-14 font-semibold">Upstreams</h2>
-          <span className="text-12 text-gray-600 tabular">{nodes.data?.length ?? 0} nodes</span>
+          <h2 className="text-sm font-semibold text-text-main">Upstreams</h2>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-text-muted tabular">{nodes.data?.length ?? 0} nodes</span>
+            {addButton}
+          </div>
         </div>
 
         {nodes.data && nodes.data.length === 0 ? (
-          <EmptyState
-            message="No upstreams yet. Add one to start routing."
-            action={addButton}
-          />
+          <Card padding="lg" className="flex flex-col items-center justify-center gap-3 text-center">
+            <span className="material-symbols-outlined text-[40px] text-text-subtle">dns</span>
+            <p className="text-sm text-text-muted">No upstreams yet. Add one to start routing.</p>
+            {addButton}
+          </Card>
         ) : (
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 sm:gap-4">
             {nodes.data?.map((n) => <NodeCard key={n.id} node={n} />)}
           </div>
         )}
       </section>
 
+      {/* Recent failures */}
       {failures.data && failures.data.length > 0 && (
-        <section className="flex flex-col gap-3">
-          <h2 className="text-14 font-semibold">Recent Failures</h2>
-          <Card className="overflow-hidden p-0">
+        <section className="flex flex-col gap-3 sm:gap-4">
+          <h2 className="text-sm font-semibold text-text-main">Recent Failures</h2>
+          <Card padding="none" className="overflow-hidden">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-gray-alpha-300 bg-background-300 text-left">
-                  <th className="px-4 py-2 text-12 font-medium text-gray-600">Time</th>
-                  <th className="px-4 py-2 text-12 font-medium text-gray-600">Request</th>
-                  <th className="px-4 py-2 text-12 font-medium text-gray-600">Node</th>
-                  <th className="px-4 py-2 text-12 font-medium text-gray-600">Error</th>
-                  <th className="px-4 py-2 text-12 font-medium text-gray-600">Message</th>
+                <tr className="bg-bg-alt text-left">
+                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Time</th>
+                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Request</th>
+                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Node</th>
+                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Error</th>
+                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Message</th>
                 </tr>
               </thead>
-              <tbody className="font-mono text-12 tabular">
+              <tbody className="font-mono text-xs tabular">
                 {failures.data.map((f) => (
-                  <tr key={f.id} className="border-b border-gray-alpha-200 last:border-0">
-                    <td className="px-4 py-2 text-gray-600">{f.at}</td>
-                    <td className="px-4 py-2 text-gray-800">{f.requestId}</td>
-                    <td className="px-4 py-2 text-gray-800">{f.nodeName}</td>
+                  <tr key={f.id} className="border-t border-border-subtle">
+                    <td className="px-4 py-2 text-text-muted">{f.at}</td>
+                    <td className="px-4 py-2 text-text-main">{f.requestId}</td>
+                    <td className="px-4 py-2 text-text-main">{f.nodeName}</td>
                     <td className="px-4 py-2">
-                      <Badge variant={f.errorCode === "rate_limited" ? "warning" : "error"}>
+                      <Badge variant={f.errorCode === "rate_limited" ? "warning" : "error"} size="sm">
                         {f.errorCode}
                       </Badge>
                     </td>
-                    <td className="px-4 py-2 text-gray-700">{f.message}</td>
+                    <td className="px-4 py-2 text-text-muted">{f.message}</td>
                   </tr>
                 ))}
               </tbody>
@@ -397,7 +387,7 @@ export function Overview() {
         </section>
       )}
 
-      <AddUpstreamModal open={addOpen} onClose={() => setAddOpen(false)} />
+      <AddUpstreamModal isOpen={addOpen} onClose={() => setAddOpen(false)} />
     </div>
   );
 }

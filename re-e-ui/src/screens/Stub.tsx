@@ -5,14 +5,11 @@ export function Stub() {
   const { pathname } = useLocation();
   const label = pathname.replace(/^\//, "").replace(/-/g, " ") || "Overview";
   return (
-    <div className="mx-auto flex max-w-[1200px] flex-col gap-6 px-6 py-6">
-      <h1 className="text-24 font-semibold capitalize">{label}</h1>
-      <Card className="flex flex-col items-center gap-2 px-6 py-16 text-center">
-        <p className="text-14 text-gray-700">This screen isn't part of the preview slice yet.</p>
-        <p className="text-13 text-gray-600">
-          Overview covers the core flow — add an upstream and watch health.
-        </p>
-      </Card>
-    </div>
+    <Card className="flex flex-col items-center justify-center gap-3 py-20 text-center">
+      <span className="material-symbols-outlined text-[40px] text-text-subtle">construction</span>
+      <p className="text-sm text-text-muted">This screen isn't part of the preview slice yet.</p>
+      <p className="text-xs text-text-muted">Overview covers the core flow — add an upstream and watch health.</p>
+      <span className="text-[10px] uppercase tracking-wider text-text-subtle">{label}</span>
+    </Card>
   );
 }

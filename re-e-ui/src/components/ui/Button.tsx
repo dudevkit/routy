@@ -1,36 +1,63 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes } from "react";
 import { cn } from "../../utils/cn";
 
-type Variant = "primary" | "secondary" | "tertiary" | "error";
-
-const variantClasses: Record<Variant, string> = {
-  primary: "bg-gray-1000 text-background-100 hover:bg-gray-900 active:bg-gray-800",
-  secondary:
-    "border border-gray-alpha-400 bg-background-200 text-gray-1000 hover:border-gray-alpha-500 hover:bg-background-300 active:border-gray-alpha-600",
-  tertiary: "bg-transparent text-gray-800 hover:bg-gray-alpha-200 active:bg-gray-alpha-300",
-  error: "bg-red-600 text-white hover:bg-red-500 active:bg-red-600",
+const variants = {
+  primary: "bg-brand-500 hover:bg-brand-600 text-white shadow-sm disabled:bg-surface-3 disabled:text-text-muted",
+  secondary: "bg-surface-2 hover:bg-surface-3 text-text-main border border-border disabled:opacity-50",
+  outline: "border border-border text-text-main hover:bg-surface-2 hover:border-brand-500/40",
+  ghost: "text-text-muted hover:bg-surface-2 hover:text-text-main",
+  danger: "bg-red-500 hover:bg-red-600 text-white shadow-sm disabled:bg-surface-3 disabled:text-text-muted",
+  success: "bg-green-600 hover:bg-green-700 text-white shadow-sm disabled:bg-surface-3 disabled:text-text-muted",
 };
 
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: Variant;
-  size?: "sm";
-  icon?: ReactNode;
+const sizes = {
+  sm: "h-7 px-3 text-xs rounded-[8px]",
+  md: "h-9 px-4 text-sm rounded-[10px]",
+  lg: "h-11 px-6 text-sm rounded-[10px]",
+};
+
+export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: keyof typeof variants;
+  size?: keyof typeof sizes;
+  /** Material Symbol ligature name */
+  icon?: string;
+  iconRight?: string;
+  loading?: boolean;
+  fullWidth?: boolean;
 }
 
-export function Button({ variant = "secondary", size, icon, className, children, ...rest }: ButtonProps) {
+export function Button({
+  variant = "primary",
+  size = "md",
+  icon,
+  iconRight,
+  loading = false,
+  fullWidth = false,
+  className,
+  children,
+  disabled,
+  ...rest
+}: ButtonProps) {
   return (
     <button
       className={cn(
-        "inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-sm font-medium transition-colors duration-150 focus-ring",
-        "disabled:pointer-events-none disabled:opacity-40",
-        size === "sm" ? "h-[26px] px-2 text-13" : "h-8 px-2.5 text-14",
-        variantClasses[variant],
+        "inline-flex items-center justify-center gap-2 font-semibold transition-all duration-150 ease-out cursor-pointer",
+        "active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100",
+        variants[variant],
+        sizes[size],
+        fullWidth && "w-full",
         className,
       )}
+      disabled={disabled || loading}
       {...rest}
     >
-      {icon}
+      {loading ? (
+        <span className="material-symbols-outlined animate-spin text-[18px]">progress_activity</span>
+      ) : icon ? (
+        <span className="material-symbols-outlined text-[18px]">{icon}</span>
+      ) : null}
       {children}
+      {iconRight && !loading && <span className="material-symbols-outlined text-[18px]">{iconRight}</span>}
     </button>
   );
 }

@@ -105,3 +105,25 @@ Implementation note: Tailwind v4 via `@tailwindcss/postcss` — the `@tailwindcs
 plugin (4.3.3) expanded imports but compiled zero utilities on this Windows/Vite 7
 setup; postcss route verified by build output. `fonts.check` false-negatives on
 variable fonts are a known quirk; computed styles confirm real loading.
+
+## 2026-09-17 — Visual identity follows upstream 9Router (user override)
+
+User instruction: prefer the original 9Router layout, blocking, and style over the
+authored design system. Source recon of upstream `globals.css` + `DashboardLayout` +
+`Sidebar` + `Header` + primitives (Button/Card/Badge/Modal/Input/ThemeToggle), ported
+verbatim into re-e-ui: brand coral #E56A4A scale, warm dark surfaces (#1a1a1a/#262626),
+header-carried page titles + descriptions, w-72 vibrancy sidebar with traffic lights +
+gradient logo, `landing-grid` background, `p-6 lg:p-10` + `max-w-7xl` content, upstream
+Button/Card/Badge/Modal (traffic-light header)/Input classes, material-symbols icons
+(ligature + fill-1 active states), top-right toast stack, upstream scrollbars/selection.
+`DESIGN.md`/`DESIGN.dark.md` marked SUPERSEDED (kept as rejected-alternative record);
+token SSOT for code = upstream globals.css mirrored in `re-e-ui/src/index.css`.
+
+Re-verified after restyle: connect flow end-to-end (fill → Test Connection →
+200·137ms·21 models → save → node count grows; Reset Breaker → toast, breaker-open
+cleared). Computed-style QA matches upstream tokens exactly. IA/screen cuts from the
+brainstorm remain unchanged — only the visual identity + blocking changed.
+
+Implementation notes: `material-symbols` is CSS-only → must stay in vite
+`optimizeDeps.exclude` (dep optimizer chokes on it and reload-loops); tailwind v4
+stays on `@tailwindcss/postcss`.

@@ -310,6 +310,7 @@ components:
 ---
 
 <!-- COMPLETENESS_LEVEL: 3 — last audited 2026-09-17 -->
+<!-- SUPERSEDED 2026-09-17: user chose upstream 9Router visual identity for v1 (see DECISIONS.md). Token SSOT for code is now upstream `9router/src/app/globals.css`, mirrored verbatim in `re-e-ui/src/index.css`. This file is kept as the record of the rejected alternative and for v2 reconsideration. -->
 
 # RE-E Design
 
