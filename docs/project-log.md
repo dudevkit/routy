@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** P1 underway — P1.1→P1.6 DONE (33/33 tests; passthrough + claude-translate L2 byte-identical). Next: P1.7 RTK port → MVP gate.
+- **Phase:** **P1 COMPLETE — MVP gate passed** (4/5 L2 streaming byte-identical; 34/34 tests; bench 16ms parity). Next: P2 HELD (UI commitment) — proceed P3 stability (backend-only) or P1.6b residuals.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -131,6 +131,13 @@ axolotl/
   translate mode = pinned contract). **L2 parity: claude-client fixtures byte-identical;
   openai passthroughs match. Non-stream+translate deferred P1.6b. `undici` added as
   re-e-core dep for SSRF DNS-pinning in image prefetch only.**
+- 2026-09-17 (P1.7 + MVP gate): RTK ported (`core/rtk/**`, 17 files, self-contained,
+  wired at upstream placement = final body pre-dispatch, default-on, tested: 8KB
+  git-diff tool_result compressed end-to-end). L2 fixtures recaptured (capture script
+  nonstream case was damaged by an earlier repair — fixed). **MVP GATE: 4/5 L2
+  streaming fixtures BYTE-IDENTICAL vs upstream through the live `ree-core`** (openai
+  basic+tools, claude basic+tooluse). Residual: nonstream + SSE-lying upstream needs
+  sseToJson port = **P1.6b**; real JSON-honoring nodes already correct via passthrough.
 
 ## Knowledge Gained
 
@@ -189,3 +196,4 @@ axolotl/
 | 2026-09-17 | Build plan delivered: roadmap (6 phases/gates/estimates), backend architecture (port map + SSE rewrite spec), DB design (schema v1 + caching + batching). Runtime default Node 22+, "faster" = measurable targets — both pending user veto |
 | 2026-09-17 | Parallel-work workflow: UI brainstorm in Orca worktree `ui-ux` (user-driven); ownership split + merge discipline in `docs/ui-ux/brainstorm-brief.md`; log stays single-SSOT |
 | 2026-09-17 | P1.5+P1.6: SSE pipeline + chat handler (passthrough byte-parity, bench 16ms parity), translator port (48 files) + claude/responses wiring — L2 claude byte-identical; undici dep for SSRF pinning |
+| 2026-09-17 | P1.7 RTK + MVP gate PASSED: 4/5 L2 streaming fixtures byte-identical vs upstream through live ree-core; 34/34 tests; P1.6b residuals logged |

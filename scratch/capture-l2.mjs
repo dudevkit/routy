@@ -18,6 +18,7 @@ const CASES = [
   },
   {
     name: "l2-openai-basic-nonstream",
+    body: { model: "bench/test-model", stream: false, max_tokens: 60, messages: [{ role: "user", content: "Say hello." }] },
   },
   {
     name: "l2-openai-tools-stream",

@@ -1,4 +1,15 @@
 {
   "endpoint": "/v1/chat/completions",
-  "headers": {}
+  "headers": {},
+  "body": {
+    "model": "bench/test-model",
+    "stream": false,
+    "max_tokens": 60,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Say hello."
+      }
+    ]
+  }
 }
