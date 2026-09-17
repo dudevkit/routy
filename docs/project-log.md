@@ -22,8 +22,8 @@
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
   (user baseUrl + key). Full 122-provider catalog: [provider-catalog.md](./provider-catalog.md).
-- **Next action:** Phase 0 harness (roadmap §P0) — golden fixtures from upstream, baseline
-  bench, then P1 re-e-core skeleton. Layout now specified: [backend-architecture.md](./backend-architecture.md).
+- **Next action:** Phase 0 harness (backend-only per Commitments). P2 is HELD until the
+  ui-ux worktree agent delivers the UI/UX guide/rules — gate recorded in Commitments.
 
 **Agreed layout (details pending):**
 ```
@@ -43,11 +43,13 @@ axolotl/
 | 2026-09-17 | **v1 feature scope accepted:** §A inference core, §B token savers (RTK keep; headroom/caveman/ponytail throw; pxpipe defer), §C providers+media (media deferred), §E additions (metrics, latency-aware routing, budget caps, config-as-file, `re-e init`, single binary) as proposed; §D delegated to assistant recon-based recommendations **with one user override: proxy pools → KEEP, not throw** | User approved wholesale; proxy pools are a hard requirement | throwing proxy pools |
 | 2026-09-17 | **v1 provider scope: zero embedded providers — custom OpenAI-compatible nodes only** (dynamic nodes: `{id, type, name, prefix, apiType, baseUrl}` + API-key connection) | Minimal start; node mechanism covers most API-key upstreams day one; embedded/OAuth providers added later per [provider-catalog.md](./provider-catalog.md) | assistant's ~12-15 provider trim |
 
-*(Runtime choice and "faster" definition still open — see Open Questions.)*
 
 ## Commitments
 
-*(Empty. A commitment = explicit agreement between user and assistant.)*
+- 2026-09-17 (user): **Backend-only focus.** Proceed P0 → P1 (pure backend: harness,
+  core MVP gateway). **HOLD P2** (management API + dashboard rewire) until the ui-ux
+  worktree agent delivers the UI/UX guide and rules; P2's management-API shape must then
+  incorporate the ui-ux agent's contract requests. No UI wiring before that gate.
 
 ## Done
 
