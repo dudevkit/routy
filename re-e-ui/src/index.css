@@ -355,3 +355,62 @@ button:disabled,
   outline: none;
   box-shadow: var(--shadow-focus);
 }
+
+/* ============================================================
+   Theme Lab — candidate schemes (override semantic vars on a wrapper).
+   Base = upstream "Warm Ember". Utilities use var() at usage-site
+   (@theme inline), so wrapper overrides re-skin real components.
+   ============================================================ */
+.scheme-graphite {
+  --color-bg: #0F1115;
+  --color-bg-alt: #141821;
+  --color-surface: #181D26;
+  --color-surface-2: #212834;
+  --color-surface-3: #2B3442;
+  --color-border: #2A3140;
+  --color-border-subtle: #232937;
+  --color-text: #E8ECF4;
+  --color-text-main: #E8ECF4;
+  --color-text-muted: #98A2B3;
+  --color-text-subtle: #657083;
+  --color-primary: #4D9DFF;
+  --color-primary-hover: #6FB1FF;
+  --color-accent: #4D9DFF;
+  --color-success: #3DD68C;
+  --color-warning: #F5B93F;
+  --color-danger: #F0564E;
+  --color-info: #8B7CFF;
+  --shadow-soft: 0 1px 2px 0 rgba(0,0,0,0.35);
+  --shadow-warm: 0 2px 12px -2px rgba(77,157,255,0.22);
+  --shadow-focus: 0 0 0 3px rgba(77,157,255,0.22);
+  color-scheme: dark;
+}
+
+.scheme-phosphor {
+  --color-bg: #0C1210;
+  --color-bg-alt: #101815;
+  --color-surface: #141D19;
+  --color-surface-2: #1C2823;
+  --color-surface-3: #26342D;
+  --color-border: #24322B;
+  --color-border-subtle: #1D2A24;
+  --color-text: #E4EFE9;
+  --color-text-main: #E4EFE9;
+  --color-text-muted: #93A8A0;
+  --color-text-subtle: #5F7169;
+  --color-primary: #2DD4BF;
+  --color-primary-hover: #5EEAD4;
+  --color-accent: #2DD4BF;
+  --color-success: #4ADE80;
+  --color-warning: #FBBF24;
+  --color-danger: #F87171;
+  --color-info: #60A5FA;
+  --shadow-soft: 0 1px 2px 0 rgba(0,0,0,0.35);
+  --shadow-warm: 0 2px 12px -2px rgba(45,212,191,0.20);
+  --shadow-focus: 0 0 0 3px rgba(45,212,191,0.20);
+  color-scheme: dark;
+}
+
+/* Data-font candidates */
+.mono-jb { font-family: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace; }
+.mono-plex { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }

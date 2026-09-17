@@ -5,6 +5,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ToastProvider } from "./components/ui/Toast";
 import { Overview } from "./screens/Overview";
 import { Stub } from "./screens/Stub";
+import { ThemeSampler } from "./screens/ThemeSampler";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 5000, retry: 1 } },
@@ -30,6 +31,7 @@ export default function App() {
                 <div className="max-w-7xl mx-auto">
                   <Routes>
                     <Route path="/" element={<Overview />} />
+                    <Route path="/theme" element={<ThemeSampler />} />
                     <Route path="*" element={<Stub />} />
                   </Routes>
                 </div>
