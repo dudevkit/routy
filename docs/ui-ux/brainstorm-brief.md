@@ -60,3 +60,10 @@ Merge rhythm: commit to your branch freely; when decisions harden, they get merg
 - Upstream dashboard weight (why we split): monaco, recharts, dnd-kit, SAML, i18n×10
 - Upstream's good UX ideas worth stealing: cli-tools config writers (one-click CLI setup),
   quota progress bars, console log with per-session colors, combo drag-and-drop builder
+
+## Process notes
+
+- User instruction (2026-09-17): when building UI/UX code for preview — even throwaway
+  preview builds — work in **designer role**: design-first (IA → tokens → component
+  vocabulary → screens), visual/interaction quality is the deliverable. Don't hand
+  preview builds off as engineer-default scaffolding.
