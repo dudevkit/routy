@@ -57,6 +57,9 @@ axolotl/
   `docs/provider-catalog.md` (categories, formats, baseUrls, OAuth split, custom
   executor LOC inventory, onboarding checklist). Raw data: `scratch/providers.json`;
   regeneration scripts in `scratch/`. Proxy pools confirmed as kept feature (user).
+- 2026-09-17: UI/UX worktree spun up: `dudevhub/ui-ux` (branch `ui-ux`, child of `axolotl`,
+  Orca-managed). Ownership + merge discipline in `docs/ui-ux/brainstorm-brief.md`. First
+  RE-E git commit: b8c269b (all docs). `.gitignore` excludes upstream `9router/` clone.
 - 2026-09-17: Build plan written — `docs/roadmap.md` (6 phases, session estimates, gates,
   risk register), `docs/backend-architecture.md` (module/port map, request lifecycle, SSE
   pipeline rewrite spec, API surface, error taxonomy), `docs/db-design.md` (node:sqlite
@@ -97,3 +100,4 @@ axolotl/
 | 2026-09-17 | RE-E named; two-part UI/backend split decided; log restructured |
 | 2026-09-17 | v1 scope locked (A/B/C/E + D-with-override); provider catalog written; provider scope = compatible nodes only |
 | 2026-09-17 | Build plan delivered: roadmap (6 phases/gates/estimates), backend architecture (port map + SSE rewrite spec), DB design (schema v1 + caching + batching). Runtime default Node 22+, "faster" = measurable targets — both pending user veto |
+| 2026-09-17 | Parallel-work workflow: UI brainstorm in Orca worktree `ui-ux` (user-driven); ownership split + merge discipline in `docs/ui-ux/brainstorm-brief.md`; log stays single-SSOT |
