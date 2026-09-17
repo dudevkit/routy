@@ -1,4 +1,4 @@
-// Seed a demo node + alias + combo into the live re-e-core db (WAL: multi-process safe).
+// Seed a demo node + alias + combo + open settings into the live re-e-core db.
 // Usage: node scratch/seed-ree.mjs
 import { openDatabase } from "../re-e-core/db/driver.mjs";
 import { createRepos } from "../re-e-core/db/repos.mjs";
@@ -7,6 +7,8 @@ import path from "node:path";
 const db = openDatabase(path.resolve("scratch/ree-home/data"));
 const repos = createRepos(db);
 
+repos.settings.update({ requireApiKey: false });
+
 if (!repos.nodes.byPrefix("demo")) {
   repos.nodes.create({ name: "Demo Stub", prefix: "demo", apiType: "openai", baseUrl: "http://127.0.0.1:20990/v1" });
   repos.connections.create({ nodeId: repos.nodes.byPrefix("demo").id, name: "demo key", credentials: { apiKey: "bench-key" } });
@@ -14,6 +16,6 @@ if (!repos.nodes.byPrefix("demo")) {
   repos.combos.create({ name: "dev-combo", models: ["demo/test-model"] });
   console.log("seeded: node 'demo' + alias 'smart' + combo 'dev-combo'");
 } else {
-  console.log("already seeded");
+  console.log("node already seeded");
 }
 db.close();

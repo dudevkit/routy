@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** P1 underway — P1.1→P1.4 DONE (26/26 tests). Next: P1.5 SSE pipeline rewrite.
+- **Phase:** P1 underway — P1.1→P1.5 DONE (33/33 tests; passthrough byte-identical to upstream; TTFT parity 16ms). Next: P1.6 translator port.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -105,6 +105,21 @@ axolotl/
   to P4, keeps zero-dep. Connect timeout does NOT retry (burned budget → fail fast to
   fallback). 26/26 tests incl. hermetic stub: retries, 429/401 classification, timeouts,
   aborts, /responses URL shape.
+- 2026-09-17 (P1.5): SSE pipeline + chat handler landed — `core/sse/{parser,stream}.mjs`,
+  `core/handlers/chat.mjs`: byte-safe SSE parser (multi-byte split safe, bounded 1MB
+  buffer), pump with backpressure + client-disconnect→upstream abort, LogBuffer (2MB cap,
+  counters not accumulation), incremental usage estimation with exact override, terminal
+  chunk usage injection (upstream parity; estimator numbers are RE-E's own — normalized
+  in golden compares), duplicate-[DONE] parity quirk replicated, breaker fail-fast when
+  all routes unhealthy (503 + retryAfterMs), combo fallback, API-key auth, usage+detail
+  recording. **33/33 tests. Golden validation: RE-E passthrough output BYTE-IDENTICAL
+  to upstream L2 fixture (normalized). Bench: 40/40 ok, TTFT p50 16ms = upstream parity;
+  ≤5ms target remains P4 work (residual: ~11-16ms is request handling + undici scheduling,
+  possibly Windows timer quantization — investigate in P4).**
+- 2026-09-17: Harness gotcha (stub): content-type header was silently lost in an earlier
+  stub edit → proxies branching on content-type (incl. RE-E) fell into non-streaming
+  path; upstream 9Router was unaffected (no content-type branch) — caught only by
+  per-chunk timing test. Lesson: fixture stubs are part of the tested surface.
 
 ## Knowledge Gained
 

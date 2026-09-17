@@ -8,6 +8,7 @@ import { createBootstrapToken } from "./lib/auth.mjs";
 import { openDatabase } from "./db/driver.mjs";
 import { createRepos } from "./db/repos.mjs";
 import { listModels } from "./core/routing.mjs";
+import { createChatHandler } from "./core/handlers/chat.mjs";
 
 const cfg = resolveConfig();
 setLogLevel(cfg.logLevel);
@@ -37,9 +38,7 @@ const routes = [
   },
   {
     method: "POST", pattern: /^\/v1\/chat\/completions$/,
-    handler: async (req, res) => {
-      json(res, 501, { error: { message: "not_implemented", detail: "proxy pipeline lands in P1.4-P1.5" } });
-    },
+    handler: createChatHandler(repos),
   },
   {
     method: "POST", pattern: /^\/v1\/messages$/,

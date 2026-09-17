@@ -69,8 +69,8 @@ describe("api keys", () => {
     const { key, id } = repos.apiKeys.create("test");
     expect(key.startsWith("re_")).toBe(true);
     expect(repos.apiKeys.verify(key).id).toBe(id);
-    expect(repos.apiKeys.verify("bogus")).toBeNull();
     repos.apiKeys.setEnabled(id, false);
+    expect(repos.apiKeys.verify("bogus")).toBeNull();
     expect(repos.apiKeys.verify(key)).toBeNull();
   });
 });
@@ -104,13 +104,14 @@ describe("breakers", () => {
 });
 
 describe("request details", () => {
-  it("caps oversized content with truncated flag and purges old rows", () => {
+  it("caps oversized content with truncated flag and purges old rows", async () => {
     const big = { blob: "x".repeat(80 * 1024) };
     const saved = repos.requestDetails.save({ kind: "request", content: big });
     expect(saved.truncated).toBe(true);
     const listed = repos.requestDetails.list({ limit: 5 });
     expect(listed[0].truncated).toBe(true);
     expect(listed[0].content.length).toBeLessThanOrEqual(64 * 1024);
+    await new Promise((r) => setTimeout(r, 5)); // ensure row ts < purge cutoff
     const purged = repos.requestDetails.purge({ maxAgeDays: 0, maxRows: 50000 });
     expect(purged.aged).toBe(1);
   });

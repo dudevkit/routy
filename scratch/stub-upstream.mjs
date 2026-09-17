@@ -15,6 +15,7 @@ http.createServer((req, res) => {
   req.on("end", () => {
     connections++;
     res.writeHead(200, {
+      "content-type": "text/event-stream",
       "cache-control": "no-cache",
       connection: "keep-alive",
     });

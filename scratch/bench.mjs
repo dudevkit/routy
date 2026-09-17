@@ -3,11 +3,13 @@
 import http from "http";
 
 const N = parseInt(process.argv[2] || "40", 10);
+const ROUTER_PORT = parseInt(process.env.ROUTER_PORT || "20991", 10);
+const KEY = process.env.ROUTER_KEY || "bench-key";
 const STUB = { host: "127.0.0.1", port: 20990, path: "/v1/chat/completions" };
-const ROUTER = { host: "127.0.0.1", port: 20991, path: "/v1/chat/completions" };
-
+const ROUTER = { host: "127.0.0.1", port: ROUTER_PORT, path: "/v1/chat/completions" };
 const body = JSON.stringify({
-  model: "bench/test-model",
+
+  model: process.env.ROUTER_MODEL || "bench/test-model",
   stream: true,
   max_tokens: 100,
   messages: [{ role: "user", content: "Say hello and count to five." }],
