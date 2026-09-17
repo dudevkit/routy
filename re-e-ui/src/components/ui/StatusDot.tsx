@@ -3,11 +3,11 @@ import { cn } from "../../utils/cn";
 type Tone = "green" | "yellow" | "red" | "gray" | "blue";
 
 const toneClasses: Record<Tone, string> = {
-  green: "bg-green-500",
-  yellow: "bg-yellow-500",
-  red: "bg-red-500",
+  green: "bg-success",
+  yellow: "bg-warning",
+  red: "bg-danger",
   gray: "bg-gray-500",
-  blue: "bg-blue-500",
+  blue: "bg-info",
 };
 
 /** Status dot; `pulse` reserved for live gateway indicators. */

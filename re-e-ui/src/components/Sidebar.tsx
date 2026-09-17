@@ -20,6 +20,7 @@ const navItems: NavItemSpec[] = [
 const systemItems: NavItemSpec[] = [
   { to: "/pools", label: "Proxy Pools", icon: "lan" },
   { to: "/console", label: "Live Console", icon: "terminal" },
+  { to: "/theme", label: "Theme Catalog", icon: "palette" },
 ];
 
 function NavItem({ to, label, icon, end }: NavItemSpec) {

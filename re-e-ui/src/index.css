@@ -414,3 +414,144 @@ button:disabled,
 /* Data-font candidates */
 .mono-jb { font-family: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace; }
 .mono-plex { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* ============================================================
+   Theme Catalog — genre candidates. Each scheme class overrides
+   the semantic vars; unlayered rules below beat Tailwind utilities,
+   which is what lets Swiss/Blueprint/Aurora restyle structure too.
+   ============================================================ */
+.scheme-nord {
+  --color-bg: #2E3440;
+  --color-bg-alt: #333B47;
+  --color-surface: #3B4252;
+  --color-surface-2: #434C5E;
+  --color-surface-3: #4C566A;
+  --color-border: #4C566A;
+  --color-border-subtle: #3B4252;
+  --color-text: #ECEFF4;
+  --color-text-main: #ECEFF4;
+  --color-text-muted: #B8C0CC;
+  --color-text-subtle: #7B8494;
+  --color-primary: #88C0D0;
+  --color-primary-hover: #8FBCBB;
+  --color-accent: #88C0D0;
+  --color-success: #A3BE8C;
+  --color-warning: #EBCB8B;
+  --color-danger: #BF616A;
+  --color-info: #81A1C1;
+  --shadow-soft: 0 1px 2px 0 rgba(0,0,0,0.25);
+  --shadow-warm: 0 2px 12px -2px rgba(136,192,208,0.20);
+  --shadow-focus: 0 0 0 3px rgba(136,192,208,0.25);
+  color-scheme: dark;
+}
+
+.scheme-blueprint {
+  --color-bg: #0B1220;
+  --color-bg-alt: #0E1626;
+  --color-surface: #101B2E;
+  --color-surface-2: #16233B;
+  --color-surface-3: #1D2E4C;
+  --color-border: #223454;
+  --color-border-subtle: #1A2942;
+  --color-text: #DCE7F5;
+  --color-text-main: #DCE7F5;
+  --color-text-muted: #7E93B4;
+  --color-text-subtle: #4E6180;
+  --color-primary: #4CC2FF;
+  --color-primary-hover: #7DD6FF;
+  --color-accent: #4CC2FF;
+  --color-success: #4ADE80;
+  --color-warning: #FBBF24;
+  --color-danger: #F87171;
+  --color-info: #818CF8;
+  --shadow-soft: 0 1px 2px 0 rgba(0,0,0,0.35);
+  --shadow-warm: 0 2px 12px -2px rgba(76,194,255,0.22);
+  --shadow-focus: 0 0 0 3px rgba(76,194,255,0.22);
+  color-scheme: dark;
+}
+.scheme-blueprint .mini-app {
+  background-image:
+    linear-gradient(to right, rgba(76, 194, 255, 0.09) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(76, 194, 255, 0.09) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.scheme-swiss {
+  --color-bg: #FAFAF8;
+  --color-bg-alt: #F1F1EE;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #F0F0EE;
+  --color-surface-3: #E4E4E0;
+  --color-border: #111111;
+  --color-border-subtle: #E0E0DC;
+  --color-text: #111111;
+  --color-text-main: #111111;
+  --color-text-muted: #555555;
+  --color-text-subtle: #888888;
+  --color-primary: #E10000;
+  --color-primary-hover: #B80000;
+  --color-accent: #E10000;
+  --color-success: #157F3C;
+  --color-warning: #B45309;
+  --color-danger: #E10000;
+  --color-info: #111111;
+  --shadow-soft: none;
+  --shadow-warm: none;
+  --shadow-focus: 0 0 0 3px rgba(225, 0, 0, 0.18);
+  color-scheme: light;
+}
+.scheme-swiss .mini-app { border-radius: 0; }
+.scheme-swiss .mini-card {
+  border-radius: 0;
+  border: 2px solid var(--color-text-main);
+  box-shadow: none;
+}
+.scheme-swiss .mini-app button {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.scheme-aurora {
+  --color-bg: #0D0F1A;
+  --color-bg-alt: #11131F;
+  --color-surface: rgba(255, 255, 255, 0.06);
+  --color-surface-2: rgba(255, 255, 255, 0.10);
+  --color-surface-3: rgba(255, 255, 255, 0.16);
+  --color-border: rgba(255, 255, 255, 0.16);
+  --color-border-subtle: rgba(255, 255, 255, 0.10);
+  --color-text: #F2F3FA;
+  --color-text-main: #F2F3FA;
+  --color-text-muted: #A6ABC4;
+  --color-text-subtle: #6E7488;
+  --color-primary: #A78BFA;
+  --color-primary-hover: #C4B5FD;
+  --color-accent: #A78BFA;
+  --color-success: #34D399;
+  --color-warning: #FBBF24;
+  --color-danger: #FB7185;
+  --color-info: #7DA2FF;
+  --shadow-soft: 0 1px 2px 0 rgba(0,0,0,0.30);
+  --shadow-warm: 0 2px 16px -2px rgba(167,139,250,0.30);
+  --shadow-focus: 0 0 0 3px rgba(167,139,250,0.25);
+  color-scheme: dark;
+}
+.scheme-aurora .mini-app {
+  background:
+    radial-gradient(600px 300px at 18% 15%, rgba(167, 139, 250, 0.28), transparent 60%),
+    radial-gradient(520px 280px at 82% 75%, rgba(45, 212, 191, 0.20), transparent 60%),
+    radial-gradient(420px 240px at 55% 45%, rgba(125, 162, 255, 0.14), transparent 60%),
+    #0D0F1A;
+}
+.scheme-aurora .mini-card {
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.scheme-phosphor .mini-app::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 3px);
+}
