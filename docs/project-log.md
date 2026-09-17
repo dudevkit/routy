@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** P1 underway — P1.1→P1.5 DONE (33/33 tests; passthrough byte-identical to upstream; TTFT parity 16ms). Next: P1.6 translator port.
+- **Phase:** P1 underway — P1.1→P1.6 DONE (33/33 tests; passthrough + claude-translate L2 byte-identical). Next: P1.7 RTK port → MVP gate.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -120,6 +120,17 @@ axolotl/
   stub edit → proxies branching on content-type (incl. RE-E) fell into non-streaming
   path; upstream 9Router was unaffected (no content-type branch) — caught only by
   per-chunk timing test. Lesson: fixture stubs are part of the tested surface.
+- 2026-09-17 (P1.6): translator port landed — `core/translate/**` (48 files via
+  `scratch/port-translator.mjs`: verbatim translator tree + `deps/` layer: ported
+  sessionManager/claudeCloaking/streamHelpers/usageTracking/capabilities/pricing/
+  thinkingLevels/visionPatterns/kiroConstants/kiroSessionReplay/mediaConfig/
+  defaultThinkingSignature + synthesized runtimeConfig/appConstants/shared/uuid/
+  provider(normalizeThinking)/providers(empty)/thoughtSignatureStore(no-op)). Handler now
+  translates openai↔claude/responses (`core/sse/translateStream.mjs` mirrors upstream
+  stream.js: parse→translate→filter→usage-inject→formatSSE + flush; NO [DONE] in
+  translate mode = pinned contract). **L2 parity: claude-client fixtures byte-identical;
+  openai passthroughs match. Non-stream+translate deferred P1.6b. `undici` added as
+  re-e-core dep for SSRF DNS-pinning in image prefetch only.**
 
 ## Knowledge Gained
 
@@ -148,6 +159,12 @@ axolotl/
   completes, not on socket close — use ServerResponse 'close' for stream cleanup.
 - 2026-09-17: Bench rig lives in `scratch/` (stub-upstream, seed-bench-db, bench.mjs);
   hub processes `bench-stub` (:20990) + `bench-router` (:20991) kept running for P0 follow-ups.
+- 2026-09-17: Upstream source-format detection = endpoint override THEN body heuristic
+  (`detectFormat`: claude body shape counts as claude only when model has NO "/" —
+  slash = provider routing). RE-E is endpoint-fixed today; both agree on slash-model
+  nodes (verified via l2-claude-tooluse). Porting detectFormat for no-slash bodies = P1.6b.
+- 2026-09-17: `scratch/port-translator.mjs` = regeneration path for translator re-sync
+  after upstream updates; deps shims documented inline with their sources.
 
 ## Open Questions
 
@@ -171,3 +188,4 @@ axolotl/
 | 2026-09-17 | v1 scope locked (A/B/C/E + D-with-override); provider catalog written; provider scope = compatible nodes only |
 | 2026-09-17 | Build plan delivered: roadmap (6 phases/gates/estimates), backend architecture (port map + SSE rewrite spec), DB design (schema v1 + caching + batching). Runtime default Node 22+, "faster" = measurable targets — both pending user veto |
 | 2026-09-17 | Parallel-work workflow: UI brainstorm in Orca worktree `ui-ux` (user-driven); ownership split + merge discipline in `docs/ui-ux/brainstorm-brief.md`; log stays single-SSOT |
+| 2026-09-17 | P1.5+P1.6: SSE pipeline + chat handler (passthrough byte-parity, bench 16ms parity), translator port (48 files) + claude/responses wiring — L2 claude byte-identical; undici dep for SSRF pinning |
