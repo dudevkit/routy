@@ -13,5 +13,8 @@
   },
   "devDependencies": {
     "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "undici": "^8.10.2"
   }
 }

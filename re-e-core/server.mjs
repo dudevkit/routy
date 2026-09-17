@@ -1,5 +1,5 @@
 // RE-E gateway core — bootstrap.
-// DB layer (P1.2) + routing (P1.3) wired; proxy pipeline lands in P1.4-P1.5.
+// DB (P1.2) + routing (P1.3) + pipeline & translation (P1.4-P1.6) wired.
 import http from "node:http";
 import { resolveConfig } from "./lib/config.mjs";
 import { log, setLogLevel } from "./lib/log.mjs";
@@ -9,6 +9,7 @@ import { openDatabase } from "./db/driver.mjs";
 import { createRepos } from "./db/repos.mjs";
 import { listModels } from "./core/routing.mjs";
 import { createChatHandler } from "./core/handlers/chat.mjs";
+import { FORMATS } from "./core/translate/formats.js";
 
 const cfg = resolveConfig();
 setLogLevel(cfg.logLevel);
@@ -19,6 +20,7 @@ let startedAt = Date.now();
 
 const db = openDatabase(cfg.dataDir);
 const repos = createRepos(db);
+const chatHandler = createChatHandler(repos);
 
 // request-detail retention runs at boot; schedule-friendly purge lands with metrics (P4)
 try {
@@ -29,22 +31,20 @@ try {
 }
 
 const routes = [
-  // ── proxy surface (/v1) — auth enforced per-route as handlers land ──
+  // ── proxy surface (/v1) ──
   {
     method: "GET", pattern: /^\/v1\/models$/,
     handler: async (req, res) => {
-      json(res, 200, listModels(repos)); // aliases + combos + node prefixes; node-local models fetched in P1.4
+      json(res, 200, listModels(repos)); // aliases + combos + node prefixes
     },
   },
   {
     method: "POST", pattern: /^\/v1\/chat\/completions$/,
-    handler: createChatHandler(repos),
+    handler: (req, res) => chatHandler(req, res, FORMATS.OPENAI),
   },
   {
     method: "POST", pattern: /^\/v1\/messages$/,
-    handler: async (req, res) => {
-      json(res, 501, { error: { message: "not_implemented", detail: "proxy pipeline lands in P1.4-P1.5" } });
-    },
+    handler: (req, res) => chatHandler(req, res, FORMATS.CLAUDE),
   },
   // ── management surface (/api) ──
   {

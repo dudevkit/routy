@@ -78,7 +78,7 @@ export const SSE_HEADERS = {
  * - trailingDone: emit a second [DONE] after the stream (upstream parity quirk).
  * Returns { clientGone }.
  */
-export async function pumpSse({ upstream, res, signal, t0, transform = null, usage = null, logBuffer = null, maxEmptyReads = 4, trailingDone = false }) {
+export async function pumpSse({ upstream, res, signal, t0, transform = null, flushFrames = null, usage = null, logBuffer = null, maxEmptyReads = 4, trailingDone = false }) {
   res.writeHead(upstream.status, SSE_HEADERS);
   const parser = new SseParser();
   const reader = upstream.body.getReader();
@@ -115,6 +115,12 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, usa
       const frames = transform ? transform(frame) : [formatSse(frame.event, frame.data)];
       for (const out of frames) {
         if (!res.write(out)) await onceDrain(res);
+      }
+    }
+    // Translator tail flush (e.g. claude message_stop) — translate mode only
+    if (flushFrames) {
+      for (const out of flushFrames() || []) {
+        if (!res.writableEnded && !res.write(out)) await onceDrain(res);
       }
     }
     // Upstream parity: 9Router's transform+flush both emit [DONE] — clients stop at

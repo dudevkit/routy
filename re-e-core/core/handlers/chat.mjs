@@ -1,19 +1,42 @@
-// RE-E chat handler — /v1/chat/completions (openai source format).
-// P1.5 scope: openai→openai passthrough (stream + non-stream), combo fallback,
-// breaker integration, usage recording. Claude source + format translation: P1.6.
+// RE-E chat handler — /v1/chat/completions (openai source) + /v1/messages (claude source).
+// P1.6: openai↔claude/responses translation via the ported translator; passthrough
+// unchanged from P1.5 (byte-parity). Non-streaming + format translation: P1.6b
+// (rare in practice — coding-tool clients stream).
 import { readBody, json } from "../../lib/router.mjs";
 import { log as rootLog } from "../../lib/log.mjs";
 import { resolveRoute } from "../routing.mjs";
 import { DefaultExecutor } from "../executors/default.mjs";
 import { formatSse } from "../sse/parser.mjs";
 import { pumpSse, UsageTracker, LogBuffer } from "../sse/stream.mjs";
+import { createResponseTranslator } from "../sse/translateStream.mjs";
+import { translateRequest, needsTranslation } from "../translate/index.js";
+import { FORMATS } from "../translate/formats.js";
+
 const FAILURE_THRESHOLD = 3;
 const OPEN_MS = 60_000;
+
+// Verbatim from upstream chatCore.js:50-59 — never send translator stashes upstream.
+function stripContinuityFields(body) {
+  if (!body || !Array.isArray(body.messages)) return body;
+  for (const msg of body.messages) {
+    if (msg && typeof msg === "object") {
+      delete msg.encrypted_content;
+      delete msg.reasoning_encrypted_content;
+    }
+  }
+  return body;
+}
+
+function targetFormatForNode(node) {
+  if (node.apiType === "anthropic") return FORMATS.CLAUDE;
+  if (node.apiType === "responses") return FORMATS.OPENAI_RESPONSES;
+  return FORMATS.OPENAI;
+}
 
 export function createChatHandler(repos) {
   const log = rootLog;
 
-  async function handleChatCompletions(req, res) {
+  async function handleChatCompletions(req, res, sourceFormat = FORMATS.OPENAI) {
     const t0 = Date.now();
 
     // auth (router client key)
@@ -35,16 +58,16 @@ export function createChatHandler(repos) {
       return json(res, err?.statusCode === 413 ? 413 : 400, { error: { message: "bad_request", detail: "invalid JSON body" } });
     }
 
-    // route
     const route = resolveRoute(repos, body.model);
     if (!route) {
       return json(res, 404, { error: { message: "invalid_model", detail: `unresolvable model: ${body.model}` } });
     }
 
-    const wantStream = body.stream !== false;
+    const stream = body.stream !== false; // claude clients often omit; explicit false respected
     const clientAbort = new AbortController();
-    res.on("close", () => clientAbort.abort());
+
     const routes = route.kind === "combo" ? orderRoutes(route.routes) : [route];
+    res.on("close", () => clientAbort.abort());
     let lastError = null;
 
     // Fail fast when every route has an open breaker — hammering a dead upstream
@@ -58,26 +81,42 @@ export function createChatHandler(repos) {
         .map((b) => Date.parse(b.openUntil))
         .filter((t) => Number.isFinite(t));
       const retryAfterMs = expiries.length ? Math.max(0, Math.max(...expiries) - Date.now()) : null;
-      return json(res, 503, {
-        error: { message: "all_unavailable", detail: "all routes have open breakers", retryAfterMs },
-      });
+      return json(res, 503, { error: { message: "all_unavailable", detail: "all routes have open breakers", retryAfterMs } });
     }
 
     for (const r of candidates) {
-
       const connection = pickConnection(repos, r.node);
       if (!connection) {
         lastError = { status: 503, errorCode: "no_credentials", message: `no active connection for node ${r.node.prefix}` };
         continue;
       }
-      if (r.node.apiType !== "openai") {
-        // openai→responses (and claude targets) need the translator — P1.6
-        lastError = { status: 501, errorCode: "not_implemented", message: `apiType ${r.node.apiType} requires translation (P1.6)` };
-        continue;
+
+      const targetFormat = targetFormatForNode(r.node);
+      const translate = needsTranslation(sourceFormat, targetFormat);
+
+      let outbound = { ...body, model: r.model };
+      let toolNameMap = null;
+      let customToolNames = null;
+      if (translate) {
+        if (!stream && (targetFormat === FORMATS.CLAUDE || targetFormat === FORMATS.OPENAI_RESPONSES)) {
+          lastError = { status: 501, errorCode: "not_implemented", message: "non-streaming + translation lands in P1.6b" };
+          continue;
+        }
+        try {
+          outbound = translateRequest(sourceFormat, targetFormat, r.model, structuredClone(body), stream, {}, null, null, [], null, null);
+          if (!outbound) throw new Error("translateRequest returned falsy");
+          toolNameMap = outbound._toolNameMap; delete outbound._toolNameMap;
+          customToolNames = outbound._customToolNames; delete outbound._customToolNames;
+          outbound.model = r.model;
+          stripContinuityFields(outbound);
+        } catch (err) {
+          lastError = { status: 400, errorCode: "translate_error", message: String(err?.message || err) };
+          continue;
+        }
       }
 
       const executor = new DefaultExecutor(r.node, connection);
-      const result = await executor.execute({ model: r.model, body, stream: wantStream, signal: clientAbort.signal, log });
+      const result = await executor.execute({ model: r.model, body: outbound, stream, signal: clientAbort.signal, log });
 
       if (!result.ok) {
         recordFailure(repos, r.node, result);
@@ -88,57 +127,78 @@ export function createChatHandler(repos) {
 
       recordSuccess(repos, r.node);
 
-      if (wantStream && result.response.headers?.get?.("content-type")?.includes("text/event-stream")) {
+      // ── streaming: translate or passthrough ──
+      if (stream && result.response.headers?.get?.("content-type")?.includes("text/event-stream")) {
         const usage = new UsageTracker({ promptText: JSON.stringify(body.messages || body.input || "") });
         const logBuffer = new LogBuffer();
-        // Terminal-chunk usage injection (upstream parity): clients read usage from the
-        // finish_reason chunk. Only frames containing "finish_reason" are parsed —
-        // delta chunks pass through untouched (near-zero hot-path cost).
-        const transform = (frame) => {
-          if (frame.data === "[DONE]" || !frame.data.includes('"finish_reason"')) {
-            return [formatSse(frame.event, frame.data)];
-          }
-          try {
-            const obj = JSON.parse(frame.data);
-            const choice = obj.choices?.[0];
-            if (choice?.finish_reason && !obj.usage) {
-              obj.usage = {
-                prompt_tokens: usage.promptTokens,
-                completion_tokens: usage.completionTokens,
-                total_tokens: usage.promptTokens + usage.completionTokens,
-                estimated: true,
-              };
+        let translator = null;
+        let transform;
+        let flushFrames = null;
+        let trailingDone = false;
+
+        if (translate) {
+          translator = createResponseTranslator({
+            sourceFormat, targetFormat, model: r.model, body, toolNameMap, customToolNames,
+          });
+          transform = (frame) => translator.onFrame(frame);
+          flushFrames = () => translator.flush();
+        } else {
+          // Passthrough (P1.5): usage injection on the terminal chunk + double [DONE] parity
+          transform = (frame) => {
+            if (frame.data === "[DONE]" || !frame.data.includes('"finish_reason"')) {
+              return [formatSse(frame.event, frame.data)];
             }
-            return [formatSse(frame.event, JSON.stringify(obj))];
-          } catch {
-            return [formatSse(frame.event, frame.data)];
-          }
-        };
+            try {
+              const obj = JSON.parse(frame.data);
+              const choice = obj.choices?.[0];
+              if (choice?.finish_reason && !obj.usage) {
+                obj.usage = {
+                  prompt_tokens: usage.promptTokens,
+                  completion_tokens: usage.completionTokens,
+                  total_tokens: usage.promptTokens + usage.completionTokens,
+                  estimated: true,
+                };
+              }
+              return [formatSse(frame.event, JSON.stringify(obj))];
+            } catch {
+              return [formatSse(frame.event, frame.data)];
+            }
+          };
+          trailingDone = true;
+        }
+
         const { clientGone } = await pumpSse({
-          upstream: result.response, res, signal: clientAbort.signal, t0, usage, logBuffer, transform,
-          trailingDone: true, // upstream emits [DONE] twice in passthrough — parity
+          upstream: result.response, res, signal: clientAbort.signal, t0, usage, logBuffer,
+          transform, flushFrames, trailingDone,
         });
+
+        let promptTokens = usage.promptTokens;
+        let completionTokens = usage.completionTokens;
+        if (translate && translator.state?.usage) {
+          promptTokens = translator.state.usage.prompt_tokens ?? promptTokens;
+          completionTokens = translator.state.usage.completion_tokens ?? completionTokens;
+        }
         recordUsage(repos, r, connection, body.model, {
-          status: clientGone ? "aborted" : "ok", usage, durationMs: Date.now() - t0, apiKeyId,
+          status: clientGone ? "aborted" : "ok",
+          usage: { promptTokens, completionTokens, ttftMs: usage.ttftMs },
+          durationMs: Date.now() - t0,
+          apiKeyId,
         });
         saveDetail(repos, { request: body, responseText: logBuffer, truncated: logBuffer.truncated });
         return;
       }
 
-      // non-streaming (or upstream ignored stream=false contract and sent JSON)
+      // ── non-streaming (passthrough only; translate non-stream is P1.6b) ──
       const text = await result.response.text();
+      const usage = new UsageTracker({ promptText: JSON.stringify(body.messages || "") });
       let parsed = null;
       try { parsed = JSON.parse(text); } catch { /* passthrough as-is */ }
-      const usage = new UsageTracker({ promptText: JSON.stringify(body.messages || "") });
       if (parsed?.usage) {
         usage.promptTokens = parsed.usage.prompt_tokens ?? usage.promptTokens;
         usage.completionTokens = parsed.usage.completion_tokens ?? usage.completionTokens;
         usage.exact = true;
-      } else {
-        usage.completionTokens = estimateOf(text);
       }
-      const status = clientAbort.signal.aborted ? 499 : result.response.status;
-      if (status === 499) return; // client gone
+      if (clientAbort.signal.aborted) return; // client gone
       res.writeHead(result.response.status, { "content-type": result.response.headers?.get?.("content-type") || "application/json" });
       res.end(text);
       recordUsage(repos, r, connection, body.model, { status: "ok", usage, durationMs: Date.now() - t0, apiKeyId });
@@ -146,9 +206,8 @@ export function createChatHandler(repos) {
       return;
     }
 
-    // all routes exhausted
     const err = lastError || { status: 503, errorCode: "all_unavailable", message: "no healthy route" };
-    const status = err.errorCode === "auth_error" ? 502 : err.status === 501 ? 501 : 503;
+    const status = err.errorCode === "auth_error" ? 502 : err.status === 501 ? 501 : err.status === 400 ? 400 : 503;
     return json(res, status, {
       error: {
         message: err.errorCode || "all_unavailable",
@@ -203,7 +262,7 @@ function recordUsage(repos, route, connection, clientModel, { status, usage, dur
     status,
     promptTokens: usage.promptTokens,
     completionTokens: usage.completionTokens,
-    ttftMs: usage.ttftMs,
+    ttftMs: usage.ttftMs ?? null,
     durationMs,
   });
 }
@@ -215,8 +274,4 @@ function saveDetail(repos, { request, responseText, truncated }) {
       repos.requestDetails.save({ kind: "response", content: responseText.text, truncated });
     }
   } catch { /* details must never break the proxy */ }
-}
-
-function estimateOf(text) {
-  return Math.ceil((text || "").length / 4);
 }
