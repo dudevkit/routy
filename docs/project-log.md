@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** **P0 COMPLETE** (gate passed: golden tests green + baseline recorded). Next: P1 — `re-e-core/` skeleton.
+- **Phase:** P1 underway — P1.1 skeleton DONE (boots, zero deps, endpoints smoke-tested). Next: P1.2 db layer.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -80,6 +80,11 @@ axolotl/
   × tools), verified deterministic across runs after normalization
   (`tests/golden/fixtures-l2/`, capture: `scratch/capture-l2.mjs`). Stub id made
   deterministic; meta timing dropped from fixtures. **P0 gate passed.**
+- 2026-09-17 (P1.1): `re-e-core/` skeleton landed — `server.mjs` + `lib/{router,config,log,auth}.mjs`;
+  zero runtime deps (Node 22+ builtins only); boots <150ms; `/api/health`, `/api/version`,
+  `/v1/models` (empty), 501 stubs for chat endpoints, 404 JSON; structured logging with
+  key-redaction + one `log.raw` exception for the management bootstrap token at boot;
+  graceful SIGINT/SIGTERM. Running as hub process `ree-core` (:8010).
 
 ## Knowledge Gained
 

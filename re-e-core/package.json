@@ -1,0 +1,17 @@
+{
+  "name": "re-e-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "RE-E gateway core — lean AI proxy (re-engineering of 9Router)",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}
