@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** P1 underway — P1.1+P1.2+P1.3 DONE (19/19 tests). Next: P1.4 executor port.
+- **Phase:** P1 underway — P1.1→P1.4 DONE (26/26 tests). Next: P1.5 SSE pipeline rewrite.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -97,6 +97,14 @@ axolotl/
   /v1/models. 19/19 tests green incl. alias-loop guard and disabled-node exclusion.
   Live-verified: seeded node/alias/combo appear in /v1/models of running `ree-core`
   (`scratch/seed-ree.mjs`; WAL allows second-process seed).
+- 2026-09-17 (P1.4): default executor landed — `core/executors/default.mjs`: parity retry
+  config (502 3×3s, 503 3×2s, 429 no-retry→fallback, Retry-After honored), stringify-once,
+  AbortSignal.any connect timeout (60s default), structured error taxonomy
+  (auth_error/rate_limited/upstream_error/network_error/connect_timeout/client_aborted).
+  Design note: global fetch used (builtin keep-alive pool) — undici Agent tuning deferred
+  to P4, keeps zero-dep. Connect timeout does NOT retry (burned budget → fail fast to
+  fallback). 26/26 tests incl. hermetic stub: retries, 429/401 classification, timeouts,
+  aborts, /responses URL shape.
 
 ## Knowledge Gained
 
