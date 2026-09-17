@@ -11,6 +11,7 @@ import { pumpSse, UsageTracker, LogBuffer } from "../sse/stream.mjs";
 import { createResponseTranslator } from "../sse/translateStream.mjs";
 import { translateRequest, needsTranslation } from "../translate/index.js";
 import { FORMATS } from "../translate/formats.js";
+import { compressMessages, formatRtkLog } from "../rtk/index.js";
 
 const FAILURE_THRESHOLD = 3;
 const OPEN_MS = 60_000;
@@ -113,6 +114,12 @@ export function createChatHandler(repos) {
           lastError = { status: 400, errorCode: "translate_error", message: String(err?.message || err) };
           continue;
         }
+      }
+      // RTK token saver — final outbound body, after translation, before dispatch
+      // (upstream placement). Default-on unless settings disable it.
+      if (settings.rtkEnabled !== false) {
+        const rtkStats = compressMessages(outbound, true);
+        if (rtkStats?.hits?.length) log.debug("RTK", formatRtkLog(rtkStats));
       }
 
       const executor = new DefaultExecutor(r.node, connection);

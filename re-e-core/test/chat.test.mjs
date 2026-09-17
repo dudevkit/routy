@@ -154,4 +154,28 @@ describe("chat handler (end-to-end)", () => {
     repos.usage.flush();
     expect(repos.usage.query({ limit: 1 })[0].completion_tokens).toBe(2);
   });
+
+  it("RTK compresses large tool_result bodies before dispatch (default-on)", async () => {
+    repos.settings.update({ requireApiKey: false });
+    const lines = ["diff --git a/src/app.js b/src/app.js", "--- a/src/app.js", "+++ b/src/app.js"];
+    for (let h = 0; h < 10; h++) {
+      lines.push(`@@ -${h * 120 + 1},120 +${h * 120 + 1},124 @@ function block${h}()`);
+      for (let i = 0; i < 120; i++) lines.push(`   context line ${h}-${i} const value = compute(${i});`);
+      for (let i = 0; i < 4; i++) lines.push(`+  added line ${h}-${i} const fresh = compute(${i});`);
+    }
+    const DIFF = lines.join("\n");
+    const r = await post({
+      model: "a/m1", stream: true,
+      messages: [
+        { role: "user", content: "check diff" },
+        { role: "assistant", content: null, tool_calls: [{ id: "call_1", type: "function", function: { name: "git_diff", arguments: "{}" } }] },
+        { role: "tool", tool_call_id: "call_1", content: DIFF },
+      ],
+    });
+    expect(r.status).toBe(200);
+    const sent = stubState.requests[0].messages.find((m) => m.role === "tool");
+    const sentContent = typeof sent.content === "string" ? sent.content : JSON.stringify(sent.content);
+    expect(sentContent.length).toBeLessThan(DIFF.length * 0.9); // RTK rewrote the payload
+    expect(sentContent).toContain("added line 0-0");
+  });
 });
