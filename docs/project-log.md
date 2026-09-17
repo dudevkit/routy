@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** P1 underway — P1.1 skeleton DONE (boots, zero deps, endpoints smoke-tested). Next: P1.2 db layer.
+- **Phase:** P1 underway — P1.1 skeleton + P1.2 db layer DONE (9/9 tests). Next: P1.3 compatible-node routing.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -85,6 +85,12 @@ axolotl/
   `/v1/models` (empty), 501 stubs for chat endpoints, 404 JSON; structured logging with
   key-redaction + one `log.raw` exception for the management bootstrap token at boot;
   graceful SIGINT/SIGTERM. Running as hub process `ree-core` (:8010).
+- 2026-09-17 (P1.2): db layer landed — `db/{driver,migrations,cache,repos}.mjs`: node:sqlite
+  pinned (WAL confirmed via -wal file), schema v1 (12 tables from db-design.md), read
+  caches with write-invalidation (settings/nodes/connections/combos/aliases), usage
+  write-behind queue (flush @250ms or 50 events, re-queue on failure), breakers
+  RAM-first with 1s debounced persist, request_details 64KB cap + retention purge at
+  boot. 9/9 vitest green (`re-e-core/test/db.test.mjs`). Live `ree-core` boots with db.
 
 ## Knowledge Gained
 

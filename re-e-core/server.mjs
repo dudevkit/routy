@@ -1,25 +1,37 @@
 // RE-E gateway core — bootstrap.
-// Phase 1.1 skeleton: boots, serves /v1 + /api shells, zero runtime dependencies.
-// DB layer, executors, translation: subsequent tasks (roadmap P1.2+).
+// DB layer wired (P1.2); proxy pipeline lands in P1.4-P1.5.
 import http from "node:http";
 import { resolveConfig } from "./lib/config.mjs";
 import { log, setLogLevel } from "./lib/log.mjs";
 import { createRouter, json } from "./lib/router.mjs";
 import { createBootstrapToken } from "./lib/auth.mjs";
+import { openDatabase } from "./db/driver.mjs";
+import { createRepos } from "./db/repos.mjs";
 
 const cfg = resolveConfig();
 setLogLevel(cfg.logLevel);
 
 const VERSION = "0.1.0";
-let bootstrapToken = null; // created lazily in dev; printed once
+let bootstrapToken = null; // printed once at boot (management auth until P2 session store)
 let startedAt = Date.now();
+
+const db = openDatabase(cfg.dataDir);
+const repos = createRepos(db);
+
+// request-detail retention runs at boot; schedule-friendly purge lands with metrics (P4)
+try {
+  const purged = repos.requestDetails.purge();
+  if (purged.aged + purged.capped > 0) log.info("DB", "request_details purged", purged);
+} catch (err) {
+  log.warn("DB", "purge failed", { error: err.message });
+}
 
 const routes = [
   // ── proxy surface (/v1) — auth enforced per-route as handlers land ──
   {
     method: "GET", pattern: /^\/v1\/models$/,
     handler: async (req, res) => {
-      json(res, 200, { object: "list", data: [] }); // populated from db in P1.2
+      json(res, 200, { object: "list", data: [] }); // populated from nodes in P1.3
     },
   },
   {
@@ -61,13 +73,19 @@ server.listen(cfg.port, cfg.host, () => {
     host: cfg.host,
     port: cfg.port,
     home: cfg.home,
-    bootstrapToken, // management auth until P2 session store; printed once
+    bootstrapToken, // intentionally unredacted: printed exactly once at boot
   });
 });
 
-// Graceful shutdown: stop accepting, destroy idle, exit — in-flight streams drain naturally.
+// Graceful shutdown: flush queued writes, close db, drain connections, exit.
 function shutdown(signal) {
   log.info("SHUTDOWN", `received ${signal}, closing`);
+  try {
+    repos.close();
+    db.close();
+  } catch (err) {
+    log.error("SHUTDOWN", "db close failed", { error: err.message });
+  }
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 }
