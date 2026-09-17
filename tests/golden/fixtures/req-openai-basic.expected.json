@@ -1,0 +1,57 @@
+{
+  "meta": {
+    "_toolNameMap": null
+  },
+  "body": {
+    "model": "test-model",
+    "max_tokens": 1024,
+    "stream": true,
+    "temperature": 0.7,
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "List the files in src/"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Sure, checking now.",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Also explain package.json"
+          }
+        ]
+      }
+    ],
+    "system": [
+      {
+        "type": "text",
+        "text": "You are Claude Code, Anthropic's official CLI for Claude."
+      },
+      {
+        "type": "text",
+        "text": "You are a coding assistant.",
+        "cache_control": {
+          "type": "ephemeral",
+          "ttl": "1h"
+        }
+      }
+    ]
+  }
+}

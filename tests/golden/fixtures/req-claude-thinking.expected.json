@@ -1,0 +1,24 @@
+{
+  "meta": {
+    "_toolNameMap": null
+  },
+  "body": {
+    "model": "test-model",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Think step by step"
+      },
+      {
+        "role": "assistant",
+        "content": "Result"
+      },
+      {
+        "role": "user",
+        "content": "Go on"
+      }
+    ],
+    "stream": true,
+    "max_tokens": 1024
+  }
+}

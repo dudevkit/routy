@@ -1,0 +1,25 @@
+{
+  "sourceFormat": "openai",
+  "targetFormat": "claude",
+  "model": "test-model",
+  "body": {
+    "model": "test-model",
+    "stream": true,
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Think step by step"
+      },
+      {
+        "role": "assistant",
+        "content": "Result",
+        "reasoning_content": "Step 1: analyze. Step 2: answer."
+      },
+      {
+        "role": "user",
+        "content": "Go on"
+      }
+    ]
+  }
+}

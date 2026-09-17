@@ -1,0 +1,29 @@
+{
+  "sourceFormat": "openai",
+  "targetFormat": "claude",
+  "model": "test-model",
+  "body": {
+    "model": "test-model",
+    "stream": true,
+    "max_tokens": 1024,
+    "temperature": 0.7,
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a coding assistant."
+      },
+      {
+        "role": "user",
+        "content": "List the files in src/"
+      },
+      {
+        "role": "assistant",
+        "content": "Sure, checking now."
+      },
+      {
+        "role": "user",
+        "content": "Also explain package.json"
+      }
+    ]
+  }
+}

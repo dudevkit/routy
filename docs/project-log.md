@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** Build plan COMPLETE — roadmap + backend + DB design done. Ready for Phase 0.
+- **Phase:** P0 harness ~done (fixtures+tests+baseline ✅; RTK-on bench + L2 capture pending).
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -45,7 +45,6 @@ axolotl/
 
 
 ## Commitments
-
 - 2026-09-17 (user): **Backend-only focus.** Proceed P0 → P1 (pure backend: harness,
   core MVP gateway). **HOLD P2** (management API + dashboard rewire) until the ui-ux
   worktree agent delivers the UI/UX guide and rules; P2's management-API shape must then
@@ -59,13 +58,22 @@ axolotl/
   `docs/provider-catalog.md` (categories, formats, baseUrls, OAuth split, custom
   executor LOC inventory, onboarding checklist). Raw data: `scratch/providers.json`;
   regeneration scripts in `scratch/`. Proxy pools confirmed as kept feature (user).
-- 2026-09-17: UI/UX worktree spun up: `dudevhub/ui-ux` (branch `ui-ux`, child of `axolotl`,
-  Orca-managed). Ownership + merge discipline in `docs/ui-ux/brainstorm-brief.md`. First
-  RE-E git commit: b8c269b (all docs). `.gitignore` excludes upstream `9router/` clone.
 - 2026-09-17: Build plan written — `docs/roadmap.md` (6 phases, session estimates, gates,
   risk register), `docs/backend-architecture.md` (module/port map, request lifecycle, SSE
   pipeline rewrite spec, API surface, error taxonomy), `docs/db-design.md` (node:sqlite
   + WAL, 12-table schema v1, cache layer, write batching, secrets plan).
+- 2026-09-17: UI/UX worktree spun up: `dudevhub/ui-ux` (branch `ui-ux`, child of `axolotl`,
+  Orca-managed). Ownership + merge discipline in `docs/ui-ux/brainstorm-brief.md`. First
+  RE-E git commit: b8c269b (all docs). `.gitignore` excludes upstream `9router/` clone.
+- 2026-09-17 (P0 harness): golden fixture corpus captured — 13 cases (6 request
+  translation openai↔claude incl. tools/reasoning; 7 SSE stream cases incl. passthrough,
+  tool-calls, thinking) → `tests/golden/fixtures/` (33 files).
+- 2026-09-17 (P0 harness): vitest golden suite `tests/golden/` — **13/13 green** against
+  upstream v0.5.75. Normalized volatility: `msg_<epoch>` ids, `created` epoch seconds.
+- 2026-09-17 (P0 bench): baseline measured — production build, isolated instance
+  (DATA_DIR=scratch/bench-data), stub upstream, 40 reqs/stream: direct TTFT p50 ~0-1ms;
+  routed TTFT p50/p90/p99 = 16ms; total p50 662 vs 657ms; 40/40 ok. Results:
+  `scratch/bench-results.json`. RTK-on bench variant + L2 client-facing capture: pending.
 
 ## Knowledge Gained
 
@@ -80,6 +88,20 @@ axolotl/
 - 2026-09-17: Tests cover only embeddings (59 tests). Chat path has no safety net.
 - 2026-09-17: Background subagent spawning is unavailable in this environment ("No model
   selected" error) — do recon inline, don't fan out.
+- 2026-09-17: Upstream ALREADY uses WAL + busy_timeout + synchronous=NORMAL
+  (`schema.js:8-16`) — RE-E's DB wins are driver pinning, caching, write batching, not WAL.
+- 2026-09-17: Compatible-node baseUrl is read from `connection.credentials.providerSpecificData.baseUrl`
+  (`open-sse/executors/default.js:111`), not just node data — node record alone is
+  insufficient for routing.
+- 2026-09-17: Routed overhead ≈16ms flat (p50≈p90≈p99) through upstream's Next.js prod
+  build — contributors: Next route layer + body re-parse + uncached reads. RE-E target
+  ≤5ms requires bypassing Next + caching (as planned in backend-architecture).
+- 2026-09-17: openai→claude translation injects a Claude Code system prompt
+  (CLAUDE_SYSTEM_PROMPT) even with provider=null — fixture-pinned upstream behavior.
+- 2026-09-17: Node gotcha (harness): IncomingMessage 'close' fires when request BODY
+  completes, not on socket close — use ServerResponse 'close' for stream cleanup.
+- 2026-09-17: Bench rig lives in `scratch/` (stub-upstream, seed-bench-db, bench.mjs);
+  hub processes `bench-stub` (:20990) + `bench-router` (:20991) kept running for P0 follow-ups.
 
 ## Open Questions
 

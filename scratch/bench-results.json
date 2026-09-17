@@ -1,0 +1,28 @@
+{
+  "at": "2026-09-17T09:10:59.040Z",
+  "n": 40,
+  "direct": {
+    "label": "direct->stub",
+    "ok": 40,
+    "n": 40,
+    "ttft_p50": 0,
+    "ttft_p90": 1,
+    "ttft_p99": 1,
+    "total_p50": 657,
+    "total_p90": 686
+  },
+  "routed": {
+    "label": "router->stub",
+    "ok": 40,
+    "n": 40,
+    "ttft_p50": 16,
+    "ttft_p90": 16,
+    "ttft_p99": 16,
+    "total_p50": 662,
+    "total_p90": 678
+  },
+  "overhead": {
+    "ttft_p50_delta": 16,
+    "ttft_p90_delta": 15
+  }
+}
