@@ -30,6 +30,7 @@ const latency = [420, 380, 355, 402, 348, 330, 372, 341, 318, 335, 302, 310];
 /**
  * One genre rendered on real components. `schemeClass` overrides the semantic
  * vars (and, for some genres, adds texture via scoped CSS in index.css).
+ * Panels without a class render the base theme (Graphite Pro).
  */
 function CatalogPanel({
   id,
@@ -110,9 +111,9 @@ function CatalogPanel({
 const catalog = [
   {
     id: "graphite",
-    schemeClass: "scheme-graphite",
+    schemeClass: undefined,
     name: "A · Graphite Pro",
-    tagline: "cool charcoal · electric blue · the Linear/Vercel school",
+    tagline: "default — cool charcoal · electric blue · the Linear/Vercel school",
     texture:
       "Hairline borders, zero decoration — restraint is the texture. Status hues stay maximally separated from the accent.",
   },
@@ -134,9 +135,9 @@ const catalog = [
   },
   {
     id: "ember",
-    schemeClass: undefined,
+    schemeClass: "scheme-ember",
     name: "D · Warm Ember",
-    tagline: "current upstream · coral · Claude-like warmth",
+    tagline: "upstream heritage · coral · Claude-like warmth",
     texture:
       "Warm neutral surfaces, humanist coral accent, traffic-light chrome. Friendly; coral sits near danger-red.",
   },
@@ -173,7 +174,7 @@ export function ThemeSampler() {
         <h1 className="text-lg font-semibold text-text-main">Theme Catalog</h1>
         <p className="text-xs text-text-muted">
           Seven genre candidates on the approved shell — same components, same blocking; only tokens + texture change.
-          Jump:{" "}
+          Base theme = Graphite Pro. Jump:{" "}
           {catalog.map((c, i) => (
             <span key={c.id}>
               {i > 0 && " · "}

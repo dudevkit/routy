@@ -1,5 +1,7 @@
-/* RE-E preview — styling mirrors upstream 9Router src/app/globals.css verbatim
- * (palette, surfaces, utilities). Upstream file is the SSOT for visual identity. */
+/* RE-E preview — shell/blocking mirrors upstream 9Router; visual theme is
+ * "Graphite Pro" (user pick, 2026-09-17): cool charcoal + electric blue.
+ * Semantic vars are the SSOT for components; .dark = primary target,
+ * :root = light twin. Theme candidates live in the catalog section below. */
 @import "tailwindcss";
 @import "material-symbols";
 
@@ -10,112 +12,112 @@
 .fonts-loaded .material-symbols-outlined { opacity: 1; transition: opacity .12s ease-out; }
 
 /* ============================================================
-   9Router palette — adopted from 9remote_private/web
-   Brand orange (dark) / soft coral (light), neutral warm bases
+   Graphite Pro palette — cool charcoal, electric blue #4D9DFF.
+   Status hues (green/amber/red) stay maximally separated from
+   the interactive accent.
    ============================================================ */
 :root {
-  /* Brand scale (light) - centered on #E56A4A */
-  --color-brand-50: #fdf1ed;
-  --color-brand-100: #fadccf;
-  --color-brand-200: #f4b59c;
-  --color-brand-300: #ee8d6a;
-  --color-brand-400: #ea7855;
-  --color-brand-500: #E56A4A;
-  --color-brand-600: #cc5236;
-  --color-brand-700: #a64027;
-  --color-brand-800: #7a2f1d;
-  --color-brand-900: #4d1e12;
+  /* Brand scale (light twin) — blue ramp centered on #2E7FE0 */
+  --color-brand-50: #EFF6FF;
+  --color-brand-100: #DBEAFF;
+  --color-brand-200: #B4D3FF;
+  --color-brand-300: #8ABDFF;
+  --color-brand-400: #63A4FF;
+  --color-brand-500: #2E7FE0;
+  --color-brand-600: #256FC9;
+  --color-brand-700: #1D5CB0;
+  --color-brand-800: #17499A;
+  --color-brand-900: #12356E;
 
-  /* Primary (legacy alias for backward compat with existing components) */
   --color-primary: var(--color-brand-500);
   --color-primary-hover: var(--color-brand-600);
 
   /* Surfaces & backgrounds (light) */
-  --color-bg: #FDFAF6;
-  --color-bg-alt: #F7F3EE;
-  --color-surface: #ffffff;
-  --color-surface-2: #f4f4f5;
-  --color-surface-3: #e7e7e9;
-  --color-sidebar: rgba(244, 241, 236, 0.85);
+  --color-bg: #F7F8FA;
+  --color-bg-alt: #EFF2F6;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #EEF1F5;
+  --color-surface-3: #E3E8EF;
+  --color-sidebar: rgba(238, 241, 245, 0.85);
 
   /* Borders */
-  --color-border: #e5e7eb;
-  --color-border-subtle: #f1f1f3;
+  --color-border: #D5DBE3;
+  --color-border-subtle: #E7EBF0;
 
   /* Text */
-  --color-text: #0a0a0a;
-  --color-text-main: #0a0a0a;
-  --color-text-muted: #6B7280;
-  --color-text-subtle: #9CA3AF;
+  --color-text: #171B22;
+  --color-text-main: #171B22;
+  --color-text-muted: #5C6675;
+  --color-text-subtle: #8A94A3;
 
   /* Status */
-  --color-danger: #cf222e;
-  --color-success: #10B981;
-  --color-warning: #F59E0B;
-  --color-info: #3B82F6;
+  --color-danger: #D93025;
+  --color-success: #17945E;
+  --color-warning: #B7791F;
+  --color-info: #2F6FEB;
 
   /* Radius */
   --radius-brand: 10px;
   --radius-brand-lg: 14px;
 
   /* Shadows */
-  --shadow-soft: 0 1px 2px 0 rgba(0,0,0,0.04);
-  --shadow-warm: 0 2px 12px -2px rgba(229, 106, 74, 0.18);
-  --shadow-elevated: 0 12px 28px -4px rgba(60, 50, 45, 0.06);
+  --shadow-soft: 0 1px 2px 0 rgba(15, 20, 30, 0.05);
+  --shadow-warm: 0 2px 12px -2px rgba(46, 127, 224, 0.20);
+  --shadow-elevated: 0 12px 28px -4px rgba(25, 35, 50, 0.08);
   --shadow-elev:
-    inset 0 1px 0 0 rgba(255,255,255,0.8),
-    0 1px 2px rgba(15,23,42,0.04),
-    0 12px 36px -8px rgba(15,23,42,0.10);
-  --shadow-focus: 0 0 0 3px rgba(229,106,74,0.18);
+    inset 0 1px 0 0 rgba(255,255,255,0.9),
+    0 1px 2px rgba(15,23,42,0.05),
+    0 12px 36px -8px rgba(15,23,42,0.12);
+  --shadow-focus: 0 0 0 3px rgba(46, 127, 224, 0.22);
 
   color-scheme: light;
 }
 
 .dark {
-  /* Brand scale (dark) - centered on #E56A4A, same as light for consistency */
-  --color-brand-50: #fdf1ed;
-  --color-brand-100: #fadccf;
-  --color-brand-200: #f4b59c;
-  --color-brand-300: #ee8d6a;
-  --color-brand-400: #ea7855;
-  --color-brand-500: #E56A4A;
-  --color-brand-600: #cc5236;
-  --color-brand-700: #a64027;
-  --color-brand-800: #7a2f1d;
-  --color-brand-900: #4d1e12;
+  /* Brand scale (dark) — blue ramp centered on #4D9DFF */
+  --color-brand-50: #0E1B2E;
+  --color-brand-100: #12233B;
+  --color-brand-200: #173252;
+  --color-brand-300: #1E4470;
+  --color-brand-400: #2E6BC0;
+  --color-brand-500: #4D9DFF;
+  --color-brand-600: #3B85E8;
+  --color-brand-700: #2E6FD0;
+  --color-brand-800: #2456A8;
+  --color-brand-900: #1A3D75;
 
-  --color-primary: #E56A4A;
-  --color-primary-hover: #cc5236;
+  --color-primary: var(--color-brand-500);
+  --color-primary-hover: var(--color-brand-600);
 
-  /* Surfaces (dark - Claude-like neutral warm) */
-  --color-bg: #1a1a1a;
-  --color-bg-alt: #1F1F1E;
-  --color-surface: #262626;
-  --color-surface-2: #303030;
-  --color-surface-3: #3a3a3a;
-  --color-sidebar: rgba(30, 30, 30, 0.85);
+  /* Surfaces (dark — cool graphite) */
+  --color-bg: #0F1115;
+  --color-bg-alt: #141821;
+  --color-surface: #181D26;
+  --color-surface-2: #212834;
+  --color-surface-3: #2B3442;
+  --color-sidebar: rgba(20, 24, 33, 0.85);
 
-  --color-border: #333333;
-  --color-border-subtle: #2a2a2a;
+  --color-border: #2A3140;
+  --color-border-subtle: #232937;
 
-  --color-text: #ededed;
-  --color-text-main: #ededed;
-  --color-text-muted: #9ca3af;
-  --color-text-subtle: #6b7280;
+  --color-text: #E8ECF4;
+  --color-text-main: #E8ECF4;
+  --color-text-muted: #98A2B3;
+  --color-text-subtle: #657083;
 
-  --color-danger: #ef4444;
-  --color-success: #22c55e;
-  --color-warning: #fbbf24;
-  --color-info: #60a5fa;
+  --color-danger: #F0564E;
+  --color-success: #3DD68C;
+  --color-warning: #F5B93F;
+  --color-info: #8B7CFF;
 
-  --shadow-soft: 0 1px 2px 0 rgba(0,0,0,0.3);
-  --shadow-warm: 0 2px 12px -2px rgba(229, 106, 74, 0.25);
+  --shadow-soft: 0 1px 2px 0 rgba(0,0,0,0.35);
+  --shadow-warm: 0 2px 12px -2px rgba(77, 157, 255, 0.22);
   --shadow-elevated: 0 12px 28px -4px rgba(0, 0, 0, 0.45);
   --shadow-elev:
-    inset 0 1px 0 0 rgba(255,255,255,0.06),
-    0 1px 2px rgba(0,0,0,0.4),
+    inset 0 1px 0 0 rgba(255,255,255,0.05),
+    0 1px 2px rgba(0,0,0,0.40),
     0 16px 48px -8px rgba(0,0,0,0.55);
-  --shadow-focus: 0 0 0 3px rgba(229, 106, 74, 0.18);
+  --shadow-focus: 0 0 0 3px rgba(77, 157, 255, 0.22);
 
   color-scheme: dark;
 }
@@ -150,7 +152,7 @@
   --color-text-main: var(--color-text-main);
   --color-text-muted: var(--color-text-muted);
   --color-text-subtle: var(--color-text-subtle);
-  --color-accent: var(--color-brand-500);
+  --color-accent: var(--color-primary);
   --color-danger: var(--color-danger);
   --color-success: var(--color-success);
   --color-warning: var(--color-warning);
@@ -180,14 +182,14 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Selection - brand-tinted */
+/* Selection - accent-tinted */
 ::selection {
-  background-color: rgba(229, 106, 74, 0.25);
+  background-color: rgba(77, 157, 255, 0.22);
   color: var(--color-primary);
 }
 .dark ::selection {
-  background-color: rgba(229, 106, 74, 0.3);
-  color: var(--color-brand-300);
+  background-color: rgba(77, 157, 255, 0.28);
+  color: var(--color-brand-400);
 }
 
 /* iOS keyboard accent */
@@ -272,7 +274,7 @@ input, textarea {
   background: rgba(255, 255, 255, 0.72);
 }
 .dark .bg-vibrancy {
-  background: rgba(38, 38, 38, 0.72);
+  background: rgba(24, 29, 38, 0.72);
 }
 
 /* macOS Traffic Lights */
@@ -357,10 +359,36 @@ button:disabled,
 }
 
 /* ============================================================
-   Theme Lab — candidate schemes (override semantic vars on a wrapper).
-   Base = upstream "Warm Ember". Utilities use var() at usage-site
-   (@theme inline), so wrapper overrides re-skin real components.
+   Theme Catalog — genre candidates (Theme Lab at /theme).
+   Base = Graphite Pro (above). Unlayered rules below beat Tailwind
+   utilities, which is what lets Swiss/Blueprint/Aurora restyle
+   structure too. `scheme-ember` preserves the upstream palette.
    ============================================================ */
+.scheme-ember {
+  --color-bg: #1a1a1a;
+  --color-bg-alt: #1F1F1E;
+  --color-surface: #262626;
+  --color-surface-2: #303030;
+  --color-surface-3: #3a3a3a;
+  --color-border: #333333;
+  --color-border-subtle: #2a2a2a;
+  --color-text: #ededed;
+  --color-text-main: #ededed;
+  --color-text-muted: #9ca3af;
+  --color-text-subtle: #6b7280;
+  --color-primary: #E56A4A;
+  --color-primary-hover: #cc5236;
+  --color-accent: #E56A4A;
+  --color-success: #22c55e;
+  --color-warning: #fbbf24;
+  --color-danger: #ef4444;
+  --color-info: #60a5fa;
+  --shadow-soft: 0 1px 2px 0 rgba(0,0,0,0.3);
+  --shadow-warm: 0 2px 12px -2px rgba(229, 106, 74, 0.25);
+  --shadow-focus: 0 0 0 3px rgba(229, 106, 74, 0.18);
+  color-scheme: dark;
+}
+
 .scheme-graphite {
   --color-bg: #0F1115;
   --color-bg-alt: #141821;
@@ -410,16 +438,14 @@ button:disabled,
   --shadow-focus: 0 0 0 3px rgba(45,212,191,0.20);
   color-scheme: dark;
 }
+.scheme-phosphor .mini-app::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 3px);
+}
 
-/* Data-font candidates */
-.mono-jb { font-family: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace; }
-.mono-plex { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
-
-/* ============================================================
-   Theme Catalog — genre candidates. Each scheme class overrides
-   the semantic vars; unlayered rules below beat Tailwind utilities,
-   which is what lets Swiss/Blueprint/Aurora restyle structure too.
-   ============================================================ */
 .scheme-nord {
   --color-bg: #2E3440;
   --color-bg-alt: #333B47;
@@ -548,10 +574,6 @@ button:disabled,
   -webkit-backdrop-filter: blur(14px);
 }
 
-.scheme-phosphor .mini-app::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 3px);
-}
+/* Data-font candidates (Theme Lab) */
+.mono-jb { font-family: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace; }
+.mono-plex { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }

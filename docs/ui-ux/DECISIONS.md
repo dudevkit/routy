@@ -127,3 +127,19 @@ brainstorm remain unchanged — only the visual identity + blocking changed.
 Implementation notes: `material-symbols` is CSS-only → must stay in vite
 `optimizeDeps.exclude` (dep optimizer chokes on it and reload-loops); tailwind v4
 stays on `@tailwindcss/postcss`.
+
+## 2026-09-17 — Theme adopted: Graphite Pro (user-ratified)
+
+User picked candidate A from the visual catalog. `index.css` promoted: `.dark` =
+Graphite dark (`#0F1115/#181D26` surfaces, `#4D9DFF` accent, status `#3DD68C`/
+`#F5B93F`/`#F0564E`), `:root` = matching light twin (`#F7F8FA`, `#2E7FE0` accent) —
+ThemeToggle now fully functional. `brand-*` scale remapped coral → blue ramp so the
+sidebar gradient + any brand utilities follow the accent. `scheme-ember` class
+preserves the upstream palette as a catalog candidate; all 7 genre panels remain
+previewable at /theme. Verified: dark + light computed styles, toggle round-trip,
+Overview + Theme Lab intact.
+
+Extras ratified in the same pass (from the catalog page): latency sparklines and
+`kbd` hints now ship with the shell; ⌘K palette, density toggle, skeletons = v1.1.
+Data font default remains the system mono stack pending JetBrains Mono adoption
+(comparable in the lab; ligatures off for keys/URLs regardless).
