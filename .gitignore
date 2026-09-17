@@ -6,3 +6,6 @@
 node_modules/
 *.log
 .DS_Store
+/scratch/bench-data/
+/scratch/golden-data/
+tests/golden/.tmp-data/
