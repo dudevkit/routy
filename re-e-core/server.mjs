@@ -1,5 +1,5 @@
 // RE-E gateway core — bootstrap.
-// DB layer wired (P1.2); proxy pipeline lands in P1.4-P1.5.
+// DB layer (P1.2) + routing (P1.3) wired; proxy pipeline lands in P1.4-P1.5.
 import http from "node:http";
 import { resolveConfig } from "./lib/config.mjs";
 import { log, setLogLevel } from "./lib/log.mjs";
@@ -7,6 +7,7 @@ import { createRouter, json } from "./lib/router.mjs";
 import { createBootstrapToken } from "./lib/auth.mjs";
 import { openDatabase } from "./db/driver.mjs";
 import { createRepos } from "./db/repos.mjs";
+import { listModels } from "./core/routing.mjs";
 
 const cfg = resolveConfig();
 setLogLevel(cfg.logLevel);
@@ -31,7 +32,7 @@ const routes = [
   {
     method: "GET", pattern: /^\/v1\/models$/,
     handler: async (req, res) => {
-      json(res, 200, { object: "list", data: [] }); // populated from nodes in P1.3
+      json(res, 200, listModels(repos)); // aliases + combos + node prefixes; node-local models fetched in P1.4
     },
   },
   {

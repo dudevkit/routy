@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** P1 underway — P1.1 skeleton + P1.2 db layer DONE (9/9 tests). Next: P1.3 compatible-node routing.
+- **Phase:** P1 underway — P1.1+P1.2+P1.3 DONE (19/19 tests). Next: P1.4 executor port.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -91,6 +91,12 @@ axolotl/
   write-behind queue (flush @250ms or 50 events, re-queue on failure), breakers
   RAM-first with 1s debounced persist, request_details 64KB cap + retention purge at
   boot. 9/9 vitest green (`re-e-core/test/db.test.mjs`). Live `ree-core` boots with db.
+- 2026-09-17 (P1.3): routing landed — `core/routing.mjs`: model-string resolution
+  (context-marker strip `[1m]` → alias → combo → node prefix), breaker-aware health
+  flags (open+unexpired = unhealthy; expired = half-open candidate), `listModels()` for
+  /v1/models. 19/19 tests green incl. alias-loop guard and disabled-node exclusion.
+  Live-verified: seeded node/alias/combo appear in /v1/models of running `ree-core`
+  (`scratch/seed-ree.mjs`; WAL allows second-process seed).
 
 ## Knowledge Gained
 
