@@ -1,356 +1,154 @@
 import { useState } from "react";
-import {
-  useAddNode,
-  useFailures,
-  useGateway,
-  useNodes,
-  useRemoveNode,
-  useResetBreaker,
-  useStats,
-  useTestConnection,
-  useTestNode,
-} from "../api/hooks";
-import type { NodeStatus, TestResult, UpstreamNode } from "../api/types";
-import { Broadcast, Check, CheckCircle, Copy, Plus, Trash } from "../components/icons";
+import { Link } from "react-router-dom";
+import { useFailures, useGateway, useNodes, useResetBreaker, useStats, useTestNode } from "../api/hooks";
+import type { UpstreamNode } from "../api/types";
+import { statusMeta } from "../utils/nodeStatus";
+import { toastApiError } from "../utils/errors";
+import { fmtClock, fmtMs, fmtTokens } from "../utils/format";
+import { CopyChip } from "../components/CopyChip";
+import { NodeFormModal } from "../components/NodeFormModal";
+import { StatTile } from "../components/StatTile";
+import { ArrowsClockwise, Broadcast, List, Plus } from "../components/icons";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
-import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { StatusDot } from "../components/ui/StatusDot";
 import { useToast } from "../components/ui/Toast";
 
-const statusBadge: Record<NodeStatus, { variant: "success" | "warning" | "error" | "default"; label: string }> = {
-  healthy: { variant: "success", label: "healthy" },
-  degraded: { variant: "warning", label: "degraded" },
-  down: { variant: "error", label: "breaker open" },
-  disabled: { variant: "default", label: "disabled" },
-};
-
-const dotTone: Record<NodeStatus, "green" | "yellow" | "red" | "gray"> = {
-  healthy: "green",
-  degraded: "yellow",
-  down: "red",
-  disabled: "gray",
-};
-
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
-function CopyChip({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      onClick={() => {
-        navigator.clipboard?.writeText(value).catch(() => {});
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      }}
-      title={`Copy ${value}`}
-      className="inline-flex h-7 max-w-[280px] items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 text-xs font-mono text-text-main transition-colors hover:border-brand-500/40"
-    >
-      {copied ? (
-        <Check size={14} className="shrink-0 text-success" />
-      ) : (
-        <Copy size={14} className="shrink-0 text-text-muted" />
-      )}
-      <span className="truncate">{value}</span>
-    </button>
-  );
-}
-
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <Card padding="sm">
-      <div className="flex flex-col gap-1">
-        <span className="text-xs text-text-muted">{label}</span>
-        <span className="font-display text-xl font-semibold tracking-tight tabular">{value}</span>
-        {sub && <span className="text-[10px] text-text-subtle">{sub}</span>}
-      </div>
-    </Card>
-  );
-}
-
-function NodeCard({ node }: { node: UpstreamNode }) {
+function HealthCard({ node, onRemove }: { node: UpstreamNode; onRemove: (node: UpstreamNode) => void }) {
   const toast = useToast();
   const testNode = useTestNode();
   const resetBreaker = useResetBreaker();
-  const removeNode = useRemoveNode();
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const badge = statusBadge[node.status];
-
-  const onTest = () =>
-    testNode.mutate(node.id, {
-      onSuccess: (r) => {
-        toast(
-          r.ok ? `Test passed · ${r.latencyMs}ms · ${r.modelCount} models` : (r.error ?? "Test failed"),
-          r.ok ? "success" : "error",
-        );
-      },
-    });
+  const meta = statusMeta[node.status];
 
   return (
-    <Card padding="sm" className="flex flex-col gap-2.5">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <StatusDot tone={dotTone[node.status]} />
-          <span className="truncate text-sm font-semibold text-text-main">{node.name}</span>
-          <Badge variant={badge.variant} dot size="sm">
-            {badge.label}
-          </Badge>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <Button size="sm" variant="secondary" onClick={onTest} loading={testNode.isPending}>
-            Test
-          </Button>
-          {node.status === "down" && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() =>
-                resetBreaker.mutate(node.id, {
-                  onSuccess: () => toast("Breaker reset"),
-                })
-              }
-              disabled={resetBreaker.isPending}
-            >
-              Reset Breaker
-            </Button>
-          )}
-          <Button
-            size="sm"
-            variant="ghost"
-            aria-label={`Remove ${node.name}`}
-            className="hover:bg-danger/10 hover:text-danger"
-            icon={<Trash size={14} />}
-            onClick={() => setConfirmRemove(true)}
-          />
-        </div>
+    <Card padding="sm" className="flex flex-col gap-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <StatusDot tone={meta.dot} />
+        <span className="truncate text-sm font-semibold text-text-main">{node.name}</span>
+        <Badge variant={meta.badge} size="sm" dot>
+          {meta.label}
+        </Badge>
+        <button
+          onClick={() =>
+            testNode.mutate(node.id, {
+              onSuccess: (r) =>
+                toast(r.ok ? `Test passed · ${r.latencyMs}ms · ${r.modelCount} models` : (r.error ?? "Test failed"), r.ok ? "success" : "error"),
+              onError: (err) => toastApiError(toast, err, "Test failed"),
+            })
+          }
+          className="ml-auto shrink-0 rounded-[6px] border border-border px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:border-brand-500/40 hover:text-text-main"
+        >
+          {testNode.isPending ? "Testing" : "Test"}
+        </button>
       </div>
 
-      <div className="truncate font-mono text-xs text-text-muted">{node.baseUrl}</div>
+      <div className="truncate font-mono text-[11px] text-text-muted">{node.baseUrl}</div>
 
-      <div className="flex items-center gap-4 text-xs text-text-muted">
-        <span className="font-mono tabular">{node.latencyMs == null ? "—" : `${node.latencyMs}ms`}</span>
-        <span className="tabular">{node.modelCount} models</span>
-        <span className="font-mono">{node.prefix ? `prefix ${node.prefix}` : "no prefix"}</span>
-        <span className="ml-auto font-mono">{node.keyMasked}</span>
+      <div className="flex items-center gap-3 font-mono text-[11px] text-text-muted tabular">
+        <span>{fmtMs(node.latencyMs)}</span>
+        <span>{node.modelCount === 0 ? "0 models" : `${node.modelCount} models`}</span>
+        <span className="ml-auto">{node.keyMasked}</span>
       </div>
 
-      {node.lastError && <p className="font-mono text-xs text-danger">{node.lastError}</p>}
+      {node.lastError && <p className="truncate font-mono text-[11px] text-danger">{node.lastError}</p>}
 
-      <Modal
-        isOpen={confirmRemove}
-        onClose={() => setConfirmRemove(false)}
-        title={`Remove ${node.name}?`}
-        size="sm"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setConfirmRemove(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              onClick={() => {
-                removeNode.mutate(node.id, {
-                  onSuccess: () => toast("Upstream removed"),
-                });
-                setConfirmRemove(false);
-              }}
-            >
-              Remove Upstream
-            </Button>
-          </>
-        }
-      >
-        <p className="text-sm text-text-muted">
-          Requests routing to this node will fail until a replacement is added.
-        </p>
-      </Modal>
+      {node.status === "down" && (
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={<ArrowsClockwise size={13} />}
+          disabled={resetBreaker.isPending}
+          onClick={() =>
+            resetBreaker.mutate(node.id, {
+              onSuccess: () => toast("Breaker reset"),
+              onError: (err) => toastApiError(toast, err, "Reset failed"),
+            })
+          }
+        >
+          Reset Breaker
+        </Button>
+      )}
+
+      <button onClick={() => onRemove(node)} className="self-start text-[11px] text-text-subtle underline decoration-border underline-offset-2 transition-colors hover:text-danger">
+        Manage in Upstreams
+      </button>
     </Card>
-  );
-}
-
-type TestState = null | "testing" | TestResult;
-
-const emptyForm = { name: "", baseUrl: "", apiKey: "", prefix: "" };
-
-function AddUpstreamModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const toast = useToast();
-  const [form, setForm] = useState(emptyForm);
-  const [test, setTest] = useState<TestState>(null);
-  const testConnection = useTestConnection();
-  const addNode = useAddNode();
-
-  const close = () => {
-    setForm(emptyForm);
-    setTest(null);
-    onClose();
-  };
-
-  const urlLooksValid = /^https?:\/\/.+/.test(form.baseUrl.trim());
-  const canSave = form.name.trim().length > 0 && urlLooksValid;
-
-  const runTest = () => {
-    setTest("testing");
-    testConnection.mutate(
-      { baseUrl: form.baseUrl },
-      {
-        onSuccess: (r) => setTest(r),
-        onError: () => setTest({ ok: false, error: "Node unreachable. Check baseUrl and network." }),
-      },
-    );
-  };
-
-  return (
-    <Modal
-      isOpen={isOpen}
-      onClose={close}
-      title="Add Upstream"
-      footer={
-        <>
-          <Button variant="secondary" onClick={close}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            icon={<Plus size={16} />}
-            disabled={!canSave || addNode.isPending}
-            loading={addNode.isPending}
-            onClick={() =>
-              addNode.mutate(form, {
-                onSuccess: () => {
-                  toast("Upstream added");
-                  close();
-                },
-              })
-            }
-          >
-            Add Upstream
-          </Button>
-        </>
-      }
-    >
-      <div className="flex flex-col gap-4">
-        <Input
-          label="Name"
-          autoFocus
-          value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })}
-          placeholder="My upstream"
-        />
-        <Input
-          label="Base URL"
-          mono
-          value={form.baseUrl}
-          onChange={(e) => {
-            setForm({ ...form, baseUrl: e.target.value });
-            setTest(null);
-          }}
-          placeholder="https://api.example.com/v1"
-        />
-        <Input
-          label="API Key"
-          mono
-          type="password"
-          value={form.apiKey}
-          onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
-          placeholder="sk-…"
-        />
-        <Input
-          label="Model Prefix"
-          mono
-          hint="Optional · models with this prefix route to the node"
-          value={form.prefix}
-          onChange={(e) => setForm({ ...form, prefix: e.target.value })}
-          placeholder="or/"
-        />
-
-        <div className="flex min-h-7 items-center gap-3">
-          <Button
-            variant="outline"
-            size="sm"
-            loading={test === "testing"}
-            disabled={!urlLooksValid}
-            onClick={runTest}
-          >
-            Test Connection
-          </Button>
-          {test && test !== "testing" &&
-            (test.ok ? (
-              <span className="flex items-center gap-1.5 font-mono text-xs text-success tabular">
-                <CheckCircle size={14} weight="fill" className="shrink-0" />
-                200 · {test.latencyMs}ms · {test.modelCount} models
-              </span>
-            ) : (
-              <span className="text-xs text-danger">{test.error}</span>
-            ))}
-        </div>
-      </div>
-    </Modal>
   );
 }
 
 export function Overview() {
   const nodes = useNodes();
   const stats = useStats();
-  const failures = useFailures();
+  const failures = useFailures(5);
   const gateway = useGateway();
   const [addOpen, setAddOpen] = useState(false);
+  const [pendingRemove, setPendingRemove] = useState<UpstreamNode | null>(null);
 
-  const addButton = (
-    <Button variant="primary" icon={<Plus size={16} />} onClick={() => setAddOpen(true)}>
-      Add Upstream
-    </Button>
-  );
+  const s = stats.data;
+  const quiet = !!s && s.requestsToday === 0 && s.tokens7d === 0;
+  const count = nodes.data?.length ?? 0;
 
   return (
-    <div className="flex flex-col gap-6 px-1 sm:px-0">
-      {/* Endpoint strip */}
+    <div className="flex flex-col gap-6">
+      {/* Endpoint strip — read from GET /api/gateway, never hardcoded */}
       {gateway.data && (
-        <Card padding="sm" className="flex items-center gap-3">
+        <Card padding="sm" className="flex flex-wrap items-center gap-3">
           <StatusDot tone={gateway.data.online ? "green" : "red"} pulse={gateway.data.online} />
           <span className="text-xs text-text-muted">Proxy endpoint</span>
           <CopyChip value={gateway.data.endpoint} />
-          <span className="text-xs text-text-muted">API key</span>
+          <span className="text-xs text-text-muted">Router key</span>
           <CopyChip value={gateway.data.keyMasked} />
           <span className="ml-auto font-mono text-[10px] text-text-subtle">v{gateway.data.version}</span>
         </Card>
       )}
 
       {/* Stats */}
-      {stats.data && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 sm:gap-4">
-          <StatCard label="Requests · today" value={stats.data.requestsToday.toLocaleString()} />
-          <StatCard label="Tokens · 7d" value={fmtTokens(stats.data.tokens7d)} />
-          <StatCard label="Cost · 7d" value={`$${stats.data.costUsd7d.toFixed(2)}`} />
-          <StatCard label="Error rate" value={`${stats.data.errorRatePct.toFixed(1)}%`} />
-          <StatCard label="TTFT · p50" value={`${stats.data.ttftP50Ms}ms`} />
-        </div>
-      )}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 sm:gap-4">
+        <StatTile label="Requests · today" value={(s?.requestsToday ?? 0).toLocaleString()} loading={stats.isLoading} />
+        <StatTile label="Tokens · 7d" value={fmtTokens(s?.tokens7d ?? 0)} loading={stats.isLoading} />
+        <StatTile label="Cost · 7d" value={`$${(s?.costUsd7d ?? 0).toFixed(4)}`} loading={stats.isLoading} />
+        <StatTile label="Error rate · 7d" value={`${(s?.errorRatePct ?? 0).toFixed(1)}%`} loading={stats.isLoading} />
+        <StatTile
+          label="TTFT · p50"
+          value={s && s.ttftP50Ms > 0 ? `${s.ttftP50Ms}ms` : "—"}
+          sub={s && s.ttftP50Ms === 0 ? "no successful probe yet" : undefined}
+          loading={stats.isLoading}
+        />
+      </div>
 
-      {/* Upstreams */}
+      {/* Upstream health */}
       <section className="flex flex-col gap-3 sm:gap-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-text-main">Upstreams</h2>
+          <h2 className="text-sm font-semibold text-text-main">Upstream health</h2>
           <div className="flex items-center gap-3">
-            <span className="text-xs text-text-muted tabular">{nodes.data?.length ?? 0} nodes</span>
-            {addButton}
+            <span className="text-xs text-text-muted tabular">{count} nodes</span>
+            <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setAddOpen(true)}>
+              Add Upstream
+            </Button>
           </div>
         </div>
 
-        {nodes.data && nodes.data.length === 0 ? (
+        {nodes.isLoading ? (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 sm:gap-4">
+            {[0, 1, 2].map((i) => (
+              <Card key={i} padding="sm" className="h-[118px]" />
+            ))}
+          </div>
+        ) : count === 0 ? (
           <Card padding="lg" className="flex flex-col items-center justify-center gap-3 text-center">
             <Broadcast size={40} className="text-text-subtle" />
             <p className="text-sm text-text-muted">No upstreams yet. Add one to start routing.</p>
-            {addButton}
+            <Button variant="primary" icon={<Plus size={16} />} onClick={() => setAddOpen(true)}>
+              Add Upstream
+            </Button>
           </Card>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 sm:gap-4">
-            {nodes.data?.map((n) => <NodeCard key={n.id} node={n} />)}
+            {nodes.data?.map((n) => (
+              <HealthCard key={n.id} node={n} onRemove={setPendingRemove} />
+            ))}
           </div>
         )}
       </section>
@@ -358,30 +156,33 @@ export function Overview() {
       {/* Recent failures */}
       {failures.data && failures.data.length > 0 && (
         <section className="flex flex-col gap-3 sm:gap-4">
-          <h2 className="text-sm font-semibold text-text-main">Recent Failures</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-text-main">Recent Failures</h2>
+            <Link to="/usage?tab=details" className="text-[11px] text-text-muted underline decoration-border underline-offset-2 hover:text-primary">
+              All requests
+            </Link>
+          </div>
           <Card padding="none" className="overflow-hidden">
             <table className="w-full">
               <thead>
                 <tr className="bg-bg-alt text-left">
                   <th className="px-4 py-2 text-xs font-medium text-text-muted">Time</th>
-                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Request</th>
                   <th className="px-4 py-2 text-xs font-medium text-text-muted">Node</th>
                   <th className="px-4 py-2 text-xs font-medium text-text-muted">Error</th>
-                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Message</th>
+                  <th className="hidden px-4 py-2 text-xs font-medium text-text-muted sm:table-cell">Request</th>
                 </tr>
               </thead>
               <tbody className="font-mono text-xs tabular">
                 {failures.data.map((f) => (
                   <tr key={f.id} className="border-t border-border-subtle">
-                    <td className="px-4 py-2 text-text-muted">{f.at}</td>
-                    <td className="px-4 py-2 text-text-main">{f.requestId}</td>
+                    <td className="px-4 py-2 text-text-muted">{fmtClock(f.at)}</td>
                     <td className="px-4 py-2 text-text-main">{f.nodeName}</td>
                     <td className="px-4 py-2">
                       <Badge variant={f.errorCode === "rate_limited" ? "warning" : "error"} size="sm">
                         {f.errorCode}
                       </Badge>
                     </td>
-                    <td className="px-4 py-2 text-text-muted">{f.message}</td>
+                    <td className="hidden px-4 py-2 text-text-muted sm:table-cell">#{f.requestId}</td>
                   </tr>
                 ))}
               </tbody>
@@ -390,7 +191,35 @@ export function Overview() {
         </section>
       )}
 
-      <AddUpstreamModal isOpen={addOpen} onClose={() => setAddOpen(false)} />
+      {count > 0 && quiet && (
+        <p className="text-xs text-text-subtle">
+          Gateway is up and routed nothing yet — send one request through{" "}
+          <span className="font-mono text-text-main">/v1/chat/completions</span>.
+        </p>
+      )}
+
+      <NodeFormModal isOpen={addOpen} onClose={() => setAddOpen(false)} />
+
+      <Modal
+        isOpen={!!pendingRemove}
+        onClose={() => setPendingRemove(null)}
+        title={pendingRemove ? `Manage ${pendingRemove.name}?` : "manage"}
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setPendingRemove(null)}>
+              Cancel
+            </Button>
+            <Link to="/upstreams">
+              <Button variant="primary" icon={<List size={14} />}>
+                Open Upstreams
+              </Button>
+            </Link>
+          </>
+        }
+      >
+        <p className="text-sm text-text-muted">Removal is handled on the Upstreams screen, where the node's keys live.</p>
+      </Modal>
     </div>
   );
 }
