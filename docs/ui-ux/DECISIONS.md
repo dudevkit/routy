@@ -223,3 +223,36 @@ semantics question, and whether `GET /v1/models` is intentionally public.
 
 **Also fixed:** Combos suggestion copy no longer blames the gateway for an empty
 install (tri-state: loading / reachable-empty / unavailable-with-reason).
+
+## 2026-09-19 — Supervisor recovery incident (02:0x local)
+
+`ree-core`, `ree-stub`, `ree-ui-dev` all reported exit. Sequence, with the two
+conclusions that matter for how we run this stack:
+
+1. **Orphan + EADDRINUSE, not a gateway crash.** The hub-tracked launch died with
+   its wrapper, but the Windows node child survived holding 8010; the
+   `restart=on-failure` policy then spawned attempts that each threw an unhandled
+   `EADDRINUSE` and exited 1 (8 restarts). Read "crash loop", actually a stale
+   supervisor. Fixed by stopping the job, `Stop-Process` on the orphan, then
+   starting fresh; all three are now `persist: true` so client teardown stops
+   killing them. Filed as §6b: the gateway should fail with one human line + a
+   pid in the boot record, not a stack.
+2. **My async probes were the bug, twice.** Backgrounded `bash` jobs in this
+   environment have no `curl` (and a different `/tmp`), so a `if ! curl …` liveness
+   loop reports "DOWN" on its first poll every time. Two false "the core died
+   again" calls came from that. Use `node -e` with `fetch` for background probes.
+   Real measurement: 120 × `GET /api/health` at 500 ms → p50 16 ms, p95 17 ms,
+   max 39 ms, 0 failures. Gateway was healthy throughout.
+
+Also corrected §5 of `contract-requests.md`: request lines *do* exist at `debug`
+(`FETCH demo ← 200 ttft=19ms` appeared live in the ring), so the accurate claim is
+"nothing at the default `info` level" — the ask (an info-level per-request line)
+stands, my earlier framing was wrong. `requestsToday` proved to be
+local-midnight-based with batched-write lag (§6c).
+
+State left: nodes `[demo]`, `dev-combo`, `smart` alias, **no API keys** (both
+verification keys deleted; the plaintext of yesterday's `re_2aca…` never existed
+outside my session, so mint your own through Settings). `Gate Test` vanished
+between two reads — main's session edits the same `~/.re-e` DB, so screens must
+tolerate config changing underneath them (they do: react-query refetch on window
+focus, no cached-write assumptions).

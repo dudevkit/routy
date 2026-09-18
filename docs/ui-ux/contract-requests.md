@@ -72,33 +72,67 @@ ordering per node would need `PUT /api/connections/{id}`.
 `repos.apiKeys.setEnabled` exists; no route. Settings shows the key table with a
 delete-only action; a revoke/re-enable toggle is the safer default operation.
 
-### 5. Live Console: the gateway logs almost nothing on a healthy path
+### 5. Live Console: nothing is logged at the default level
 
-Observed on a fresh gateway with traffic flowing: `GET /api/logs/stream` `init`
-returned `{"lines":[]}`; only after forcing a node failure did two `warn` CHAT
-lines appear. Request-path emitters are `log.debug("ROUTE")` (unresolvable only),
-`log.debug("RTK")` (on hits) and `log.warn("CHAT")` (on node failure) — nothing at
-`info`, so the console's headline screen looks broken while the gateway is healthy.
-Two more details: `BOOT` goes through `log.raw`, which does not push to the ring,
-so a just-started gateway reports zero history; and there is no server-side
-`?level=` or clear, so the console's Clear is view-local only.
+At `info` (the default), a healthy gateway emits **zero** request lines: the
+request-path emitters are `log.debug("ROUTE")` (unresolvable only),
+`log.debug("RTK")` (on hits), `log.debug("FETCH")` (per upstream call) and
+`log.warn("CHAT")` (on node failure). So the console's headline screen is empty
+until something goes wrong. Running with `RE_E_LOG_LEVEL=debug` proves the
+plumbing is fine — `init` then returned live `{"tag":"FETCH","msg":"demo ← 200
+ttft=19ms"}` lines. (My earlier "gateway logs nothing" note was measured against
+a process still running at the default level; corrected here.)
 
-**Proposed:** (a) one info-level structured line per completed request
+Two real gaps remain: `BOOT` goes through `log.raw`, which does not push to the
+ring — today's `init` snapshot contained FETCH lines but no BOOT, so a
+just-opened console has no provenance for the process it is watching; and there
+is no server-side `?level=` or clear, so the console's Clear is view-local only.
+
+**Proposed:** (a) one **info**-level structured line per completed request
 `{tag:"REQ", msg:"demo ← 200", data:{requestId, model, nodeId, status, ttftMs,
-durationMs, promptTokens, completionTokens}}`; (b) log BOOT via `log.info` so the
-ring has provenance; (c) `GET /api/logs/stream?level=info`; (d) `POST /api/logs/clear`.
+durationMs, promptTokens, completionTokens}}` — the dashboard should not need
+`debug` to show normal traffic; (b) log BOOT via `log.info` so it enters the
+ring; (c) `GET /api/logs/stream?level=info`; (d) `POST /api/logs/clear`.
 
 ### 6. Bug: `bootstrapToken` is printed in cleartext at boot
 
 ```
-{"t":"…","level":"info","tag":"BOOT",…,"data":{"bootstrapToken":"b842de88…"}}
+{"t":"…","level":"info","tag":"BOOT",…,"data":{"bootstrapToken":"ae75b212…"}}
 ```
 
-`REDACT_KEYS` covers authorization/secret/token/password but the key is named
-`bootstrapToken` inside `data` — it matches `token`… yet the emitted line shows it
-unredacted, so the boot record bypasses `redact()` (it is passed as `extra` to
-`log.info`, which does redact — worth re-checking the call site). Either way: the
-management token should never reach stdout or the ring. UI never displays it.
+Still reproducing on every boot (observed five distinct tokens this evening in
+`re-e-core` stdout). `REDACT_KEYS` should cover `bootstrapToken`; the boot record
+is evidently bypassing `redact()`. The management token must never reach stdout,
+the ring, or `/api/logs/stream`. The UI never displays it.
+
+### 6b. Port already taken → unhandled `EADDRINUSE` throw
+
+Failure mode worth designing for, because it bit us twice tonight: a Windows
+process whose supervising wrapper dies leaves the **node child alive holding
+8010**; every later launch then dies with a 20-line unhandled
+`Error: listen EADDRINUSE` stack and exit 1, which reads like a crash loop of the
+gateway itself. For a project whose headline is stability: catch `error` on
+`server.listen`, print one human line (`port 8010 already in use — another re-e
+gateway is running (pid …)? set RE_E_PORT`), and exit non-zero without a stack.
+Bonus: have `GET /api/health` (or the boot line) report its pid so an operator can
+tell a live server from a stale supervisor.
+
+### 6c. `requestsToday` day boundary + write lag — please document
+
+Observed: with two requests landing at `2026-09-18T19:12:45Z` (local 2026-09-19
+02:12, UTC+7), `requestsToday` returned 0 immediately and 2 ~20 s later, and it
+excluded same-UTC-day rows from local 23:xx. So "today" is **local-midnight**
+based and reads trail the batched usage write. Both are fine, but the UI labels
+this tile "Requests · today" and needs to know which clock it is (and whether to
+say "last few seconds may be missing"). Please state the day-boundary rule and the
+batch interval in §5.
+
+### 6d. Measured overhead on the live path (informational)
+
+120 sequential `GET /api/health` at 500 ms intervals with UI + stub running:
+p50 16 ms, p95 17 ms, max 39 ms, 0 failures, 0 requests >1 s. Nothing to fix —
+recorded because the console's earlier apparent stalls were my probe's fault, not
+the gateway's.
 
 ### 7. Question: combo model-entry semantics
 
