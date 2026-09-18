@@ -2,7 +2,7 @@
 // (the transport contract). Auth: loopback peers pass; non-loopback requires
 // the bootstrap token (Bearer) — the SPA is same-origin by design (P2.1).
 import { json, readBody } from "../lib/router.mjs";
-import { recentLogs, subscribeLog } from "../lib/log.mjs";
+import { clearLogs, recentLogs, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
 
 const uuid = () => crypto.randomUUID();
 const maskKey = (k) => (typeof k === "string" && k.length > 12 ? `${k.slice(0, 6)}…${k.slice(-4)}` : k ? "•••" : "—");
@@ -156,6 +156,22 @@ export function buildApiRoutes(repos, cfg, version) {
     json(res, 201, nodeView(repos, repos.nodes.get(node.id)));
   });
   route("DELETE", /^\/api\/nodes\/(?<id>[^/]+)$/, (req, res, p) => noContent(res, repos.nodes.delete(p.id)));
+  route("PUT", /^\/api\/nodes\/(?<id>[^/]+)$/, async (req, res, p) => {
+    const input = JSON.parse((await readBody(req)).toString("utf8"));
+    const patch = {};
+    for (const f of ["name", "baseUrl", "prefix", "apiType", "enabled"]) {
+      if (input[f] !== undefined) patch[f] = input[f];
+    }
+    if (input.data !== undefined) patch.data = input.data;
+    const node = repos.nodes.update(p.id, patch);
+    if (!node) return json(res, 404, { error: { message: "not_found" } });
+    if (typeof input.apiKey === "string" && input.apiKey.length > 0) {
+      const primary = repos.connections.list(node.id)[0];
+      if (primary) repos.connections.update(primary.id, { credentials: { ...primary.credentials, apiKey: input.apiKey } });
+      else repos.connections.create({ nodeId: node.id, name: `${node.name} key`, credentials: { apiKey: input.apiKey } });
+    }
+    json(res, 200, nodeView(repos, repos.nodes.get(node.id)));
+  });
   route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/reset$/, (req, res, p) => {
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
@@ -177,6 +193,13 @@ export function buildApiRoutes(repos, cfg, version) {
     const input = await readBody(req).then((b) => JSON.parse(b.toString("utf8")));
     if (!input?.baseUrl) return json(res, 400, { error: { message: "bad_request", detail: "baseUrl required" } });
     json(res, 200, await probe(input.baseUrl, input.apiKey || null));
+  });
+
+  // usage
+  route("GET", /^\/api\/usage\/details$/, (req, res, p, url) => {
+    const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+    const usageEventId = url.searchParams.get("usageEventId");
+    json(res, 200, repos.requestDetails.list({ limit, usageEventId: usageEventId ? Number(usageEventId) : undefined }));
   });
 
   // usage
@@ -214,6 +237,11 @@ export function buildApiRoutes(repos, cfg, version) {
     const input = JSON.parse((await readBody(req)).toString("utf8") || "{}");
     const created = repos.apiKeys.create(input?.name || null);
     json(res, 201, { ...created, warning: "plaintext key shown once — store it now" });
+  });
+  route("PUT", /^\/api\/keys\/(?<id>[^/]+)$/, async (req, res, p) => {
+    const input = JSON.parse((await readBody(req)).toString("utf8"));
+    if (typeof input.enabled !== "boolean") return json(res, 400, { error: { message: "bad_request", detail: "enabled (boolean) required" } });
+    noContent(res, repos.apiKeys.setEnabled(p.id, input.enabled));
   });
   route("DELETE", /^\/api\/keys\/(?<id>[^/]+)$/, (req, res, p) => noContent(res, repos.apiKeys.delete(p.id)));
 
@@ -273,8 +301,14 @@ export function buildApiRoutes(repos, cfg, version) {
     json(res, 200, b);
   });
 
-  // live log stream (SSE): init snapshot → live lines
-  route("GET", /^\/api\/logs\/stream$/, (req, res) => {
+  // live log stream (SSE): init snapshot → live lines. ?level= filters server-side
+  // (debug < info < warn < error); POST /api/logs/clear clears the ring + notifies.
+  route("GET", /^\/api\/logs\/stream$/, (req, res, p, url) => {
+    const levelOrder = { debug: 10, info: 20, warn: 30, error: 40 };
+    const minLevel = levelOrder[url.searchParams.get("level") || "debug"] || 10;
+    const lineOk = (text) => {
+      try { return levelOrder[JSON.parse(text).level] >= minLevel; } catch { return minLevel <= 10; }
+    };
     res.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
@@ -283,16 +317,23 @@ export function buildApiRoutes(repos, cfg, version) {
     const send = (event, payload) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
     };
-    send("init", { lines: recentLogs(200) });
+    send("init", { lines: recentLogs(200).filter(lineOk) });
     const unsub = subscribeLog((text) => {
-      if (res.writableEnded) return;
+      if (res.writableEnded || !lineOk(text)) return;
       try { send("line", { text }); } catch { /* client gone */ }
+    });
+    const unsubClear = subscribeLogClear(() => {
+      if (!res.writableEnded) send("clear", {});
     });
     const ping = setInterval(() => {
       if (!res.writableEnded) res.write(": ping\n\n");
     }, 15000);
     ping.unref?.();
-    res.on("close", () => { clearInterval(ping); unsub(); });
+    res.on("close", () => { clearInterval(ping); unsub(); unsubClear(); });
+  });
+  route("POST", /^\/api\/logs\/clear$/, (req, res) => {
+    clearLogs();
+    json(res, 200, { ok: true });
   });
 
   // connections (per-node key management; masked)
@@ -307,6 +348,15 @@ export function buildApiRoutes(repos, cfg, version) {
     const conn = repos.connections.create({ nodeId: p.id, name: input.name || "key", credentials: { apiKey: input.apiKey } });
     json(res, 201, { id: conn.id, name: conn.name, status: conn.status, priority: conn.priority, keyMasked: maskKey(input.apiKey) });
   });
+  route("PUT", /^\/api\/connections\/(?<id>[^/]+)$/, async (req, res, p) => {
+    const input = JSON.parse((await readBody(req)).toString("utf8"));
+    const patch = {};
+    for (const f of ["name", "status", "priority"]) if (input[f] !== undefined) patch[f] = input[f];
+    const conn = repos.connections.update(p.id, patch);
+    if (!conn) return json(res, 404, { error: { message: "not_found" } });
+    json(res, 200, { id: conn.id, name: conn.name, status: conn.status, priority: conn.priority, keyMasked: maskKey(conn.credentials?.apiKey) });
+  });
+  route("DELETE", /^\/api\/connections\/(?<id>[^/]+)$/, (req, res, p) => noContent(res, repos.connections.delete(p.id)));
 
   return R;
 }
