@@ -1,0 +1,181 @@
+# RE-E UI/UX Decisions (append-only, dated)
+
+> Format: `## YYYY-MM-DD — Title` then decision, rationale, alternatives rejected.
+> Settled = user-ratified or derived from already-locked project decisions.
+> Tentative = assistant recommendation awaiting user ratification.
+
+---
+
+## 2026-09-17 — Process: designer role for preview builds (user instruction)
+
+When building UI/UX code for preview — even throwaway preview builds — work design-first
+(IA → tokens → component vocabulary → screens); visual/interaction quality is the
+deliverable, not engineer-default scaffolding. (Also recorded in brainstorm-brief.md.)
+
+## 2026-09-17 — Inventory doc created (settled)
+
+`upstream-dashboard-inventory.md` — per-page keep/cut table, component vocabulary,
+dependency weight, steal-list. Evidence base for IA proposal + reuse/rebuild verdict.
+
+## 2026-09-17 — Cut list follows locked backend scope (settled)
+
+Cut: `/media-providers/*` (4 pages), `/mitm`, `/pxpipe`, `/skills`, `/basic-chat`,
+ProviderTopology (v1), OAuth bulk of `/providers/[id]`, SSO/password/DB-auth bulk of
+`/profile`. Rationale: backend v1 already de-scoped media (§C deferred), mitm/tunnels,
+embedded-provider OAuth; UI must not carry surface for non-existent API.
+
+## 2026-09-17 — Keep list (tentative — pending user ratification)
+
+Keep: Endpoint/home (trimmed), Providers (+ compatible-node modal, merged `/providers/new`),
+Combos (DnD builder), Usage (Overview/Details/Logs tabs), Console Log (SSE), Token Saver,
+Proxy Pools (CRUD/test/health), Settings (trimmed profile).
+Open sub-questions: relay-deploy modals, translator debugger (v2?), quota as tab vs page.
+
+## 2026-09-17 — Merge thin pages into their parents (tentative)
+
+`/providers/new` → modal on Providers. `/endpoint` → home. `/quota` → Usage tab or
+standalone: TBD in IA proposal.
+
+## 2026-09-17 — Proxy-pools relay deploy deferred to v2 (user-ratified)
+
+v1 proxy pools = CRUD + test + health-check + batch import. Vercel/Cloudflare/Deno
+relay deployment modals deferred to v2 as their own phase. Revisit: backend contract
+request needed before any UI work.
+
+## 2026-09-17 — Translator debugger = v2 candidate (user-ratified)
+
+Out of v1. Blocked on a backend step-log API (→ contract-requests.md when v2 nears)
+and a monaco-class editor dep. Re-evaluate with request-log quality in practice.
+
+## 2026-09-17 — Quota lives inside Usage (user-ratified)
+
+Usage page tabs: Overview / Details / Quota. No standalone Quota nav item.
+Progress-bar pattern retained.
+
+## 2026-09-17 — v1 strategy: rebuild lean SPA (user-ratified)
+
+Reuse-first-then-replace is dead: the reuse asset (working OAuth flows) does not exist
+in v1 scope (zero embedded providers); upstream UI is welded to ~100 /api/* routes vs
+§5's ~20 (shim/fork tax); rejected deps (SAML, sql.js, embedded express, i18n×10) are
+upstream requirements. Rebuild = 8 screens over ~20 endpoints, ~3-4k LOC. Hybrid
+survives as pattern-theft only (console SSE protocol, DnD builder, quota bars,
+drill-down drawer, status filter). Evidence: ia-proposal.md §3.
+
+## 2026-09-17 — UI stack: Vite + React + TS + Tailwind (user-ratified)
+
+No Next.js. TanStack Query (API state), recharts (charts), dnd-kit (combo builder).
+Static build served by re-e-core at /ui/*, standalone Vite dev server for development.
+No SSR/SEO/route-server needs; Next would re-import the process-weight problem the
+split exists to remove.
+
+## 2026-09-17 — Design system authored, Level 3 (settled per designer-role instruction)
+
+`DESIGN.md` (light) + `DESIGN.dark.md` (dark = primary target) in `docs/ui-ux/`,
+following the DESIGN.md spec: YAML frontmatter SSOT, full 10-step scales (gray,
+gray-alpha, blue/green/amber/red/purple), typography Inter + JetBrains Mono at 13-14px
+base (dense), 4px spacing, radius family 6/10/14/pill, component tokens (buttons,
+inputs+mono, card, badges, nav, table, log-line, code-chip), elevation/motion/shapes/
+voice defined. Status semantics: green=healthy, amber=degraded, red=breaker-open,
+blue=interactive, purple=RTK. Migration note: files move to `re-e-ui/` root when the
+package exists. Fonts: Inter + JetBrains Mono (bundled locally, no CDN dependency).
+
+## 2026-09-17 — Component vocabulary v1 (settled with DESIGN.md)
+
+Button, Input(+mono), Card, Badge, Modal, Drawer, Tabs, Toggle, Select, Tooltip,
+Table(dense), LogStream, EmptyState, Toast, NavRail, StatusDot, CopyChip — 17
+primitives cover all 8 screens; charting (recharts) and DnD (dnd-kit) are external
+special-cases, not primitives.
+
+## 2026-09-17 — Preview slice v0.1 shipped (settled)
+
+`re-e-ui/` scaffolded per agreed repo layout (this branch; merges clean as new
+directory). Vite 7 + React 19 + TS strict + Tailwind v4. Screens live: NavRail (IA
+groups), Overview (endpoint strip, 5 stat cards, node health cards, failures table,
+empty state), Add Upstream modal (name/baseUrl/key/prefix + Test Connection with
+contract-shaped result). Mock transport in `src/api/mock.ts` typed to contract
+shapes — swap for real fetch client against §5 without touching screens.
+
+Verified: full flow in headless browser (add node → 200·52ms·14 models → save →
+4 nodes; Reset Breaker → breaker-open cleared). Computed-style QA matches
+DESIGN.dark.md tokens exactly (bg #0c0c0e, light-fill primary, blue-100 nav,
+green-800 badge, mono data with tabular-nums, 6/10/14px radii, 13px base, Inter +
+JetBrains Mono bundled locally). Screenshots in `re-e-ui/.preview/`.
+
+Implementation note: Tailwind v4 via `@tailwindcss/postcss` — the `@tailwindcss/vite`
+plugin (4.3.3) expanded imports but compiled zero utilities on this Windows/Vite 7
+setup; postcss route verified by build output. `fonts.check` false-negatives on
+variable fonts are a known quirk; computed styles confirm real loading.
+
+## 2026-09-17 — Visual identity follows upstream 9Router (user override)
+
+User instruction: prefer the original 9Router layout, blocking, and style over the
+authored design system. Source recon of upstream `globals.css` + `DashboardLayout` +
+`Sidebar` + `Header` + primitives (Button/Card/Badge/Modal/Input/ThemeToggle), ported
+verbatim into re-e-ui: brand coral #E56A4A scale, warm dark surfaces (#1a1a1a/#262626),
+header-carried page titles + descriptions, w-72 vibrancy sidebar with traffic lights +
+gradient logo, `landing-grid` background, `p-6 lg:p-10` + `max-w-7xl` content, upstream
+Button/Card/Badge/Modal (traffic-light header)/Input classes, material-symbols icons
+(ligature + fill-1 active states), top-right toast stack, upstream scrollbars/selection.
+`DESIGN.md`/`DESIGN.dark.md` marked SUPERSEDED (kept as rejected-alternative record);
+token SSOT for code = upstream globals.css mirrored in `re-e-ui/src/index.css`.
+
+Re-verified after restyle: connect flow end-to-end (fill → Test Connection →
+200·137ms·21 models → save → node count grows; Reset Breaker → toast, breaker-open
+cleared). Computed-style QA matches upstream tokens exactly. IA/screen cuts from the
+brainstorm remain unchanged — only the visual identity + blocking changed.
+
+Implementation notes: `material-symbols` is CSS-only → must stay in vite
+`optimizeDeps.exclude` (dep optimizer chokes on it and reload-loops); tailwind v4
+stays on `@tailwindcss/postcss`.
+
+## 2026-09-17 — Theme adopted: Graphite Pro (user-ratified)
+
+User picked candidate A from the visual catalog. `index.css` promoted: `.dark` =
+Graphite dark (`#0F1115/#181D26` surfaces, `#4D9DFF` accent, status `#3DD68C`/
+`#F5B93F`/`#F0564E`), `:root` = matching light twin (`#F7F8FA`, `#2E7FE0` accent) —
+ThemeToggle now fully functional. `brand-*` scale remapped coral → blue ramp so the
+sidebar gradient + any brand utilities follow the accent. `scheme-ember` class
+preserves the upstream palette as a catalog candidate; all 7 genre panels remain
+previewable at /theme. Verified: dark + light computed styles, toggle round-trip,
+Overview + Theme Lab intact.
+
+Extras ratified in the same pass (from the catalog page): latency sparklines and
+`kbd` hints now ship with the shell; ⌘K palette, density toggle, skeletons = v1.1.
+Data font default remains the system mono stack pending JetBrains Mono adoption
+(comparable in the lab; ligatures off for keys/URLs regardless).
+
+## 2026-09-18 — Identity patch shipped (all recs, user-ratified)
+
+Per `identity-patch-plan.md`, all six decisions taken as recommended:
+- **D1/D2 type:** UI = IBM Plex Sans Variable, data = IBM Plex Mono,
+  display accent (stat numerals + wordmark only) = Space Grotesk Variable. All
+  bundled locally via fontsource; Inter and Material Symbols removed.
+- **P1 traffic lights:** deleted from sidebar, modal headers, and CSS. Modal is
+  now a clean card: title left, ghost X right, tinted footer rule.
+- **D3 icons:** Material Symbols ligature font → Phosphor SVG (`@phosphor-icons/react`).
+  Same thin-outline style, different formation. Ripple removals: ~3.5MB symbol font,
+  `.fonts-loaded` opacity hack + `fonts.ready` listener, `optimizeDeps.exclude`
+  entry, and the icon-name-in-`textContent` problem ("addAdd Upstream") that made
+  browser automation unreliable — exact-match selectors work again (verified).
+- **D4 nav formation:** option 1 — no background plate; active = 2px accent tick
+  on the rail edge + icon weight flip regular→fill + semibold label.
+- **D5 decoration:** card bezel inset (`--shadow-soft` gains
+  `inset 0 1px 0 white@4.5%` dark / 60% light), active rail tick, sparkline 8%
+  accent area fill, Space Grotesk tabular stat numerals. Header activity hairline
+  deferred to v1.1 (needs the SSE log endpoint); section-rule labels not taken.
+- **D6 modal header:** standard title + ghost X.
+
+Also: `Button.loading` now renders an SVG `Spinner` (verified visible during
+Test Connection); unused `EmptyState` primitive deleted; theme-catalog `scheme-ember`
+retains upstream values so all 7 candidates stay previewable at `/theme`.
+
+Verification: `tsc --noEmit` clean; `vite build` clean (Plex Sans/Mono + Space
+Grotesk subsets emitted); computed QA — body font `IBM Plex Sans Variable`,
+`font-mono` → `IBM Plex Mono`, `.font-display` → `Space Grotesk Variable`, 18 SVG
+icons, 0 `.material-symbols-outlined`, 0 traffic lights, `textContent` === 
+`"Add Upstream"` exactly, inset bezel present, active tick present; full add-upstream
+flow re-run green (`200 · 103ms · 15 models` → 4 nodes; breaker reset toast).
+Screenshots `.preview/01–04*.png`.
+
+Carried to v1.1: ⌘K command palette, density toggle (40↔32px rows), skeleton
+loaders, header activity hairline, icon-only collapsible rail.
