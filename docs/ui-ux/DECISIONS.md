@@ -143,3 +143,39 @@ Extras ratified in the same pass (from the catalog page): latency sparklines and
 `kbd` hints now ship with the shell; ⌘K palette, density toggle, skeletons = v1.1.
 Data font default remains the system mono stack pending JetBrains Mono adoption
 (comparable in the lab; ligatures off for keys/URLs regardless).
+
+## 2026-09-18 — Identity patch shipped (all recs, user-ratified)
+
+Per `identity-patch-plan.md`, all six decisions taken as recommended:
+- **D1/D2 type:** UI = IBM Plex Sans Variable, data = IBM Plex Mono,
+  display accent (stat numerals + wordmark only) = Space Grotesk Variable. All
+  bundled locally via fontsource; Inter and Material Symbols removed.
+- **P1 traffic lights:** deleted from sidebar, modal headers, and CSS. Modal is
+  now a clean card: title left, ghost X right, tinted footer rule.
+- **D3 icons:** Material Symbols ligature font → Phosphor SVG (`@phosphor-icons/react`).
+  Same thin-outline style, different formation. Ripple removals: ~3.5MB symbol font,
+  `.fonts-loaded` opacity hack + `fonts.ready` listener, `optimizeDeps.exclude`
+  entry, and the icon-name-in-`textContent` problem ("addAdd Upstream") that made
+  browser automation unreliable — exact-match selectors work again (verified).
+- **D4 nav formation:** option 1 — no background plate; active = 2px accent tick
+  on the rail edge + icon weight flip regular→fill + semibold label.
+- **D5 decoration:** card bezel inset (`--shadow-soft` gains
+  `inset 0 1px 0 white@4.5%` dark / 60% light), active rail tick, sparkline 8%
+  accent area fill, Space Grotesk tabular stat numerals. Header activity hairline
+  deferred to v1.1 (needs the SSE log endpoint); section-rule labels not taken.
+- **D6 modal header:** standard title + ghost X.
+
+Also: `Button.loading` now renders an SVG `Spinner` (verified visible during
+Test Connection); unused `EmptyState` primitive deleted; theme-catalog `scheme-ember`
+retains upstream values so all 7 candidates stay previewable at `/theme`.
+
+Verification: `tsc --noEmit` clean; `vite build` clean (Plex Sans/Mono + Space
+Grotesk subsets emitted); computed QA — body font `IBM Plex Sans Variable`,
+`font-mono` → `IBM Plex Mono`, `.font-display` → `Space Grotesk Variable`, 18 SVG
+icons, 0 `.material-symbols-outlined`, 0 traffic lights, `textContent` === 
+`"Add Upstream"` exactly, inset bezel present, active tick present; full add-upstream
+flow re-run green (`200 · 103ms · 15 models` → 4 nodes; breaker reset toast).
+Screenshots `.preview/01–04*.png`.
+
+Carried to v1.1: ⌘K command palette, density toggle (40↔32px rows), skeleton
+loaders, header activity hairline, icon-only collapsible rail.

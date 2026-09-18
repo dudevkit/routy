@@ -1,17 +1,22 @@
+import type { CSSProperties } from "react";
 import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { StatusDot } from "../components/ui/StatusDot";
 
-/** Tiny inline latency sparkline — no chart dep. */
+/**
+ * Sparkline with an 8% accent area fill (decoration patch D5.3):
+ * reads as volume, not just a line.
+ */
 function Sparkline({ data, w = 132, h = 36 }: { data: number[]; w?: number; h?: number }) {
   const max = Math.max(...data);
   const min = Math.min(...data);
-  const pts = data
-    .map((v, i) => `${(i / (data.length - 1)) * w},${h - ((v - min) / (max - min || 1)) * (h - 6) - 3}`)
-    .join(" ");
+  const xy = (v: number, i: number) => `${(i / (data.length - 1)) * w},${h - ((v - min) / (max - min || 1)) * (h - 6) - 3}`;
+  const pts = data.map(xy).join(" ");
+  const area = `0,${h} ${pts} ${w},${h}`;
   return (
     <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="shrink-0" aria-hidden="true">
+      <polygon points={area} fill="var(--color-primary)" opacity="0.08" />
       <polyline
         points={pts}
         fill="none"
@@ -60,7 +65,7 @@ function CatalogPanel({
             <div className="flex items-center justify-between gap-3">
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-text-muted">TTFT · p50</span>
-                <span className="font-mono text-xl font-semibold tabular">380ms</span>
+                <span className="font-display text-xl font-semibold tracking-tight tabular">380ms</span>
                 <span className="text-[10px] text-text-subtle">last 12 requests</span>
               </div>
               <Sparkline data={latency} />
@@ -139,7 +144,7 @@ const catalog = [
     name: "D · Warm Ember",
     tagline: "upstream heritage · coral · Claude-like warmth",
     texture:
-      "Warm neutral surfaces, humanist coral accent, traffic-light chrome. Friendly; coral sits near danger-red.",
+      "Warm neutral surfaces, humanist coral accent, softer chrome. Friendly; coral sits near danger-red.",
   },
   {
     id: "nord",
@@ -167,6 +172,30 @@ const catalog = [
   },
 ];
 
+function MonoRow({
+  label,
+  note,
+  className,
+  style,
+}: {
+  label: string;
+  note?: string;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  return (
+    <div className="flex items-center gap-4 border-b border-border-subtle py-2.5 last:border-0">
+      <span className="w-44 shrink-0 text-xs text-text-muted">
+        {label}
+        {note && <span className="text-text-subtle"> · {note}</span>}
+      </span>
+      <code className={`min-w-0 truncate text-[13px] text-text-main ${className ?? "font-mono"}`} style={style}>
+        req_9f2c81ab · https://openrouter.ai/api/v1 · sk-or-v1-88f2…9f2c · 0O1lI · -&gt; == · TTFT 380ms
+      </code>
+    </div>
+  );
+}
+
 export function ThemeSampler() {
   return (
     <div className="flex flex-col gap-10">
@@ -189,6 +218,25 @@ export function ThemeSampler() {
       {catalog.map((c) => (
         <CatalogPanel key={c.id} {...c} />
       ))}
+
+      <section className="flex flex-col gap-2">
+        <h2 className="text-sm font-semibold text-text-main">Data fonts — adopted stack</h2>
+        <Card padding="sm">
+          <MonoRow label="IBM Plex Mono" note="default" />
+          <MonoRow label="JetBrains Mono" className="mono-jb" note="candidate" />
+          <MonoRow
+            label="System mono"
+            style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" }}
+            note="fallback"
+          />
+        </Card>
+        <p className="text-xs text-text-muted">
+          UI font: <span className="text-text-main">IBM Plex Sans</span> · stat numerals + wordmark:{" "}
+          <span className="text-text-main">Space Grotesk</span>. Ligatures stay off for keys/URLs —{" "}
+          <code className="font-mono text-text-main">-&gt;</code> and <code className="font-mono text-text-main">==</code>{" "}
+          inside tokens must never render as glyphs.
+        </p>
+      </section>
     </div>
   );
 }

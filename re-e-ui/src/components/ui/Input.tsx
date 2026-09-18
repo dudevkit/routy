@@ -5,8 +5,7 @@ export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 
   label?: string;
   error?: string;
   hint?: ReactNode;
-  /** Material Symbol ligature name */
-  icon?: string;
+  icon?: ReactNode;
   mono?: boolean;
   className?: string;
   inputClassName?: string;
@@ -28,13 +27,13 @@ export function Input({
       {label && (
         <label className="text-sm font-medium text-text-main">
           {label}
-          {required && <span className="text-red-500 ml-1">*</span>}
+          {required && <span className="text-danger ml-1">*</span>}
         </label>
       )}
       <div className="relative">
         {icon && (
           <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-text-muted">
-            <span className="material-symbols-outlined text-[20px]">{icon}</span>
+            {icon}
           </div>
         )}
         <input
@@ -44,17 +43,16 @@ export function Input({
             "focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500/40",
             "transition-all duration-150 ease-out disabled:opacity-50 disabled:cursor-not-allowed",
             "text-[16px] sm:text-sm",
-            icon && "pl-10",
+            icon ? "pl-10" : null,
             mono && "font-mono",
-            error && "ring-1 ring-red-500 focus:ring-2 focus:ring-red-500/40 border-red-500/40",
+            error && "ring-1 ring-danger focus:ring-2 focus:ring-danger/40 border-danger/40",
             inputClassName,
           )}
           {...rest}
         />
       </div>
       {error && (
-        <p className="text-xs text-red-500 flex items-center gap-1">
-          <span className="material-symbols-outlined text-[14px]">error</span>
+        <p className="text-xs text-danger flex items-center gap-1">
           {error}
         </p>
       )}

@@ -1,4 +1,5 @@
 import { useTheme } from "../../hooks/useTheme";
+import { Moon, Sun } from "../icons";
 import { cn } from "../../utils/cn";
 
 export function ThemeToggle({ className, variant = "default" }: { className?: string; variant?: "default" | "card" }) {
@@ -6,7 +7,7 @@ export function ThemeToggle({ className, variant = "default" }: { className?: st
 
   const variants = {
     default: cn(
-      "flex items-center justify-center size-10 rounded-full",
+      "flex items-center justify-center size-9 rounded-[10px]",
       "text-text-muted hover:text-text-main",
       "hover:bg-surface-2 transition-colors",
     ),
@@ -15,7 +16,7 @@ export function ThemeToggle({ className, variant = "default" }: { className?: st
       "bg-surface/60 hover:bg-surface",
       "border border-border",
       "backdrop-blur-md shadow-sm hover:shadow-[var(--shadow-warm)]",
-      "text-text-muted hover:text-brand-500",
+      "text-text-muted hover:text-primary",
       "transition-all group",
     ),
   };
@@ -27,14 +28,7 @@ export function ThemeToggle({ className, variant = "default" }: { className?: st
       aria-label={`Switch to ${isDark ? "light" : "dark"} mode`}
       title={`Switch to ${isDark ? "light" : "dark"} mode`}
     >
-      <span
-        className={cn(
-          "material-symbols-outlined text-[22px]",
-          variant === "card" && "transition-transform duration-300 group-hover:rotate-12",
-        )}
-      >
-        {isDark ? "light_mode" : "dark_mode"}
-      </span>
+      {isDark ? <Sun size={18} /> : <Moon size={18} />}
     </button>
   );
 }

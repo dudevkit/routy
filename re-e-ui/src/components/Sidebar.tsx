@@ -1,48 +1,62 @@
 import { NavLink } from "react-router-dom";
+import {
+  Broadcast,
+  ChartBar,
+  Coins,
+  Gear,
+  Network,
+  Palette,
+  ShareNetwork,
+  SquaresFour,
+  Stack,
+  TerminalWindow,
+  type IconComponent,
+} from "./icons";
 import { cn } from "../utils/cn";
 
 interface NavItemSpec {
   to: string;
   label: string;
-  icon: string;
+  icon: IconComponent;
   end?: boolean;
 }
 
-/** Nav model follows the upstream Sidebar ordering, mapped to RE-E screens. */
+/** Nav model follows upstream ordering; rows are re-formed: left accent bar
+ *  + icon weight flip (regular → fill) instead of a tinted background plate. */
 const navItems: NavItemSpec[] = [
-  { to: "/", label: "Overview", icon: "space_dashboard", end: true },
-  { to: "/upstreams", label: "Upstreams", icon: "dns" },
-  { to: "/combos", label: "Combos & Aliases", icon: "layers" },
-  { to: "/usage", label: "Usage", icon: "bar_chart" },
-  { to: "/token-saver", label: "Token Saver", icon: "savings" },
+  { to: "/", label: "Overview", icon: SquaresFour, end: true },
+  { to: "/upstreams", label: "Upstreams", icon: Broadcast },
+  { to: "/combos", label: "Combos & Aliases", icon: Stack },
+  { to: "/usage", label: "Usage", icon: ChartBar },
+  { to: "/token-saver", label: "Token Saver", icon: Coins },
 ];
 
 const systemItems: NavItemSpec[] = [
-  { to: "/pools", label: "Proxy Pools", icon: "lan" },
-  { to: "/console", label: "Live Console", icon: "terminal" },
-  { to: "/theme", label: "Theme Catalog", icon: "palette" },
+  { to: "/pools", label: "Proxy Pools", icon: Network },
+  { to: "/console", label: "Live Console", icon: TerminalWindow },
+  { to: "/theme", label: "Theme Catalog", icon: Palette },
 ];
 
-function NavItem({ to, label, icon, end }: NavItemSpec) {
+function NavItem({ to, label, icon: Icon, end }: NavItemSpec) {
   return (
     <NavLink
       to={to}
       end={end}
       className={({ isActive }) =>
         cn(
-          "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group",
-          isActive
-            ? "bg-primary/10 text-primary"
-            : "text-text-muted hover:bg-surface-2 hover:text-text-main",
+          "relative flex items-center gap-2.5 rounded-md px-2.5 py-1 transition-colors duration-150",
+          isActive ? "text-primary" : "text-text-muted hover:text-text-main",
         )
       }
     >
       {({ isActive }) => (
         <>
-          <span className={cn("material-symbols-outlined text-[18px]", isActive ? "fill-1" : "group-hover:text-primary transition-colors")}>
-            {icon}
-          </span>
-          <span className="text-[13px] font-medium">{label}</span>
+          {/* Active tick on the rail edge */}
+          {isActive && (
+            <span className="absolute -left-[11px] top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-full bg-primary" />
+          )}
+          <Icon size={17} weight={isActive ? "fill" : "regular"} className="shrink-0" />
+          <span className={cn("text-[13px]", isActive ? "font-semibold" : "font-medium")}>{label}</span>
         </>
       )}
     </NavLink>
@@ -52,41 +66,32 @@ function NavItem({ to, label, icon, end }: NavItemSpec) {
 export function Sidebar() {
   return (
     <aside className="flex w-72 flex-col border-r border-border-subtle bg-vibrancy backdrop-blur-xl min-h-full">
-      {/* Traffic lights */}
-      <div className="flex items-center gap-2 px-6 pt-5 pb-2">
-        <div className="traffic-lights">
-          <div className="traffic-light red" />
-          <div className="traffic-light yellow" />
-          <div className="traffic-light green" />
-        </div>
-      </div>
-
-      {/* Logo */}
-      <div className="px-6 py-4 flex flex-col gap-2">
+      {/* Wordmark block — the rail's top anchor (traffic lights removed) */}
+      <div className="px-6 pt-6 pb-3">
         <NavLink to="/" className="flex items-center gap-3">
           <div className="flex items-center justify-center size-9 rounded-[10px] bg-gradient-to-br from-brand-500 to-brand-700 shadow-[var(--shadow-warm)]">
-            <span className="material-symbols-outlined text-white text-[20px]">hub</span>
+            <ShareNetwork size={18} weight="fill" className="text-white" />
           </div>
           <div className="flex flex-col">
-            <h1 className="text-lg font-semibold tracking-tight text-text-main">RE-E</h1>
-            <span className="text-xs text-text-muted">v0.1.0</span>
+            <span className="font-display text-lg font-semibold tracking-tight text-text-main">RE-E</span>
+            <span className="text-xs text-text-muted">v0.1.0 · gateway</span>
           </div>
         </NavLink>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-4 py-2 space-y-0.5 overflow-y-auto custom-scrollbar">
+      <nav className="flex-1 px-4 py-1 space-y-0.5 overflow-y-auto custom-scrollbar">
         {navItems.map((item) => (
           <NavItem key={item.to} {...item} />
         ))}
 
         {/* System section */}
-        <div className="pt-3 mt-2 space-y-0.5">
-          <p className="px-4 text-xs font-semibold text-text-muted/60 uppercase tracking-wider mb-2">System</p>
+        <div className="pt-4 mt-2 space-y-0.5">
+          <p className="px-2.5 pb-2 text-[11px] font-semibold uppercase tracking-wider text-text-subtle">System</p>
           {systemItems.map((item) => (
             <NavItem key={item.to} {...item} />
           ))}
-          <NavItem to="/settings" label="Settings" icon="settings" />
+          <NavItem to="/settings" label="Settings" icon={Gear} />
         </div>
       </nav>
     </aside>

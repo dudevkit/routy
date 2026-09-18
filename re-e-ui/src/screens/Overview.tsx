@@ -11,6 +11,7 @@ import {
   useTestNode,
 } from "../api/hooks";
 import type { NodeStatus, TestResult, UpstreamNode } from "../api/types";
+import { Broadcast, Check, CheckCircle, Copy, Plus, Trash } from "../components/icons";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -51,9 +52,11 @@ function CopyChip({ value }: { value: string }) {
       title={`Copy ${value}`}
       className="inline-flex h-7 max-w-[280px] items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 text-xs font-mono text-text-main transition-colors hover:border-brand-500/40"
     >
-      <span className="material-symbols-outlined shrink-0 text-[14px] text-text-muted">
-        {copied ? "check" : "content_copy"}
-      </span>
+      {copied ? (
+        <Check size={14} className="shrink-0 text-success" />
+      ) : (
+        <Copy size={14} className="shrink-0 text-text-muted" />
+      )}
       <span className="truncate">{value}</span>
     </button>
   );
@@ -64,7 +67,7 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
     <Card padding="sm">
       <div className="flex flex-col gap-1">
         <span className="text-xs text-text-muted">{label}</span>
-        <span className="font-mono text-xl font-semibold tabular">{value}</span>
+        <span className="font-display text-xl font-semibold tracking-tight tabular">{value}</span>
         {sub && <span className="text-[10px] text-text-subtle">{sub}</span>}
       </div>
     </Card>
@@ -101,7 +104,7 @@ function NodeCard({ node }: { node: UpstreamNode }) {
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <Button size="sm" variant="secondary" onClick={onTest} loading={testNode.isPending}>
-            {testNode.isPending ? "Testing" : "Test"}
+            Test
           </Button>
           {node.status === "down" && (
             <Button
@@ -121,8 +124,8 @@ function NodeCard({ node }: { node: UpstreamNode }) {
             size="sm"
             variant="ghost"
             aria-label={`Remove ${node.name}`}
-            className="hover:bg-red-500/10 hover:text-red-500"
-            icon="delete"
+            className="hover:bg-danger/10 hover:text-danger"
+            icon={<Trash size={14} />}
             onClick={() => setConfirmRemove(true)}
           />
         </div>
@@ -137,7 +140,7 @@ function NodeCard({ node }: { node: UpstreamNode }) {
         <span className="ml-auto font-mono">{node.keyMasked}</span>
       </div>
 
-      {node.lastError && <p className="font-mono text-xs text-red-500">{node.lastError}</p>}
+      {node.lastError && <p className="font-mono text-xs text-danger">{node.lastError}</p>}
 
       <Modal
         isOpen={confirmRemove}
@@ -214,7 +217,7 @@ function AddUpstreamModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
           </Button>
           <Button
             variant="primary"
-            icon="add"
+            icon={<Plus size={16} />}
             disabled={!canSave || addNode.isPending}
             loading={addNode.isPending}
             onClick={() =>
@@ -226,7 +229,7 @@ function AddUpstreamModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
               })
             }
           >
-            {addNode.isPending ? "Adding" : "Add Upstream"}
+            Add Upstream
           </Button>
         </>
       }
@@ -270,20 +273,20 @@ function AddUpstreamModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
           <Button
             variant="outline"
             size="sm"
-            icon="network_check"
-            disabled={!urlLooksValid || test === "testing"}
+            loading={test === "testing"}
+            disabled={!urlLooksValid}
             onClick={runTest}
           >
-            {test === "testing" ? "Testing" : "Test Connection"}
+            Test Connection
           </Button>
           {test && test !== "testing" &&
             (test.ok ? (
-              <span className="flex items-center gap-1.5 font-mono text-xs text-green-600 dark:text-green-400 tabular">
-                <span className="material-symbols-outlined text-[14px]">check_circle</span>
+              <span className="flex items-center gap-1.5 font-mono text-xs text-success tabular">
+                <CheckCircle size={14} weight="fill" className="shrink-0" />
                 200 · {test.latencyMs}ms · {test.modelCount} models
               </span>
             ) : (
-              <span className="text-xs text-red-500">{test.error}</span>
+              <span className="text-xs text-danger">{test.error}</span>
             ))}
         </div>
       </div>
@@ -299,7 +302,7 @@ export function Overview() {
   const [addOpen, setAddOpen] = useState(false);
 
   const addButton = (
-    <Button variant="primary" icon="add" onClick={() => setAddOpen(true)}>
+    <Button variant="primary" icon={<Plus size={16} />} onClick={() => setAddOpen(true)}>
       Add Upstream
     </Button>
   );
@@ -341,7 +344,7 @@ export function Overview() {
 
         {nodes.data && nodes.data.length === 0 ? (
           <Card padding="lg" className="flex flex-col items-center justify-center gap-3 text-center">
-            <span className="material-symbols-outlined text-[40px] text-text-subtle">dns</span>
+            <Broadcast size={40} className="text-text-subtle" />
             <p className="text-sm text-text-muted">No upstreams yet. Add one to start routing.</p>
             {addButton}
           </Card>

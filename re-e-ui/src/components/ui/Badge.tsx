@@ -9,6 +9,7 @@ const variants = {
   error: "bg-danger/10 text-danger",
   info: "bg-info/10 text-info",
 };
+
 const sizes = {
   sm: "px-2 py-0.5 text-[10px]",
   md: "px-2.5 py-1 text-xs",
@@ -35,8 +36,7 @@ export function Badge({
   variant?: keyof typeof variants;
   size?: keyof typeof sizes;
   dot?: boolean;
-  /** Material Symbol ligature name */
-  icon?: string;
+  icon?: ReactNode;
   className?: string;
   children?: ReactNode;
 }) {
@@ -50,7 +50,7 @@ export function Badge({
       )}
     >
       {dot && <span className={cn("size-1.5 rounded-full", dotColors[variant])} />}
-      {icon && <span className="material-symbols-outlined text-[14px]">{icon}</span>}
+      {icon}
       {children}
     </span>
   );

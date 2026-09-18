@@ -1,5 +1,6 @@
-import type { ButtonHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "../../utils/cn";
+import { Spinner } from "../icons";
 
 const variants = {
   primary: "bg-primary hover:bg-primary-hover text-white shadow-sm disabled:bg-surface-3 disabled:text-text-muted",
@@ -19,9 +20,8 @@ const sizes = {
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: keyof typeof variants;
   size?: keyof typeof sizes;
-  /** Material Symbol ligature name */
-  icon?: string;
-  iconRight?: string;
+  icon?: ReactNode;
+  iconRight?: ReactNode;
   loading?: boolean;
   fullWidth?: boolean;
 }
@@ -51,13 +51,9 @@ export function Button({
       disabled={disabled || loading}
       {...rest}
     >
-      {loading ? (
-        <span className="material-symbols-outlined animate-spin text-[18px]">progress_activity</span>
-      ) : icon ? (
-        <span className="material-symbols-outlined text-[18px]">{icon}</span>
-      ) : null}
+      {loading ? <Spinner size={16} /> : icon}
       {children}
-      {iconRight && !loading && <span className="material-symbols-outlined text-[18px]">{iconRight}</span>}
+      {iconRight && !loading && iconRight}
     </button>
   );
 }

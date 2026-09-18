@@ -1,15 +1,11 @@
 /* RE-E preview — shell/blocking mirrors upstream 9Router; visual theme is
  * "Graphite Pro" (user pick, 2026-09-17): cool charcoal + electric blue.
  * Semantic vars are the SSOT for components; .dark = primary target,
- * :root = light twin. Theme candidates live in the catalog section below. */
+ * :root = light twin. Fonts: IBM Plex Sans (UI) + IBM Plex Mono (data) +
+ * Space Grotesk (stat numerals/wordmark). Icons: Phosphor SVG. */
 @import "tailwindcss";
-@import "material-symbols";
 
 @custom-variant dark (&:where(.dark, .dark *));
-
-/* Hide icon ligature text until font is ready */
-.material-symbols-outlined { opacity: 0; }
-.fonts-loaded .material-symbols-outlined { opacity: 1; transition: opacity .12s ease-out; }
 
 /* ============================================================
    Graphite Pro palette — cool charcoal, electric blue #4D9DFF.
@@ -60,8 +56,8 @@
   --radius-brand: 10px;
   --radius-brand-lg: 14px;
 
-  /* Shadows */
-  --shadow-soft: 0 1px 2px 0 rgba(15, 20, 30, 0.05);
+  /* Shadows — card bezel for instrument depth */
+  --shadow-soft: inset 0 1px 0 rgba(255,255,255,0.6), 0 1px 2px 0 rgba(15, 20, 30, 0.05);
   --shadow-warm: 0 2px 12px -2px rgba(46, 127, 224, 0.20);
   --shadow-elevated: 0 12px 28px -4px rgba(25, 35, 50, 0.08);
   --shadow-elev:
@@ -110,7 +106,8 @@
   --color-warning: #F5B93F;
   --color-info: #8B7CFF;
 
-  --shadow-soft: 0 1px 2px 0 rgba(0,0,0,0.35);
+  /* Shadows — dark-only card bezel inset (D5.1) */
+  --shadow-soft: inset 0 1px 0 rgba(255,255,255,0.045), 0 1px 2px 0 rgba(0,0,0,0.35);
   --shadow-warm: 0 2px 12px -2px rgba(77, 157, 255, 0.22);
   --shadow-elevated: 0 12px 28px -4px rgba(0, 0, 0, 0.45);
   --shadow-elev:
@@ -169,8 +166,10 @@
   --shadow-elev: var(--shadow-elev);
   --shadow-focus: var(--shadow-focus);
 
-  /* Font - Inter primary, Apple system fallback */
-  --font-sans: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', system-ui, sans-serif;
+  /* Fonts: IBM Plex Sans UI, IBM Plex Mono data, Space Grotesk display/numerals */
+  --font-sans: 'IBM Plex Sans Variable', 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: 'Space Grotesk Variable', 'Space Grotesk', var(--font-sans);
 }
 
 /* Base */
@@ -197,7 +196,7 @@ input, textarea {
   accent-color: var(--color-primary);
 }
 
-/* Scrollbar (custom-scrollbar utility kept for compat) */
+/* Scrollbar */
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
 }
@@ -212,7 +211,7 @@ input, textarea {
   background-color: var(--color-primary);
 }
 
-/* Global thin mac-like scrollbars (overrides clunky Windows/Linux default) */
+/* Global thin mac-like scrollbars */
 * {
   scrollbar-width: thin;
   scrollbar-color: rgba(120, 120, 120, 0.35) transparent;
@@ -243,7 +242,7 @@ input, textarea {
   background-color: rgba(180, 180, 180, 0.5);
 }
 
-/* Reusable elevated card */
+/* Reusable elevated card — bevel shadow baked in */
 .card-soft {
   background-color: var(--color-surface);
   box-shadow: var(--shadow-soft);
@@ -255,7 +254,7 @@ input, textarea {
   border-radius: var(--radius-brand-lg);
 }
 
-/* Landing-style faint grid overlay (use absolute pos inside relative parent) */
+/* Landing-style faint grid overlay */
 .landing-grid {
   background-image:
     linear-gradient(to right, var(--color-accent) 1px, transparent 1px),
@@ -274,42 +273,7 @@ input, textarea {
   background: rgba(255, 255, 255, 0.72);
 }
 .dark .bg-vibrancy {
-  background: rgba(24, 29, 38, 0.72);
-}
-
-/* macOS Traffic Lights */
-.traffic-lights {
-  display: flex;
-  gap: 8px;
-}
-.traffic-light {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-}
-.traffic-light.red { background: #FF5F56; }
-.traffic-light.yellow { background: #FFBD2E; }
-.traffic-light.green { background: #27C93F; }
-
-/* Material Symbols */
-.material-symbols-outlined {
-  font-weight: normal;
-  font-style: normal;
-  font-size: 24px;
-  line-height: 1;
-  letter-spacing: normal;
-  text-transform: none;
-  display: inline-block;
-  white-space: nowrap;
-  word-wrap: normal;
-  direction: ltr;
-  font-feature-settings: 'liga';
-  -webkit-font-feature-settings: 'liga';
-  -webkit-font-smoothing: antialiased;
-  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-}
-.material-symbols-outlined.fill-1 {
-  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  background: rgba(20, 24, 33, 0.78);
 }
 
 /* Disable text selection on buttons */
@@ -318,7 +282,7 @@ button {
   user-select: none;
 }
 
-/* Tailwind v4 dropped default button cursor — restore globally */
+/* Pointer cursor */
 button:not(:disabled),
 [role="button"]:not([aria-disabled="true"]),
 label[for],
@@ -332,9 +296,7 @@ button:disabled,
   cursor: not-allowed;
 }
 
-/* ============================================================
-   Animations
-   ============================================================ */
+/* Animations */
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -351,8 +313,10 @@ button:disabled,
 .slide-in-top { animation: slideInFromTop 0.18s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
 .slide-in-right { animation: slideInFromRight 0.25s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
 
-/* RE-E additions (data alignment + accessible focus) */
+/* RE-E additions: data alignment, font hooks, accessible focus */
 .tabular { font-variant-numeric: tabular-nums; }
+.font-display { font-family: var(--font-display); }
+
 :focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
@@ -360,9 +324,6 @@ button:disabled,
 
 /* ============================================================
    Theme Catalog — genre candidates (Theme Lab at /theme).
-   Base = Graphite Pro (above). Unlayered rules below beat Tailwind
-   utilities, which is what lets Swiss/Blueprint/Aurora restyle
-   structure too. `scheme-ember` preserves the upstream palette.
    ============================================================ */
 .scheme-ember {
   --color-bg: #1a1a1a;
@@ -408,7 +369,7 @@ button:disabled,
   --color-warning: #F5B93F;
   --color-danger: #F0564E;
   --color-info: #8B7CFF;
-  --shadow-soft: 0 1px 2px 0 rgba(0,0,0,0.35);
+  --shadow-soft: inset 0 1px 0 rgba(255,255,255,0.045), 0 1px 2px 0 rgba(0,0,0,0.35);
   --shadow-warm: 0 2px 12px -2px rgba(77,157,255,0.22);
   --shadow-focus: 0 0 0 3px rgba(77,157,255,0.22);
   color-scheme: dark;

@@ -1,20 +1,32 @@
 import { createContext, useCallback, useContext, useState } from "react";
 import type { ReactNode } from "react";
+import { CheckCircle, Info, Warning, XCircle } from "../icons";
 
 type ToastType = "success" | "error" | "warning" | "info";
 
 interface ToastItem {
   id: number;
   type: ToastType;
-  title?: string;
   message: string;
 }
 
-const toastStyles: Record<ToastType, { wrapper: string; icon: string }> = {
-  success: { wrapper: "border-green-500/30 bg-green-500/10 text-green-600 dark:text-green-400", icon: "check_circle" },
-  error: { wrapper: "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400", icon: "error" },
-  warning: { wrapper: "border-yellow-500/30 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400", icon: "warning" },
-  info: { wrapper: "border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400", icon: "info" },
+const toastStyles: Record<ToastType, { wrapper: string; icon: ReactNode }> = {
+  success: {
+    wrapper: "border-success/30 bg-success/10 text-success",
+    icon: <CheckCircle size={18} weight="fill" className="shrink-0" />,
+  },
+  error: {
+    wrapper: "border-danger/30 bg-danger/10 text-danger",
+    icon: <XCircle size={18} weight="fill" className="shrink-0" />,
+  },
+  warning: {
+    wrapper: "border-warning/30 bg-warning/10 text-warning",
+    icon: <Warning size={18} weight="fill" className="shrink-0" />,
+  },
+  info: {
+    wrapper: "border-info/30 bg-info/10 text-info",
+    icon: <Info size={18} weight="fill" className="shrink-0" />,
+  },
 };
 
 const ToastContext = createContext<(message: string, type?: ToastType) => void>(() => {});
@@ -25,7 +37,7 @@ export function useToast() {
 
 let nextId = 0;
 
-/** Upstream DashboardLayout toast pattern: fixed top-right stack. */
+/** Upstream DashboardLayout toast stack with Phosphor icons. */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
@@ -43,8 +55,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((t) => (
           <div key={t.id} className={`fade-in rounded-lg border px-3 py-2 shadow-lg backdrop-blur-sm ${toastStyles[t.type].wrapper}`}>
             <div className="flex items-start gap-2">
-              <span className="material-symbols-outlined text-[18px] leading-5">{toastStyles[t.type].icon}</span>
-              <p className="min-w-0 flex-1 text-xs whitespace-pre-wrap break-words">{t.message}</p>
+              {toastStyles[t.type].icon}
+              <p className="min-w-0 flex-1 text-xs whitespace-pre-wrap break-words text-text-main">{t.message}</p>
             </div>
           </div>
         ))}

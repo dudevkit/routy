@@ -12,8 +12,7 @@ const paddings = {
 export interface CardProps extends HTMLAttributes<HTMLDivElement> {
   title?: string;
   subtitle?: string;
-  /** Material Symbol ligature name */
-  icon?: string;
+  icon?: ReactNode;
   action?: ReactNode;
   padding?: keyof typeof paddings;
   hover?: boolean;
@@ -35,8 +34,8 @@ export function Card({
   return (
     <div
       className={cn(
-        "bg-surface border border-border-subtle",
-        elev ? "rounded-[14px] shadow-[var(--shadow-elev)]" : "rounded-[14px] shadow-[var(--shadow-soft)]",
+        "bg-surface border border-border-subtle card-soft",
+        elev && "rounded-[14px] shadow-[var(--shadow-elev)]",
         hover && "hover:shadow-[var(--shadow-warm)] hover:border-brand-500/30 transition-all cursor-pointer",
         paddings[padding],
         className,
@@ -46,11 +45,7 @@ export function Card({
       {(title || action) && (
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
-            {icon && (
-              <div className="p-2 rounded-[10px] bg-bg text-text-muted">
-                <span className="material-symbols-outlined text-[20px]">{icon}</span>
-              </div>
-            )}
+            {icon && <div className="p-2 rounded-[10px] bg-bg text-text-muted">{icon}</div>}
             <div>
               {title && <h3 className="text-text-main font-semibold">{title}</h3>}
               {subtitle && <p className="text-sm text-text-muted">{subtitle}</p>}
