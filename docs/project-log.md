@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** P2 management API + SPA wiring COMPLETE (44/44 tests; gate loop verified in browser: UI create node → Test Connection 200·6ms·3 models → save → chat flows → usage live). Remaining: 2.4 `re-e init` CLI, Live Console screen (ui-ux scope), P1.6b residuals.
+- **Phase:** P2.1-2.4 COMPLETE (48/48 tests; L2 gate 4/4 streaming byte-identical + nonstream exact-usage divergence documented). Next: P3 stability pass, or Live Console screen (ui-ux), or P4 speed.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -139,6 +139,14 @@ axolotl/
   selector, dev proxy). **Gate loop verified in browser: UI create node → Test Connection
   200·6ms·3 models (real probe) → save → chat request flows through the UI-created node →
   Overview renders live usage (59 reqs, 99.1K tokens, TTFT p50 16ms) + 2 healthy nodes.**
+- 2026-09-18 (P1.6b + P2.4): `core/sse/sseToJson.mjs` (verbatim parseSSEToOpenAIResponse
+  port) — nonstream vs SSE-lying upstream now converts to JSON; L2 nonstream fixture
+  structurally identical, ONE documented divergence: upstream overwrites exact upstream
+  usage with its buffer-estimate (2050 vs stub's exact 50) — RE-E passes exact usage
+  through (strictly better, kept). `detectFormat` body heuristic ported verbatim
+  (deps/detectFormat.js) and wired: source = endpoint override || body heuristic.
+  `bin/re-e.mjs`: init wizard (upstream + probe + key + Claude Code settings.json
+  merge), serve, key. 48/48 tests.
 - 2026-09-17 (P1.7 + MVP gate): RTK ported (`core/rtk/**`, 17 files, self-contained,
   wired at upstream placement = final body pre-dispatch, default-on, tested: 8KB
   git-diff tool_result compressed end-to-end). L2 fixtures recaptured (capture script
@@ -213,3 +221,4 @@ axolotl/
 | 2026-09-17 | P1.7 RTK + MVP gate PASSED: 4/5 L2 streaming fixtures byte-identical vs upstream through live ree-core; 34/34 tests; P1.6b residuals logged |
 | 2026-09-18 | ui-ux deliverables merged (`82d3316`, 0 conflicts): DECISIONS/DESIGN/ia-proposal/contract-requests + re-e-ui SPA preview (Plex/Phosphor, build verified). Contracts folded into backend-architecture §5; P2 redefined — lean SPA replaces dashboard rewire; re-e-ui on MOCK transport until 2.3 |
 | 2026-09-18 | P2.1-2.3: management API (~30 routes) + auth guard + /ui/* static + re-e-ui live transport swap; browser-verified gate loop (create node → test 200·6ms → chat flows → usage live). Remaining: 2.4 CLI, Live Console screen (ui-ux), P1.6b |
+| 2026-09-18 | P1.6b + P2.4: sseToJson + detectFormat ported (L2 nonstream: exact-usage divergence documented as intentional improvement); re-e CLI (init/serve/key) |
