@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** P2 COMPLETE backend-side (round-2 contract items implemented; 48/48 tests). UI screens: all v1 screens merged + live-wired. Remaining: P3 stability, P4 speed, P5 packaging.
+- **Phase:** P2 backend COMPLETE incl. round-3 fixes (51/51 tests; all 5 R3 defects fixed + verified live: REQ line fires, prefix 409, disabled 503, usageEventId correlation, gateway lockfile). Next: P3 stability, P4 speed, P5 packaging.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -146,6 +146,16 @@ axolotl/
   `POST /api/logs/clear` (ring clear notifies SSE clients), BOOT ring provenance
   (token excluded — stays stdout-only), `/v1` loopback-or-key guard honoring
   `requireApiKey`. 48/48 tests. Round-2 questions answered in contract-requests.md.
+- 2026-09-19 (P2 round-3): all 5 R3 defects fixed + verified live on :8012 scratch —
+  R3-1 REQ line scope bug (`log` closure invisible from module-level recordUsage →
+  ReferenceError swallowed post-response; now `log` passed as param + regression test),
+  R3-2 duplicate prefix → 409 (no more SQLite leaks), R3-3 router errors logged with
+  stack, R3-4 disabled node → 503 (semantics confirmed: disabled must not route),
+  R3-5 usage event written synchronously returning id → details carry usageEventId,
+  R3-6 gateway lockfile (pid-stamped, stale-takeover). Dispositions in ui-ux
+  contract-requests.md (committed on their branch `6f1dffb`). NOTE: :8010 currently
+  serves the ui-ux worktree's gateway (pre-R3) — after their next sync/restart the
+  port returns to current code; port turf rule logged (ops).
 - 2026-09-18 (P1.6b + P2.4): `core/sse/sseToJson.mjs` (verbatim parseSSEToOpenAIResponse
   port) — nonstream vs SSE-lying upstream now converts to JSON; L2 nonstream fixture
   structurally identical, ONE documented divergence: upstream overwrites exact upstream
