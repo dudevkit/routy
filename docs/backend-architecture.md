@@ -112,6 +112,19 @@ translate-per-chunk via registry, usage extraction, TTFT stamp. Changes:
 `GET /health`, `GET /version`. Deliberately NOT ported: oauth/*, cli-tools/* (→ `re-e init`
 covers the 90% case), mitm/*, tunnels/*, sync/*, updater/*.
 
+**Folded from ui-ux contract-requests.md (2026-09-18, P2 scope):**
+`POST /nodes/{id}/test` → `{ok, latencyMs, models?}` (probe node baseUrl + `/models`
+listing) · `POST /proxy-pools/{id}/test` → `{ok, latencyMs, error?}` ·
+`GET /logs/stream` (SSE: `init` ring-buffer snapshot, `line`, `clear`; optional `?level=`)
+· usage `details` rows carry `ttftMs`, `durationMs`, token counts, `nodeId`, `errorCode`
+(schema v1 already captures all of these — confirmation, not new work).
+
+**UI delivery (P2 redefined per ui-ux DECISIONS):** the lean SPA (`re-e-ui/`, Vite +
+React + TS + Tailwind, Plex/Phosphor identity) replaces the "rewire upstream dashboard"
+plan — upstream reuse is dead (OAuth asset out of v1 scope; 100-route shim tax). SPA is
+served by re-e-core at `/ui/*` (static `dist/`); its `src/api/mock.ts` transport swaps to
+real fetch against these endpoints. Known inconsistency until wired: UI runs on mocks.
+
 ## 6. Config & state
 
 - `~/.re-e/` data dir (override `RE_E_HOME`): `re-e.db` (SQLite WAL), `config.json`,

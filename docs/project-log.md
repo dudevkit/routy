@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** **P1 COMPLETE — MVP gate passed** (4/5 L2 streaming byte-identical; 34/34 tests; bench 16ms parity). Next: P2 HELD (UI commitment) — proceed P3 stability (backend-only) or P1.6b residuals.
+- **Phase:** **P1 COMPLETE — MVP gate passed.** P2 UNBLOCKED (ui-ux deliverables merged; roadmap P2 redefined). Next: P2 management API + SPA wiring.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -46,9 +46,10 @@ axolotl/
 
 ## Commitments
 - 2026-09-17 (user): **Backend-only focus.** Proceed P0 → P1 (pure backend: harness,
-  core MVP gateway). **HOLD P2** (management API + dashboard rewire) until the ui-ux
-  worktree agent delivers the UI/UX guide and rules; P2's management-API shape must then
-  incorporate the ui-ux agent's contract requests. No UI wiring before that gate.
+  core MVP gateway). ~~HOLD P2 until the ui-ux worktree agent delivers the UI/UX guide
+  and rules~~ → **LIFTED 2026-09-18**: ui-ux delivered (DECISIONS/DESIGN/ia-proposal/
+  contract-requests + working `re-e-ui` preview); contract requests folded into
+  backend-architecture §5; P2 redefined per ui-ux decisions (roadmap).
 
 ## Done
 
@@ -197,3 +198,4 @@ axolotl/
 | 2026-09-17 | Parallel-work workflow: UI brainstorm in Orca worktree `ui-ux` (user-driven); ownership split + merge discipline in `docs/ui-ux/brainstorm-brief.md`; log stays single-SSOT |
 | 2026-09-17 | P1.5+P1.6: SSE pipeline + chat handler (passthrough byte-parity, bench 16ms parity), translator port (48 files) + claude/responses wiring — L2 claude byte-identical; undici dep for SSRF pinning |
 | 2026-09-17 | P1.7 RTK + MVP gate PASSED: 4/5 L2 streaming fixtures byte-identical vs upstream through live ree-core; 34/34 tests; P1.6b residuals logged |
+| 2026-09-18 | ui-ux deliverables merged (`82d3316`, 0 conflicts): DECISIONS/DESIGN/ia-proposal/contract-requests + re-e-ui SPA preview (Plex/Phosphor, build verified). Contracts folded into backend-architecture §5; P2 redefined — lean SPA replaces dashboard rewire; re-e-ui on MOCK transport until 2.3 |

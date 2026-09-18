@@ -72,16 +72,21 @@ Purpose: no refactor without a regression net; no "faster" claim without a basel
 
 **Gate:** P1 acceptance scenario above, on Windows, with tool calls + thinking + abort mid-stream.
 
-## P2 — Management API + dashboard rewire
+## P2 — Management API + lean SPA wiring (redefined per ui-ux DECISIONS 2026-09-18)
+
+Upstream-dashboard rewire is DEAD (user-ratified in ui-ux: OAuth reuse asset doesn't
+exist in v1 scope; 100-route shim tax). v1 UI = the lean SPA `re-e-ui/` (Vite+React+TS+
+Tailwind, Plex/Phosphor identity, merged from the ui-ux worktree with a verified mock-
+transport preview). UI runs on mocks until wired — expected inconsistency is scoped here.
 
 | # | Task |
 |---|---|
-| 2.1 | Session auth for `/api` (localhost token; bootstrap via CLI print) + CORS for UI origin |
-| 2.2 | Management endpoints subset: settings, nodes CRUD, connections/api-keys CRUD, combos+aliases, usage (history/stats/details), health, version |
-| 2.3 | Point existing 9Router dashboard at RE-E (config base URL; shim any endpoint-shape deltas) |
+| 2.1 | Session auth for `/api` (localhost token; bootstrap via CLI print) + same-origin `/ui/*` static serving from re-e-core |
+| 2.2 | Management endpoints subset + ui-ux contract requests: settings, nodes CRUD (+`POST /nodes/{id}/test`), connections/api-keys CRUD, combos+aliases, proxy-pools (+`POST /proxy-pools/{id}/test`), usage (history/stats/details incl. ttftMs/durationMs), `GET /logs/stream` (SSE), breakers reset, health, version |
+| 2.3 | Swap `re-e-ui` mock transport → real fetch client against the live API; build output served at `/ui/*` |
 | 2.4 | `re-e init` CLI: create node, write key, configure one CLI tool's config file |
 
-**Gate:** full loop from dashboard: create node → key → request flows; usage visible in dashboard.
+**Gate:** full loop from the SPA: create node (Test Connection green) → key → request flows → usage + live log visible.
 
 ## P3 — Stability pass
 
