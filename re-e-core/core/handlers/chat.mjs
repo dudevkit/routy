@@ -1,16 +1,17 @@
-// RE-E chat handler — /v1/chat/completions (openai source) + /v1/messages (claude source).
-// P1.6: openai↔claude/responses translation via the ported translator; passthrough
-// unchanged from P1.5 (byte-parity). Non-streaming + format translation: P1.6b
-// (rare in practice — coding-tool clients stream).
+// RE-E chat handler — /v1/chat/completions + /v1/messages.
+// P1.6: openai↔claude/responses translation via the ported translator. P1.6b:
+// forced-SSE→JSON conversion + body-based source detection (upstream parity).
 import { readBody, json } from "../../lib/router.mjs";
 import { log as rootLog } from "../../lib/log.mjs";
 import { resolveRoute } from "../routing.mjs";
 import { DefaultExecutor } from "../executors/default.mjs";
 import { formatSse } from "../sse/parser.mjs";
 import { pumpSse, UsageTracker, LogBuffer } from "../sse/stream.mjs";
+import { parseSSEToOpenAIResponse } from "../sse/sseToJson.mjs";
 import { createResponseTranslator } from "../sse/translateStream.mjs";
 import { translateRequest, needsTranslation } from "../translate/index.js";
-import { FORMATS } from "../translate/formats.js";
+import { FORMATS, detectFormatByEndpoint } from "../translate/formats.js";
+import { detectFormat } from "../translate/deps/detectFormat.js";
 import { compressMessages, formatRtkLog } from "../rtk/index.js";
 
 const FAILURE_THRESHOLD = 3;
@@ -37,7 +38,7 @@ function targetFormatForNode(node) {
 export function createChatHandler(repos) {
   const log = rootLog;
 
-  async function handleChatCompletions(req, res, sourceFormat = FORMATS.OPENAI) {
+  async function handleChatCompletions(req, res) {
     const t0 = Date.now();
 
     // auth (router client key)
@@ -51,13 +52,18 @@ export function createChatHandler(repos) {
       }
       apiKeyId = key.id;
     }
-
     let body;
     try {
       body = JSON.parse((await readBody(req)).toString("utf8"));
     } catch (err) {
       return json(res, err?.statusCode === 413 ? 413 : 400, { error: { message: "bad_request", detail: "invalid JSON body" } });
     }
+
+    // Source format: endpoint override first, then body heuristic (upstream parity,
+    // services/provider.js detectFormat) — e.g. claude-shaped body with a slash-model
+    // on /v1/chat/completions stays openai.
+    const pathname = new URL(req.url, "http://localhost").pathname;
+    const sourceFormat = detectFormatByEndpoint(pathname, body) || detectFormat(body);
 
     const route = resolveRoute(repos, body.model);
     if (!route) {
@@ -195,19 +201,28 @@ export function createChatHandler(repos) {
         return;
       }
 
-      // ── non-streaming (passthrough only; translate non-stream is P1.6b) ──
+      // ── non-streaming: passthrough JSON; convert provider-forced SSE → JSON (P1.6b) ──
+      const upstreamCt = result.response.headers?.get?.("content-type") || "";
       const text = await result.response.text();
       const usage = new UsageTracker({ promptText: JSON.stringify(body.messages || "") });
       let parsed = null;
-      try { parsed = JSON.parse(text); } catch { /* passthrough as-is */ }
+      if (upstreamCt.includes("text/event-stream")) {
+        parsed = parseSSEToOpenAIResponse(text, r.model);
+        if (parsed?.error) {
+          return json(res, 502, { error: { message: "upstream_error", detail: JSON.stringify(parsed.error).slice(0, 300) } });
+        }
+        if (!parsed) return json(res, 502, { error: { message: "upstream_error", detail: "upstream sent an empty stream for a non-streaming request" } });
+      } else {
+        try { parsed = JSON.parse(text); } catch { /* passthrough as-is */ }
+      }
       if (parsed?.usage) {
         usage.promptTokens = parsed.usage.prompt_tokens ?? usage.promptTokens;
         usage.completionTokens = parsed.usage.completion_tokens ?? usage.completionTokens;
         usage.exact = true;
       }
       if (clientAbort.signal.aborted) return; // client gone
-      res.writeHead(result.response.status, { "content-type": result.response.headers?.get?.("content-type") || "application/json" });
-      res.end(text);
+      res.writeHead(result.response.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(parsed ?? text));
       recordUsage(repos, r, connection, body.model, { status: "ok", usage, durationMs: Date.now() - t0, apiKeyId });
       saveDetail(repos, { request: body, responseText: new LogBuffer(), truncated: false });
       return;

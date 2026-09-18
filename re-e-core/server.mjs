@@ -10,7 +10,6 @@ import { openDatabase } from "./db/driver.mjs";
 import { createRepos } from "./db/repos.mjs";
 import { listModels } from "./core/routing.mjs";
 import { createChatHandler } from "./core/handlers/chat.mjs";
-import { FORMATS } from "./core/translate/formats.js";
 import { buildApiRoutes, mgmtAuthorized } from "./http/api.mjs";
 
 const cfg = resolveConfig();
@@ -18,8 +17,8 @@ setLogLevel(cfg.logLevel);
 
 const VERSION = "0.1.0";
 let bootstrapToken = null; // printed once at boot; required for /api from non-loopback peers
-let startedAt = Date.now();
-globalThis.__bootedAt = startedAt;
+globalThis.__bootedAt = Date.now();
+
 const db = openDatabase(cfg.dataDir);
 const repos = createRepos(db);
 const chatHandler = createChatHandler(repos);
@@ -31,24 +30,21 @@ try {
   log.warn("DB", "purge failed", { error: err.message });
 }
 
-const proxyRoutes = [
-  {
-    method: "POST", pattern: /^\/v1\/chat\/completions$/,
-    handler: (req, res) => chatHandler(req, res, FORMATS.OPENAI),
-  },
-  {
-    method: "POST", pattern: /^\/v1\/messages$/,
-    handler: (req, res) => chatHandler(req, res, FORMATS.CLAUDE),
-  },
-];
-
 const routes = [
   ...buildApiRoutes(repos, cfg, VERSION),
+  // ── proxy surface (/v1) — source format detected per request (endpoint + body) ──
   {
     method: "GET", pattern: /^\/v1\/models$/,
     handler: async (req, res) => json(res, 200, listModels(repos)),
   },
-  ...proxyRoutes,
+  {
+    method: "POST", pattern: /^\/v1\/chat\/completions$/,
+    handler: chatHandler,
+  },
+  {
+    method: "POST", pattern: /^\/v1\/messages$/,
+    handler: chatHandler,
+  },
 ];
 
 const dispatch = createRouter(routes);

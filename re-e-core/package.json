@@ -9,12 +9,16 @@
   },
   "scripts": {
     "start": "node server.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "serve": "node bin/re-e.mjs serve"
   },
   "devDependencies": {
     "vitest": "^3.2.4"
   },
   "dependencies": {
     "undici": "^8.10.2"
+  },
+  "bin": {
+    "re-e": "./bin/re-e.mjs"
   }
 }
