@@ -55,6 +55,18 @@ const server = http.createServer((req, res) => {
   if (pathname.startsWith("/api") && !mgmtAuthorized(req, cfg)) {
     return json(res, 401, { error: { message: "auth_error", detail: "management token required for non-loopback peers" } });
   }
+  // Proxy surface: chat/messages enforce keys in-handler; /v1/models gets the
+  // guard here. Loopback (the SPA's own origin) is trusted by design.
+  if (pathname.startsWith("/v1") && repos.settings.get("requireApiKey", true) !== false) {
+    const addr = req.socket?.remoteAddress || "";
+    const loopback = addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+    if (!loopback) {
+      const bearer = (req.headers.authorization || "").match(/^Bearer\s+(.+)$/i)?.[1];
+      if (!bearer || !repos.apiKeys.verify(bearer.trim())) {
+        return json(res, 401, { error: { message: "auth_error", detail: "valid API key required" } });
+      }
+    }
+  }
 
   // /ui/* static SPA (re-e-ui dist) — same origin, so no CORS needed
   if (!pathname.startsWith("/api") && !pathname.startsWith("/v1") && req.method === "GET" && cfg.uiDir) {
@@ -68,6 +80,7 @@ const server = http.createServer((req, res) => {
 server.listen(cfg.port, cfg.host, () => {
   bootstrapToken = createBootstrapToken();
   cfg.bootstrapToken = bootstrapToken; // consulted by mgmtAuthorized for non-loopback peers
+  log.info("BOOT", `gateway started (v${VERSION})`, { host: cfg.host, port: cfg.port, ui: cfg.uiDir || null }); // ring provenance — token stays out
   log.raw("BOOT", `re-e-core ${VERSION} listening`, {
     host: cfg.host,
     port: cfg.port,

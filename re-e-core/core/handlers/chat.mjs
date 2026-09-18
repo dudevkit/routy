@@ -276,7 +276,7 @@ function recordSuccess(repos, node) {
 }
 
 function recordUsage(repos, route, connection, clientModel, { status, usage, durationMs, apiKeyId }) {
-  repos.usage.record({
+  const event = repos.usage.record({
     nodeId: route.node.id,
     connectionId: connection.id,
     apiKeyId: apiKeyId ?? null,
@@ -286,6 +286,17 @@ function recordUsage(repos, route, connection, clientModel, { status, usage, dur
     completionTokens: usage.completionTokens,
     ttftMs: usage.ttftMs ?? null,
     durationMs,
+  });
+  // Console visibility on the healthy path (ui-ux contract round 2, item 5a)
+  log.info("REQ", `${route.node.prefix} ← ${status}`, {
+    requestId: event?.id ?? null,
+    model: clientModel,
+    nodeId: route.node.id,
+    status,
+    ttftMs: usage.ttftMs ?? null,
+    durationMs,
+    promptTokens: usage.promptTokens ?? null,
+    completionTokens: usage.completionTokens ?? null,
   });
 }
 

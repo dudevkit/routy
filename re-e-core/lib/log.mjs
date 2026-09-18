@@ -30,6 +30,17 @@ export function subscribeLog(fn) {
 export function recentLogs(count = RING_MAX) {
   return ring.slice(-count);
 }
+export function clearLogs() {
+  ring.length = 0;
+  for (const fn of clearSubscribers) {
+    try { fn(); } catch { /* subscriber errors never break clearing */ }
+  }
+}
+const clearSubscribers = new Set();
+export function subscribeLogClear(fn) {
+  clearSubscribers.add(fn);
+  return () => clearSubscribers.delete(fn);
+}
 function emit(level, tag, msg, extra) {
   if (LEVELS[level] < currentLevel) return;
   const line = {

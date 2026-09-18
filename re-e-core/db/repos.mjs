@@ -372,10 +372,15 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
         .run(Date.now(), usageEventId, kind, text, truncated ? 1 : 0);
       return { id: Number(info.lastInsertRowid), truncated };
     },
-    list: ({ since, limit = 100 } = {}) => {
-      const rows = since
-        ? db.prepare(`SELECT id, ts, kind, truncated, content FROM request_details WHERE ts >= ? ORDER BY id DESC LIMIT ?`).all(since, limit)
-        : db.prepare(`SELECT id, ts, kind, truncated, content FROM request_details ORDER BY id DESC LIMIT ?`).all(limit);
+    list: ({ since, usageEventId, limit = 100 } = {}) => {
+      const where = [];
+      const params = [];
+      if (since) { where.push("ts >= ?"); params.push(since); }
+      if (usageEventId) { where.push("usage_event_id = ?"); params.push(usageEventId); }
+      const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+      const rows = db
+        .prepare(`SELECT id, ts, usage_event_id AS usageEventId, kind, truncated, content FROM request_details ${whereSql} ORDER BY id DESC LIMIT ?`)
+        .all(...params, limit);
       return rows.map((r) => ({ ...r, truncated: !!r.truncated }));
     },
     purge({ maxAgeDays = 7, maxRows = 50000 } = {}) {
