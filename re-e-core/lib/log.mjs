@@ -18,6 +18,18 @@ export function redact(obj, depth = 0) {
   return out;
 }
 
+// Ring buffer + pubsub for GET /api/logs/stream (P2.2): recent lines for `init`,
+// live lines for subscribers. Redacted payloads only — same text as console.
+const RING_MAX = 500;
+const ring = [];
+const subscribers = new Set();
+export function subscribeLog(fn) {
+  subscribers.add(fn);
+  return () => subscribers.delete(fn);
+}
+export function recentLogs(count = RING_MAX) {
+  return ring.slice(-count);
+}
 function emit(level, tag, msg, extra) {
   if (LEVELS[level] < currentLevel) return;
   const line = {
@@ -31,6 +43,11 @@ function emit(level, tag, msg, extra) {
   const text = JSON.stringify(line);
   if (level === "error") console.error(text);
   else console.log(text);
+  ring.push(text);
+  if (ring.length > RING_MAX) ring.shift();
+  for (const fn of subscribers) {
+    try { fn(text); } catch { /* subscriber errors never break logging */ }
+  }
 }
 
 export const log = {

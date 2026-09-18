@@ -28,6 +28,16 @@ export function resolveConfig(env = process.env) {
     configPath,
     dataDir: path.join(home, "data"),
   };
+  // UI dist: explicit env > repo layout (source checkout) > <home>/ui (packaged)
+  cfg.uiDir = env.RE_E_UI_DIR || cfg.uiDir || "";
+  if (!cfg.uiDir) {
+    const candidates = [
+      path.resolve(process.cwd(), "re-e-ui", "dist"),
+      path.resolve(process.cwd(), "..", "re-e-ui", "dist"),
+      path.join(home, "ui"),
+    ];
+    cfg.uiDir = candidates.find((d) => fs.existsSync(path.join(d, "index.html"))) || "";
+  }
   if (env.RE_E_PORT) cfg.port = parseInt(env.RE_E_PORT, 10) || cfg.port;
   if (env.RE_E_HOST) cfg.host = env.RE_E_HOST;
   if (env.RE_E_LOG_LEVEL) cfg.logLevel = env.RE_E_LOG_LEVEL;

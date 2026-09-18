@@ -17,13 +17,11 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** **P1 COMPLETE — MVP gate passed.** P2 UNBLOCKED (ui-ux deliverables merged; roadmap P2 redefined). Next: P2 management API + SPA wiring.
+- **Phase:** P2 management API + SPA wiring COMPLETE (44/44 tests; gate loop verified in browser: UI create node → Test Connection 200·6ms·3 models → save → chat flows → usage live). Remaining: 2.4 `re-e init` CLI, Live Console screen (ui-ux scope), P1.6b residuals.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
   (user baseUrl + key). Full 122-provider catalog: [provider-catalog.md](./provider-catalog.md).
-- **Next action:** Phase 0 harness (backend-only per Commitments). P2 is HELD until the
-  ui-ux worktree agent delivers the UI/UX guide/rules — gate recorded in Commitments.
 
 **Agreed layout (details pending):**
 ```
@@ -132,6 +130,15 @@ axolotl/
   translate mode = pinned contract). **L2 parity: claude-client fixtures byte-identical;
   openai passthroughs match. Non-stream+translate deferred P1.6b. `undici` added as
   re-e-core dep for SSRF DNS-pinning in image prefetch only.**
+- 2026-09-18 (P2.1-2.3): management API + SPA wiring landed — `http/api.mjs` (~30 routes:
+  nodes CRUD + test probe + reset, connections, keys, combos, aliases, proxy-pools + test,
+  usage stats/failures/history/details, settings, gateway, breakers reset, `GET /logs/stream`
+  SSE with ring-buffer init + live lines + heartbeat). Auth guard: loopback peers pass,
+  non-loopback requires bootstrap token (unit-tested). `/ui/*` serves re-e-ui dist with
+  SPA fallback. re-e-ui transport swapped mock → live fetch (`client.ts` + `transport.ts`
+  selector, dev proxy). **Gate loop verified in browser: UI create node → Test Connection
+  200·6ms·3 models (real probe) → save → chat request flows through the UI-created node →
+  Overview renders live usage (59 reqs, 99.1K tokens, TTFT p50 16ms) + 2 healthy nodes.**
 - 2026-09-17 (P1.7 + MVP gate): RTK ported (`core/rtk/**`, 17 files, self-contained,
   wired at upstream placement = final body pre-dispatch, default-on, tested: 8KB
   git-diff tool_result compressed end-to-end). L2 fixtures recaptured (capture script
@@ -173,12 +180,18 @@ axolotl/
   nodes (verified via l2-claude-tooluse). Porting detectFormat for no-slash bodies = P1.6b.
 - 2026-09-17: `scratch/port-translator.mjs` = regeneration path for translator re-sync
   after upstream updates; deps shims documented inline with their sources.
+- 2026-09-18: React 19 controlled inputs in headless automation: plain `Event("input")`
+  does NOT reach onChange — must dispatch `InputEvent("input", {bubbles:true})` after the
+  prototype value-setter bypass. Also: Playwright fill/click can hang (8s timeout) on
+  modal inputs even with force — evaluate-based interaction is the reliable path here.
+- 2026-09-18: The bench stub initially lacked `/models` — the management probe honestly
+  reported 404 (probe works against lying upstreams too).
 
 ## Open Questions
 
-1. **Approach:** RESOLVED in direction — two-part strangler split adopted 2026-09-17.
-   Remaining: does re-e-ui v1 reuse the existing Next dashboard out-of-process, or get
-   rebuilt as a lightweight SPA later?
+1. **Approach + UI strategy:** RESOLVED — two-part split; v1 UI = lean SPA rebuild
+   (user-ratified in ui-ux; reuse-first dead). P2 management contract = §5 + 4 folded
+   contract requests.
 2. **Runtime:** RESOLVED by default — Node 22+ (builtin node:sqlite + undici), pending
    user veto. Bun compile remains a P5 packaging experiment.
 3. **Provider scope:** RESOLVED 2026-09-17 — zero embedded providers in v1, custom
@@ -199,3 +212,4 @@ axolotl/
 | 2026-09-17 | P1.5+P1.6: SSE pipeline + chat handler (passthrough byte-parity, bench 16ms parity), translator port (48 files) + claude/responses wiring — L2 claude byte-identical; undici dep for SSRF pinning |
 | 2026-09-17 | P1.7 RTK + MVP gate PASSED: 4/5 L2 streaming fixtures byte-identical vs upstream through live ree-core; 34/34 tests; P1.6b residuals logged |
 | 2026-09-18 | ui-ux deliverables merged (`82d3316`, 0 conflicts): DECISIONS/DESIGN/ia-proposal/contract-requests + re-e-ui SPA preview (Plex/Phosphor, build verified). Contracts folded into backend-architecture §5; P2 redefined — lean SPA replaces dashboard rewire; re-e-ui on MOCK transport until 2.3 |
+| 2026-09-18 | P2.1-2.3: management API (~30 routes) + auth guard + /ui/* static + re-e-ui live transport swap; browser-verified gate loop (create node → test 200·6ms → chat flows → usage live). Remaining: 2.4 CLI, Live Console screen (ui-ux), P1.6b |
