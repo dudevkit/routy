@@ -185,6 +185,11 @@ axolotl/
   answered by the zombie, masking the failure). Lesson: after daemon resets, kill ALL
   port listeners (netstat → taskkill) and confirm the fresh process's OWN boot log
   before trusting a port-probe ready check.
+- 2026-09-18 (ops): port turf war — my supervisor AND the ui-ux agent's supervisor both
+  auto-restart a gateway on :8010; whichever respawns last wins and the other dies
+  EADDRINUSE. Rule: ONE supervisor owns the gateway port; before starting ree-core,
+  confirm no foreign instance holds the port, and the owner must run post-round-2
+  code (else UI round-2 calls 404).
 - 2026-09-17: Routed overhead ≈16ms flat (p50≈p90≈p99) through upstream's Next.js prod
   build — contributors: Next route layer + body re-parse + uncached reads. RE-E target
   ≤5ms requires bypassing Next + caching (as planned in backend-architecture).
