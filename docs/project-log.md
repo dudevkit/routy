@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** P2.1-2.4 COMPLETE (48/48 tests; L2 gate 4/4 streaming byte-identical + nonstream exact-usage divergence documented). Next: P3 stability pass, or Live Console screen (ui-ux), or P4 speed.
+- **Phase:** P2 COMPLETE backend-side (round-2 contract items implemented; 48/48 tests). UI screens: all v1 screens merged + live-wired. Remaining: P3 stability, P4 speed, P5 packaging.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -139,6 +139,13 @@ axolotl/
   selector, dev proxy). **Gate loop verified in browser: UI create node → Test Connection
   200·6ms·3 models (real probe) → save → chat request flows through the UI-created node →
   Overview renders live usage (59 reqs, 99.1K tokens, TTFT p50 16ms) + 2 healthy nodes.**
+- 2026-09-18 (P2 round-2 backend): all 5 accepted contract items implemented —
+  `PUT /api/nodes/{id}` (update/enable + key rotation), connections `PUT` (priority/
+  status) + `DELETE`, `PUT /api/keys/{id}` (enable/disable), `usageEventId` in details
+  (+`?usageEventId=` filter), per-request `REQ` info log line + `?level=` filter +
+  `POST /api/logs/clear` (ring clear notifies SSE clients), BOOT ring provenance
+  (token excluded — stays stdout-only), `/v1` loopback-or-key guard honoring
+  `requireApiKey`. 48/48 tests. Round-2 questions answered in contract-requests.md.
 - 2026-09-18 (P1.6b + P2.4): `core/sse/sseToJson.mjs` (verbatim parseSSEToOpenAIResponse
   port) — nonstream vs SSE-lying upstream now converts to JSON; L2 nonstream fixture
   structurally identical, ONE documented divergence: upstream overwrites exact upstream
@@ -173,6 +180,11 @@ axolotl/
 - 2026-09-17: Compatible-node baseUrl is read from `connection.credentials.providerSpecificData.baseUrl`
   (`open-sse/executors/default.js:111`), not just node data — node record alone is
   insufficient for routing.
+- 2026-09-18 (ops): hub daemon reset orphaned supervised processes — zombies held :8010
+  with STALE code while fresh starts died EADDRINUSE (hub's ready.port probe was
+  answered by the zombie, masking the failure). Lesson: after daemon resets, kill ALL
+  port listeners (netstat → taskkill) and confirm the fresh process's OWN boot log
+  before trusting a port-probe ready check.
 - 2026-09-17: Routed overhead ≈16ms flat (p50≈p90≈p99) through upstream's Next.js prod
   build — contributors: Next route layer + body re-parse + uncached reads. RE-E target
   ≤5ms requires bypassing Next + caching (as planned in backend-architecture).
@@ -222,3 +234,4 @@ axolotl/
 | 2026-09-18 | ui-ux deliverables merged (`82d3316`, 0 conflicts): DECISIONS/DESIGN/ia-proposal/contract-requests + re-e-ui SPA preview (Plex/Phosphor, build verified). Contracts folded into backend-architecture §5; P2 redefined — lean SPA replaces dashboard rewire; re-e-ui on MOCK transport until 2.3 |
 | 2026-09-18 | P2.1-2.3: management API (~30 routes) + auth guard + /ui/* static + re-e-ui live transport swap; browser-verified gate loop (create node → test 200·6ms → chat flows → usage live). Remaining: 2.4 CLI, Live Console screen (ui-ux), P1.6b |
 | 2026-09-18 | P1.6b + P2.4: sseToJson + detectFormat ported (L2 nonstream: exact-usage divergence documented as intentional improvement); re-e CLI (init/serve/key) |
+| 2026-09-18 | P2 round-2 backend: 5 contract items implemented + 2 questions answered (combo name semantics, /v1/models loopback-or-key guard); zombie-instance incident diagnosed and documented |
