@@ -9,7 +9,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { useDetails, useGateway, useHistory, useNodes, useStats } from "../api/hooks";
+import { useDetails, useDetailsForEvent, useGateway, useHistory, useNodes, useStats } from "../api/hooks";
 import type { RequestDetail, UsageHistoryRow } from "../api/types";
 import { fmtAgo, fmtClock, fmtCost, fmtMs, fmtTokens } from "../utils/format";
 import { Card } from "../components/ui/Card";
@@ -178,8 +178,9 @@ function OverviewTab({ rows }: { rows: UsageHistoryRow[] }) {
 /* ── Details tab ───────────────────────────────────────────────────────────── */
 function DetailsTab({ rows }: { rows: UsageHistoryRow[] }) {
   const nodes = useNodes();
-  const details = useDetails(200);
   const [open, setOpen] = useState<UsageHistoryRow | null>(null);
+  const details = useDetails(200);
+  const exact = useDetailsForEvent(open?.id ?? null);
 
   const nodeNameById = useMemo(() => {
     const map: Record<string, string> = {};
@@ -188,11 +189,20 @@ function DetailsTab({ rows }: { rows: UsageHistoryRow[] }) {
   }, [nodes.data]);
 
   /**
-   * /api/usage/details exposes no usageEventId (contract request filed), so
-   * payloads are correlated by the millisecond timestamp they were written in.
+   * Round 2 gives details rows a `usageEventId`, so the pair is correlated exactly.
+   * Rows written before that column carry null and still fall back to the
+   * millisecond timestamp they were recorded in.
    */
-  const detailsFor = (row: UsageHistoryRow | null): RequestDetail[] =>
-    !row ? [] : (details.data ?? []).filter((d) => Math.abs(d.ts - row.ts) < 1500);
+  const detailsFor = (row: UsageHistoryRow | null): RequestDetail[] => {
+    if (!row) return [];
+    const byId = new Map<number, RequestDetail>();
+    for (const d of [...(exact.data ?? []), ...(details.data ?? [])]) byId.set(d.id, d);
+    const matched = [...byId.values()].filter((d) => d.usageEventId === row.id);
+    if (matched.length) return matched.sort((a, b) => a.ts - b.ts);
+    return [...byId.values()]
+      .filter((d) => (d.usageEventId ?? null) === null && Math.abs(d.ts - row.ts) < 1500)
+      .sort((a, b) => a.ts - b.ts);
+  };
 
   return (
     <>

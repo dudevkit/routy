@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useLogStream } from "../api/hooks";
+import { useClearLogs, useLogStream } from "../api/hooks";
 import type { LogRecord } from "../api/types";
+import type { StreamLevel } from "../api/transport";
+import { toastApiError } from "../utils/errors";
 import { fmtClockMs } from "../utils/format";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { StatusDot } from "../components/ui/StatusDot";
+import { useToast } from "../components/ui/Toast";
 import { CaretRight, Trash } from "../components/icons";
 import { cn } from "../utils/cn";
 
@@ -68,12 +71,27 @@ function LogRow({ line }: { line: LogRecord }) {
 }
 
 export function ConsoleLog() {
-  const { lines, tags, raw, connected, usingMock, clear } = useLogStream();
   const [levels, setLevels] = useState<Record<Level, boolean>>({ debug: true, info: true, warn: true, error: true });
   const [tag, setTag] = useState("all");
   const [search, setSearch] = useState("");
   const [follow, setFollow] = useState(true);
   const scroller = useRef<HTMLDivElement | null>(null);
+  const toast = useToast();
+  const clearLogs = useClearLogs();
+
+  /**
+   * When the enabled chips form a suffix of the level order, ask the server to stop
+   * streaming the rest (`?level=`) so a warn-only view pays no debug traffic.
+   * Non-contiguous sets stay fully streamed and are filtered in-view.
+   */
+  const streamLevel = useMemo<StreamLevel | undefined>(() => {
+    const enabled = LEVELS.filter((l) => levels[l]);
+    if (enabled.length === 0 || enabled.length === LEVELS.length) return undefined;
+    const floor = LEVELS.indexOf(enabled[0]);
+    return enabled.every((l, i) => LEVELS.indexOf(l) === floor + i) ? enabled[0] : undefined;
+  }, [levels]);
+
+  const { lines, tags, raw, connected, usingMock, clear } = useLogStream(streamLevel);
 
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -93,6 +111,18 @@ export function ConsoleLog() {
   }, [shown, follow]);
 
   const toggleLevel = (level: Level) => setLevels((prev) => ({ ...prev, [level]: !prev[level] }));
+
+  /** Server-side clear: empties the gateway ring and notifies every open console. */
+  const onClear = () => {
+    if (usingMock) {
+      clear();
+      return;
+    }
+    clearLogs.mutate(undefined, {
+      onSuccess: () => clear(),
+      onError: (err) => toastApiError(toast, err, "Failed to clear gateway logs"),
+    });
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -138,7 +168,15 @@ export function ConsoleLog() {
           <Button size="sm" variant={follow ? "secondary" : "outline"} onClick={() => setFollow((v) => !v)}>
             {follow ? "Following" : "Paused"}
           </Button>
-          <Button size="sm" variant="ghost" icon={<Trash size={13} />} onClick={clear} aria-label="Clear view" />
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Trash size={13} />}
+            onClick={onClear}
+            loading={clearLogs.isPending}
+            title="Clears the gateway ring buffer for every open console"
+            aria-label="Clear gateway logs"
+          />
         </div>
       </div>
 
@@ -158,7 +196,7 @@ export function ConsoleLog() {
               </Badge>
             )}
             <Badge variant="default" size="sm">
-              /api/logs/stream
+              {streamLevel ? `/api/logs/stream?level=${streamLevel}` : "/api/logs/stream"}
             </Badge>
           </div>
         </div>
@@ -169,10 +207,21 @@ export function ConsoleLog() {
               Mock transport: no log stream. Drop VITE_API_MODE to watch the live gateway.
             </p>
           )}
-          {!usingMock && shown.length === 0 && raw.length === 0 && (
+          {!usingMock && lines.length === 0 && raw.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-              <p className="text-sm text-text-muted">No log lines match the current filter.</p>
-              <p className="text-xs text-text-subtle">Send a request through /v1 and lines arrive here.</p>
+              <p className="text-sm text-text-muted">No lines in the gateway ring since boot or the last clear.</p>
+              <p className="text-xs text-text-subtle">
+                The gateway buffers only at its own <code className="font-mono">RE_E_LOG_LEVEL</code> floor, and the
+                healthy-path REQ line is still pending (contract-requests §5) — so silence here does not mean no traffic.
+              </p>
+            </div>
+          )}
+          {!usingMock && lines.length > 0 && shown.length === 0 && raw.length === 0 && (
+            <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+              <p className="text-sm text-text-muted">
+                No log lines match the current filter ({lines.length.toLocaleString()} buffered).
+              </p>
+              <p className="text-xs text-text-subtle">Widen the level or tag filter to see them.</p>
             </div>
           )}
           {shown.map((l, i) => (

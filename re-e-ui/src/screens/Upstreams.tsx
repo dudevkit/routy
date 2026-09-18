@@ -2,15 +2,18 @@ import { useMemo, useState } from "react";
 import {
   useAddConnection,
   useConnections,
+  useDeleteConnection,
   useNodes,
   useRemoveNode,
   useResetBreaker,
   useTestNode,
+  useUpdateConnection,
+  useUpdateNode,
 } from "../api/hooks";
 import type { NodeConnection, NodeStatus, UpstreamNode } from "../api/types";
 import { toastApiError } from "../utils/errors";
 import { fmtMs } from "../utils/format";
-import { ArrowsClockwise, Broadcast, CheckCircle, Plus, WifiHigh, XCircle } from "../components/icons";
+import { ArrowsClockwise, Broadcast, Check, CheckCircle, PencilSimple, Plus, Prohibit, Trash, WifiHigh, XCircle } from "../components/icons";
 import { NodeFormModal } from "../components/NodeFormModal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -45,8 +48,11 @@ function ConnectionsDrawer({ node, onClose }: { node: UpstreamNode | null; onClo
   const toast = useToast();
   const [apiKey, setApiKey] = useState("");
   const [name, setName] = useState("");
+  const [confirmId, setConfirmId] = useState<string | null>(null);
   const connections = useConnections(node?.id ?? null);
   const addConnection = useAddConnection();
+  const updateConnection = useUpdateConnection();
+  const deleteConnection = useDeleteConnection();
 
   const submit = () => {
     if (!node || !apiKey.trim()) return;
@@ -75,22 +81,51 @@ function ConnectionsDrawer({ node, onClose }: { node: UpstreamNode | null; onClo
           {connections.isLoading && <Skeleton rows={2} />}
           {connections.data?.length === 0 && <p className="text-sm text-text-muted">No keys stored for this node.</p>}
           {connections.data?.map((c: NodeConnection) => (
-            <div
-              key={c.id}
-              className="flex items-center justify-between gap-3 rounded-[10px] border border-border-subtle bg-surface-2 px-3 py-2"
-            >
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-text-main">{c.name || "key"}</p>
-                <p className="font-mono text-xs text-text-muted">{c.keyMasked}</p>
+            <div key={c.id} className="flex flex-col gap-2 rounded-[10px] border border-border-subtle bg-surface-2 px-3 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-text-main">{c.name || "key"}</p>
+                  <p className="font-mono text-xs text-text-muted">{c.keyMasked}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2 text-xs text-text-muted">
+                  {c.status && (
+                    <Badge variant={c.status === "active" ? "success" : "default"} size="sm">
+                      {c.status}
+                    </Badge>
+                  )}
+                  {c.lastError && <span className="text-danger">{c.lastError}</span>}
+                  <button
+                    aria-label={`Remove key ${c.name || c.id}`}
+                    onClick={() => setConfirmId(c.id)}
+                    className="rounded-[6px] p-1 text-text-subtle transition-colors hover:text-danger"
+                  >
+                    <Trash size={13} />
+                  </button>
+                </div>
               </div>
-              <div className="flex shrink-0 items-center gap-2 text-xs text-text-muted">
-                {c.status && (
-                  <Badge variant={c.status === "active" ? "success" : "default"} size="sm">
-                    {c.status}
-                  </Badge>
-                )}
-                {c.lastError && <span className="text-danger">{c.lastError}</span>}
-              </div>
+              {/* priority orders credentials within a node; blank = backend default */}
+              <label className="flex items-center gap-2 text-xs text-text-muted">
+                Priority
+                <input
+                  type="number"
+                  min={0}
+                  defaultValue={c.priority ?? ""}
+                  placeholder="auto"
+                  disabled={updateConnection.isPending}
+                  onBlur={(e) => {
+                    const value = e.target.value === "" ? undefined : Number(e.target.value);
+                    if (value === undefined || Number.isNaN(value) || value === c.priority) return;
+                    updateConnection.mutate(
+                      { id: c.id, patch: { priority: value } },
+                      {
+                        onSuccess: () => toast("Priority saved"),
+                        onError: (err) => toastApiError(toast, err, "Failed to save priority"),
+                      },
+                    );
+                  }}
+                  className="w-20 rounded-[6px] border border-border-subtle bg-bg px-2 py-1 font-mono text-xs text-text-main"
+                />
+              </label>
             </div>
           ))}
         </div>
@@ -122,18 +157,53 @@ function ConnectionsDrawer({ node, onClose }: { node: UpstreamNode | null; onClo
             </Button>
           </div>
         </div>
+
+        <Modal
+          isOpen={!!confirmId}
+          onClose={() => setConfirmId(null)}
+          title="Remove this key?"
+          size="sm"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setConfirmId(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  if (!confirmId) return;
+                  deleteConnection.mutate(confirmId, {
+                    onSuccess: () => {
+                      toast("Key removed");
+                      setConfirmId(null);
+                    },
+                    onError: (err) => toastApiError(toast, err, "Failed to remove key"),
+                  });
+                }}
+              >
+                Remove Key
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm text-text-muted">
+            Requests stop using this credential. The node itself stays enabled unless this was its last key.
+          </p>
+        </Modal>
       </div>
     </Drawer>
   );
 }
 
-function NodeRow({ node, onKeys }: { node: UpstreamNode; onKeys: () => void }) {
+function NodeRow({ node, onKeys, onEdit }: { node: UpstreamNode; onKeys: () => void; onEdit: () => void }) {
   const toast = useToast();
   const testNode = useTestNode();
   const resetBreaker = useResetBreaker();
   const removeNode = useRemoveNode();
+  const updateNode = useUpdateNode();
   const [confirmRemove, setConfirmRemove] = useState(false);
   const meta = statusMeta[node.status];
+  const disabled = node.status === "disabled";
 
   const runTest = () =>
     testNode.mutate(node.id, {
@@ -196,8 +266,29 @@ function NodeRow({ node, onKeys }: { node: UpstreamNode; onKeys: () => void }) {
               Reset
             </Button>
           )}
+          <Button size="sm" variant="ghost" icon={<PencilSimple size={13} />} onClick={onEdit}>
+            Edit
+          </Button>
           <Button size="sm" variant="ghost" onClick={onKeys}>
             Keys
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={disabled ? `Enable ${node.name}` : `Disable ${node.name}`}
+            icon={disabled ? <Check size={13} /> : <Prohibit size={13} />}
+            disabled={updateNode.isPending}
+            onClick={() =>
+              updateNode.mutate(
+                { id: node.id, patch: { enabled: disabled } },
+                {
+                  onSuccess: () => toast(disabled ? "Upstream enabled" : "Upstream disabled"),
+                  onError: (err) => toastApiError(toast, err, disabled ? "Failed to enable" : "Failed to disable"),
+                },
+              )
+            }
+          >
+            {disabled ? "Enable" : "Disable"}
           </Button>
           <Button
             size="sm"
@@ -251,6 +342,7 @@ export function Upstreams() {
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [keysNode, setKeysNode] = useState<UpstreamNode | null>(null);
+  const [editNode, setEditNode] = useState<UpstreamNode | null>(null);
 
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -330,7 +422,7 @@ export function Upstreams() {
             </thead>
             <tbody>
               {visible.map((n) => (
-                <NodeRow key={n.id} node={n} onKeys={() => setKeysNode(n)} />
+                <NodeRow key={n.id} node={n} onKeys={() => setKeysNode(n)} onEdit={() => setEditNode(n)} />
               ))}
             </tbody>
           </table>
@@ -342,7 +434,14 @@ export function Upstreams() {
         Status is real breaker state: degraded = failures recorded, down = breaker open, disabled = node off.
       </div>
 
-      <NodeFormModal isOpen={addOpen} onClose={() => setAddOpen(false)} />
+      <NodeFormModal
+        isOpen={addOpen || !!editNode}
+        node={editNode}
+        onClose={() => {
+          setAddOpen(false);
+          setEditNode(null);
+        }}
+      />
       <ConnectionsDrawer node={keysNode} onClose={() => setKeysNode(null)} />
     </div>
   );

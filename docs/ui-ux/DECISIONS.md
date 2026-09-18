@@ -256,3 +256,47 @@ outside my session, so mint your own through Settings). `Gate Test` vanished
 between two reads — main's session edits the same `~/.re-e` DB, so screens must
 tolerate config changing underneath them (they do: react-query refetch on window
 focus, no cached-write assumptions).
+
+## 2026-09-19 — Round 3: merged backend, wired the newly-unlocked operations (settled)
+
+Merged `axolotl` (round-2 backend). Every affordance that was deliberately absent for
+missing routes is now live: **Edit upstream** (the add-modal in edit mode over
+`PUT /api/nodes/{id}`, blank key = keep), **Disable/Enable** per node, keys drawer
+**priority** (blur-to-save) and **remove key** with confirm, Settings **Revoke /
+Enable** per client key, Live Console **server-side level** (the level chips derive a
+`?level=` floor when the enabled set is a suffix of debug<info<warn<error, otherwise
+they filter in-view) and a **real Clear** (`POST /api/logs/clear` → `clear` broadcast →
+every open console resets). Combos copy rewritten for bare-name addressing.
+
+`transport.ts` now types the swap as `typeof liveApi`, so the mock transport fails the
+build if it drifts from the real surface — it was silently missing five methods before
+I pinned it. `useDetailsForEvent` correlates the payload drawer by `usageEventId` with
+the old millisecond fallback kept (the column is NULL today; see R3-5).
+
+**Verified in the browser, not just by reading code:** created → renamed via PUT →
+disabled → enabled → added a second key → set priority (persisted 100→3→100, read back)
+→ removed key → minted key → revoked (proxy returned **401**) → re-enabled (**200**) →
+deleted; console badge moved to `?level=info` when debug was switched off and the
+ring-empty state after Clear. All test rows deleted afterwards: `nodes [Demo Stub/demo]`,
+`keys []`, `combos [dev-combo]`, `alias {smart}` — the shared DB is back to its
+pre-session state.
+
+**UI fixes made on evidence:** toast stack gained `role="status" aria-live="polite"`
+(feedback was invisible to assistive tech — and to my own probes); `utils/errors.ts`
+maps storage text to intent, because a duplicate prefix arrives as
+`internal_error · UNIQUE constraint failed: provider_nodes.prefix`, and that string must
+not be user-facing (raw kept in `console.warn`). Console empty-state copy rewritten: with
+R3-1 open, silence does **not** mean no traffic, and the screen now says so.
+
+**Filed as round 3:** R3-1 REQ line never fires (the healthy console is still empty;
+likely scope slip between `recordSuccess` and `recordUsage`), R3-2 duplicate-prefix 500
+leaking SQLite, R3-3 intermittent `PUT /api/nodes` 500 *after* commit with no server
+trace, R3-4 disabled nodes still serve 200, R3-5 `usage_event_id` NULL everywhere,
+R3-6 one-DB-one-gateway guard (a real consequence: a probe of mine deleted another
+session's API key when row ordering shifted between two reads). Withdrawn: the
+`bootstrapToken` redaction ask — it is now stdout-only by design and out of the ring.
+
+**Ops:** gateway restarted on post-merge code, single supervisor (`ree-core`,
+`persist: true`), default log level this time — the level is now part of what we are
+testing. Note `hub send` to `Main` is this session, so cross-session coordination goes
+through the user.

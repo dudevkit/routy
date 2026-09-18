@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { useAddNode, useTestConnection } from "../api/hooks";
+import { useEffect, useState } from "react";
+import { useAddNode, useTestConnection, useUpdateNode } from "../api/hooks";
 import { toastApiError } from "../utils/errors";
-import type { NewNodeInput, TestResult } from "../api/types";
+import type { NewNodeInput, TestResult, UpstreamNode } from "../api/types";
 import { CheckCircle, Plus, WifiHigh, XCircle } from "./icons";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
@@ -16,12 +16,30 @@ type TestState = null | "testing" | TestResult;
  * `prefix` is required by the backend (400 otherwise) and `modelCount` stays 0
  * on the saved node until a probe succeeds — Test here probes before saving.
  */
-export function NodeFormModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+export function NodeFormModal({
+  isOpen,
+  onClose,
+  node = null,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  /** when set, the modal edits this upstream via PUT /api/nodes/{id} */
+  node?: UpstreamNode | null;
+}) {
   const toast = useToast();
   const [form, setForm] = useState<NewNodeInput>(emptyForm);
   const [test, setTest] = useState<TestState>(null);
   const testConnection = useTestConnection();
   const addNode = useAddNode();
+  const updateNode = useUpdateNode();
+  const editing = !!node;
+
+  /* one modal for both flows: reseed when the target changes */
+  useEffect(() => {
+    if (!isOpen) return;
+    setForm(node ? { name: node.name, baseUrl: node.baseUrl, apiKey: "", prefix: node.prefix } : emptyForm);
+    setTest(null);
+  }, [isOpen, node]);
 
   const close = () => {
     setForm(emptyForm);
@@ -51,20 +69,41 @@ export function NodeFormModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
     );
   };
 
-  const save = () =>
-    addNode.mutate(form, {
-      onSuccess: () => {
-        toast("Upstream added");
-        close();
+  const save = () => {
+    if (!node) {
+      addNode.mutate(form, {
+        onSuccess: () => {
+          toast("Upstream added");
+          close();
+        },
+        onError: (err) => toastApiError(toast, err, "Failed to add upstream"),
+      });
+      return;
+    }
+    /* blank key means "keep it" — the server only rotates credentials when apiKey is a non-empty string */
+    const patch: Partial<NewNodeInput> = {
+      name: form.name.trim(),
+      baseUrl: form.baseUrl.trim(),
+      prefix: form.prefix.trim(),
+    };
+    if (form.apiKey.trim()) patch.apiKey = form.apiKey.trim();
+    updateNode.mutate(
+      { id: node.id, patch },
+      {
+        onSuccess: () => {
+          toast("Upstream updated");
+          close();
+        },
+        onError: (err) => toastApiError(toast, err, "Failed to update upstream"),
       },
-      onError: (err) => toastApiError(toast, err, "Failed to add upstream"),
-    });
+    );
+  };
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={close}
-      title="Add Upstream"
+      title={editing ? `Edit ${node?.name ?? "upstream"}` : "Add Upstream"}
       footer={
         <>
           <Button variant="secondary" onClick={close}>
@@ -72,12 +111,12 @@ export function NodeFormModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
           </Button>
           <Button
             variant="primary"
-            icon={<Plus size={16} />}
+            icon={editing ? undefined : <Plus size={16} />}
             disabled={!canSave}
-            loading={addNode.isPending}
+            loading={addNode.isPending || updateNode.isPending}
             onClick={save}
           >
-            Add Upstream
+            {editing ? "Save Changes" : "Add Upstream"}
           </Button>
         </>
       }
@@ -101,7 +140,7 @@ export function NodeFormModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
           label="API Key"
           mono
           type="password"
-          hint="Stored server-side — the UI only ever reads it back masked"
+          hint={editing ? "Leave blank to keep the current key — it is never read back from the API" : "Stored server-side — the UI only ever reads it back masked"}
           value={form.apiKey}
           onChange={(e) => set({ apiKey: e.target.value })}
           placeholder="sk-…"

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
-import { api, streamLogs } from "./transport";
+import { api, streamLogs, type StreamLevel } from "./transport";
 import type { ComboInput, LogRecord, ProxyPoolInput } from "./types";
 
 /* ── query keys ────────────────────────────────────────────────────────────── */
@@ -38,6 +38,13 @@ export const useHistory = (params: { since?: number; limit?: number } = {}, enab
 
 export const useDetails = (limit = 50, enabled = true) =>
   useQuery({ queryKey: ["usage", "details", limit], queryFn: () => api.getDetails(limit), enabled });
+/** Exact payload pair for one usage event (round-2: server-side correlation). */
+export const useDetailsForEvent = (usageEventId: number | null) =>
+  useQuery({
+    queryKey: ["usage", "details", "event", usageEventId],
+    queryFn: () => api.getDetails(20, usageEventId ?? undefined),
+    enabled: usageEventId !== null,
+  });
 
 export const useGateway = () => useQuery({ queryKey: GATEWAY, queryFn: api.getGateway, refetchInterval: 30000 });
 
@@ -62,6 +69,11 @@ function useInvalidator(...keys: QueryKey[]) {
 export const useAddNode = () => useMutation({ mutationFn: api.addNode, onSuccess: useInvalidator(NODES) });
 export const useRemoveNode = () =>
   useMutation({ mutationFn: api.removeNode, onSuccess: useInvalidator(NODES, CONNECTIONS) });
+export const useUpdateNode = () =>
+  useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Parameters<typeof api.updateNode>[1] }) => api.updateNode(id, patch),
+    onSuccess: useInvalidator(NODES, CONNECTIONS),
+  });
 export const useResetBreaker = () => useMutation({ mutationFn: api.resetBreaker, onSuccess: useInvalidator(NODES) });
 /** a successful probe caches modelCount on the node → nodes must refresh */
 export const useTestNode = () => useMutation({ mutationFn: api.testNode, onSuccess: useInvalidator(NODES) });
@@ -77,12 +89,18 @@ export const useAddConnection = () =>
     mutationFn: ({ nodeId, ...input }: AddConnectionInput) => api.addConnection(nodeId, input),
     onSuccess: useInvalidator(CONNECTIONS, NODES),
   });
+export const useUpdateConnection = () =>
+  useMutation({ mutationFn: ({ id, patch }: { id: string; patch: { name?: string; priority?: number } }) => api.updateConnection(id, patch), onSuccess: useInvalidator(CONNECTIONS, NODES) });
+export const useDeleteConnection = () =>
+  useMutation({ mutationFn: api.deleteConnection, onSuccess: useInvalidator(CONNECTIONS, NODES) });
 
 export const usePutSettings = () =>
   useMutation({ mutationFn: api.putSettings, onSuccess: useInvalidator(["settings"]) });
 /** creating or removing a client key changes the gateway's masked key too */
 export const useCreateKey = () => useMutation({ mutationFn: api.createKey, onSuccess: useInvalidator(KEYS, GATEWAY) });
 export const useRemoveKey = () => useMutation({ mutationFn: api.removeKey, onSuccess: useInvalidator(KEYS, GATEWAY) });
+/** enabled=false revokes without destroying the key row */
+export const useSetKeyEnabled = () => useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.setKeyEnabled(id, enabled), onSuccess: useInvalidator(KEYS) });
 
 export const useCreateCombo = () => useMutation({ mutationFn: api.createCombo, onSuccess: useInvalidator(COMBOS) });
 export interface ComboPatch {
@@ -105,6 +123,8 @@ export const useUpdatePool = () =>
   useMutation({ mutationFn: ({ id, patch }: PoolPatch) => api.updatePool(id, patch), onSuccess: useInvalidator(POOLS) });
 export const useDeletePool = () => useMutation({ mutationFn: api.deletePool, onSuccess: useInvalidator(POOLS) });
 export const useTestPool = () => useMutation({ mutationFn: api.testPool });
+/** server-side ring clear — every open console receives the `clear` event */
+export const useClearLogs = () => useMutation({ mutationFn: () => api.clearLogs() });
 
 /* ── live log stream ───────────────────────────────────────────────────────── */
 const MAX_LINES = 2000;
@@ -145,12 +165,13 @@ function parseLine(text: string): LogRecord | null {
 }
 
 /**
- * SSE consumer: `init` snapshot (up to 200 lines) then live `line` events.
- * Buffers ring at MAX_LINES and coalesce bursts to ~10fps re-renders so a busy
- * gateway cannot melt the UI. `clear()` empties the local view only — the backend
- * ring buffer is untouched (no clear endpoint; see contract-requests.md).
+ * SSE consumer: `init` snapshot (up to 200 lines) then live `line` events, plus
+ * the server's `clear` broadcast. `level` is the *minimum* level streamed
+ * (`?level=`), so watching warn+error costs no debug traffic; changing it
+ * re-subscribes. Buffers ring at MAX_LINES and coalesce bursts to ~10fps
+ * re-renders so a busy gateway cannot melt the UI.
  */
-export function useLogStream(): UseLogStream {
+export function useLogStream(level?: StreamLevel): UseLogStream {
   const [lines, setLines] = useState<LogRecord[]>([]);
   const [raw, setRaw] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
@@ -172,31 +193,43 @@ export function useLogStream(): UseLogStream {
     }, 100);
   };
 
+  const emptyBuffers = () => {
+    pending.current = [];
+    setLines([]);
+    setRaw([]);
+  };
+
   useEffect(() => {
-    const unsubscribe = streamLogs({
-      onInit: (snapshot) => {
-        const parsed = snapshot.map(parseLine);
-        setLines(parsed.filter((record): record is LogRecord => record !== null));
-        setRaw(parsed.map((record, i) => (record === null ? snapshot[i] : null)).filter((s): s is string => s !== null));
-        setConnected(true);
+    setLines([]);
+    setRaw([]);
+    const unsubscribe = streamLogs(
+      {
+        onInit: (snapshot) => {
+          const parsed = snapshot.map(parseLine);
+          setLines(parsed.filter((record): record is LogRecord => record !== null));
+          setRaw(parsed.map((record, i) => (record === null ? snapshot[i] : null)).filter((s): s is string => s !== null));
+          setConnected(true);
+        },
+        onLine: (text) => {
+          const record = parseLine(text);
+          if (!record) {
+            setRaw((prev) => [...prev.slice(-(MAX_LINES - 1)), text]);
+            return;
+          }
+          pending.current.push(record);
+          scheduleFlush();
+        },
+        onClear: emptyBuffers,
+        onOpen: () => setConnected(true),
+        onClose: () => setConnected(false),
       },
-      onLine: (text) => {
-        const record = parseLine(text);
-        if (!record) {
-          setRaw((prev) => [...prev.slice(-(MAX_LINES - 1)), text]);
-          return;
-        }
-        pending.current.push(record);
-        scheduleFlush();
-      },
-      onOpen: () => setConnected(true),
-      onClose: () => setConnected(false),
-    });
+      level,
+    );
     return () => {
       unsubscribe();
       clearTimeout(flushTimer.current);
     };
-  }, []);
+  }, [level]);
 
   const tags = useMemo(() => {
     const seen: Record<string, true> = {};
@@ -204,10 +237,8 @@ export function useLogStream(): UseLogStream {
     return Object.keys(seen).sort();
   }, [lines]);
 
-  const clear = () => {
-    setLines([]);
-    setRaw([]);
-  };
+  /** Empties the local view; call `useClearLogs` to clear the server ring too. */
+  const clear = emptyBuffers;
 
   return { lines, tags, raw, connected, usingMock, clear };
 }

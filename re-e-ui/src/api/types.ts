@@ -106,11 +106,12 @@ export interface UsageHistoryRow {
 }
 
 /** GET /api/usage/details — raw request/response payloads.
- *  NOTE: no usageEventId is exposed (contract request filed) — the UI correlates
- *  request/response by `ts` and links to history rows the same way. */
+ *  Round 2 exposes `usageEventId`, so the drawer correlates a payload pair to its
+ *  history row exactly instead of by `ts` (which can collide under concurrency). */
 export interface RequestDetail {
   id: number;
   ts: number;
+  usageEventId?: number | null;
   kind: "request" | "response" | (string & {});
   truncated: boolean;
   content: string;

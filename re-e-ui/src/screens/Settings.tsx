@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { useCreateKey, useGateway, useHealth, useKeys, useRemoveKey, useSettings, usePutSettings } from "../api/hooks";
+import { useCreateKey, useGateway, useHealth, useKeys, usePutSettings, useRemoveKey, useSetKeyEnabled, useSettings } from "../api/hooks";
 import type { CreatedApiKey } from "../api/types";
 import { toastApiError } from "../utils/errors";
 import { fmtAgo, fmtDateTime } from "../utils/format";
-import { Key as KeyIcon, Plus, Trash } from "../components/icons";
+import { Check, Key as KeyIcon, Plus, Prohibit, Trash } from "../components/icons";
 import { CopyChip } from "../components/CopyChip";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -50,6 +50,7 @@ function KeysCard() {
   const keys = useKeys();
   const createKey = useCreateKey();
   const removeKey = useRemoveKey();
+  const setKeyEnabled = useSetKeyEnabled();
   const [created, setCreated] = useState<CreatedApiKey | null>(null);
   const [name, setName] = useState("");
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -124,21 +125,48 @@ function KeysCard() {
             {list.map((k) => (
               <tr key={k.id} className="border-t border-border-subtle">
                 <td className="px-3 py-2 text-xs font-medium text-text-main">
-                  {k.name || <span className="text-text-subtle">unlabeled</span>}
+                  <span className="flex items-center gap-2">
+                    {k.name || <span className="text-text-subtle">unlabeled</span>}
+                    {!k.enabled && (
+                      <Badge variant="default" size="sm">
+                        disabled
+                      </Badge>
+                    )}
+                  </span>
                 </td>
                 <td className="px-3 py-2 font-mono text-[11px] text-text-muted">{fmtDateTime(k.createdAt)}</td>
                 <td className="px-3 py-2 font-mono text-[11px] text-text-muted">
                   {k.lastUsedAt ? fmtAgo(k.lastUsedAt) : "never"}
                 </td>
                 <td className="px-3 py-2 text-right">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    aria-label={`Delete key ${k.name ?? k.id}`}
-                    className="hover:bg-danger/10 hover:text-danger"
-                    icon={<Trash size={13} />}
-                    onClick={() => setConfirmId(k.id)}
-                  />
+                  <div className="flex items-center justify-end gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={k.enabled ? `Revoke key ${k.name ?? k.id}` : `Re-enable key ${k.name ?? k.id}`}
+                      icon={k.enabled ? <Prohibit size={13} /> : <Check size={13} />}
+                      disabled={setKeyEnabled.isPending}
+                      onClick={() =>
+                        setKeyEnabled.mutate(
+                          { id: k.id, enabled: !k.enabled },
+                          {
+                            onSuccess: () => toast(k.enabled ? "Key revoked" : "Key re-enabled"),
+                            onError: (err) => toastApiError(toast, err, "Failed to update key"),
+                          },
+                        )
+                      }
+                    >
+                      {k.enabled ? "Revoke" : "Enable"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`Delete key ${k.name ?? k.id}`}
+                      className="hover:bg-danger/10 hover:text-danger"
+                      icon={<Trash size={13} />}
+                      onClick={() => setConfirmId(k.id)}
+                    />
+                  </div>
                 </td>
               </tr>
             ))}
@@ -147,7 +175,8 @@ function KeysCard() {
       )}
 
       <p className="text-[11px] text-text-subtle">
-        Keys are stored hashed — the plaintext exists only in the panel above, once.
+        Keys are stored hashed — the plaintext exists only in the panel above, once. Revoking keeps the row (and its
+        usage history) so you can re-enable it later; deleting erases it.
       </p>
 
       <Modal

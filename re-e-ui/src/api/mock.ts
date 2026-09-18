@@ -26,7 +26,7 @@ import type {
   UsageHistoryRow,
   UsageStats,
 } from "./types";
-import type { LogStreamHandlers } from "./client";
+import type { LogStreamHandlers, StreamLevel } from "./client";
 
 const uuid = () => crypto.randomUUID();
 const nowIso = () => new Date().toISOString();
@@ -60,6 +60,10 @@ const probeUnavailable = (): TestResult => ({
 });
 
 export const api = {
+  /* logs — round-2 parity (no server ring to clear in mock) */
+  async clearLogs(): Promise<{ ok: boolean }> {
+    return { ok: true };
+  },
   /* nodes */
   async listNodes(): Promise<UpstreamNode[]> {
     return state.nodes.map(({ apiKey: _apiKey, ...view }) => view);
@@ -106,6 +110,17 @@ export const api = {
     const { apiKey: _drop, ...view } = node;
     return view;
   },
+  async updateNode(id: string, patch: Partial<NewNodeInput> & { enabled?: boolean; apiType?: string }): Promise<UpstreamNode> {
+    const node = state.nodes.find((n) => n.id === id);
+    if (!node) throw new Error("not_found");
+    if (patch.name !== undefined) node.name = patch.name.trim();
+    if (patch.baseUrl !== undefined) node.baseUrl = patch.baseUrl.trim();
+    if (patch.prefix !== undefined) node.prefix = patch.prefix.trim();
+    if (patch.apiKey) node.keyMasked = maskKey(patch.apiKey);
+    if (patch.enabled !== undefined) node.status = patch.enabled ? "healthy" : "disabled";
+    const { apiKey: _drop, ...view } = node;
+    return view;
+  },
 
   async testNode(_id: string): Promise<TestResult> {
     return probeUnavailable();
@@ -133,6 +148,18 @@ export const api = {
     const { nodeId: _n, ...view } = conn;
     return view;
   },
+  async updateConnection(id: string, patch: { name?: string; status?: string; priority?: number }): Promise<NodeConnection> {
+    const conn = state.connections.find((c) => c.id === id);
+    if (!conn) throw new Error("not_found");
+    if (patch.name !== undefined) conn.name = patch.name;
+    if (patch.status !== undefined) conn.status = patch.status as NodeConnection["status"];
+    if (patch.priority !== undefined) conn.priority = patch.priority;
+    const { nodeId: _n, ...view } = conn;
+    return view;
+  },
+  async deleteConnection(id: string): Promise<void> {
+    state.connections = state.connections.filter((c) => c.id !== id);
+  },
 
   /* usage — fresh install is all zeros */
   async getStats(): Promise<UsageStats> {
@@ -144,7 +171,7 @@ export const api = {
   async getHistory(_params: { since?: number; limit?: number } = {}): Promise<UsageHistoryRow[]> {
     return [...state.history];
   },
-  async getDetails(_limit = 50): Promise<RequestDetail[]> {
+  async getDetails(_limit = 50, _usageEventId?: number): Promise<RequestDetail[]> {
     return [...state.details];
   },
 
@@ -175,6 +202,10 @@ export const api = {
   },
   async removeKey(id: string): Promise<void> {
     state.keys = state.keys.filter((k) => k.id !== id);
+  },
+  async setKeyEnabled(id: string, enabled: boolean): Promise<void> {
+    const key = state.keys.find((k) => k.id === id);
+    if (key) key.enabled = enabled;
   },
 
   /* routing */
@@ -248,8 +279,11 @@ export const api = {
   },
 };
 
-/** No server, no stream: hands back the empty snapshot and stays closed. */
-export function streamLogs(handlers: LogStreamHandlers): () => void {
+/**
+ * No server, no stream: hands back the empty snapshot and stays closed. `level`
+ * is accepted for signature parity with the live transport.
+ */
+export function streamLogs(handlers: LogStreamHandlers, _level?: StreamLevel): () => void {
   handlers.onInit([]);
   return () => {};
 }
