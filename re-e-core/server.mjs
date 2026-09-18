@@ -19,7 +19,7 @@ setLogLevel(cfg.logLevel);
 const VERSION = "0.1.0";
 let bootstrapToken = null; // printed once at boot; required for /api from non-loopback peers
 let startedAt = Date.now();
-
+globalThis.__bootedAt = startedAt;
 const db = openDatabase(cfg.dataDir);
 const repos = createRepos(db);
 const chatHandler = createChatHandler(repos);
