@@ -4,6 +4,9 @@ import { CheckCircle, Info, Warning, XCircle } from "../icons";
 
 type ToastType = "success" | "error" | "warning" | "info";
 
+/** Signature of the push function handed out by useToast(). */
+export type ToastPush = (message: string, type?: ToastType) => void;
+
 interface ToastItem {
   id: number;
   type: ToastType;
@@ -29,19 +32,19 @@ const toastStyles: Record<ToastType, { wrapper: string; icon: ReactNode }> = {
   },
 };
 
-const ToastContext = createContext<(message: string, type?: ToastType) => void>(() => {});
+const ToastContext = createContext<ToastPush>(() => {});
 
-export function useToast() {
+export function useToast(): ToastPush {
   return useContext(ToastContext);
 }
 
 let nextId = 0;
 
-/** Upstream DashboardLayout toast stack with Phosphor icons. */
+/** Upstream DashboardLayout toast stack (fixed top-right) with Phosphor icons. */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
-  const push = useCallback((message: string, type: ToastType = "success") => {
+  const push = useCallback<ToastPush>((message, type = "success") => {
     nextId += 1;
     const id = nextId;
     setToasts((prev) => [...prev, { id, type, message }]);
@@ -53,7 +56,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div className="fixed top-4 right-4 z-[80] flex w-[min(92vw,380px)] flex-col gap-2">
         {toasts.map((t) => (
-          <div key={t.id} className={`fade-in rounded-lg border px-3 py-2 shadow-lg backdrop-blur-sm ${toastStyles[t.type].wrapper}`}>
+          <div
+            key={t.id}
+            className={`fade-in rounded-lg border px-3 py-2 shadow-lg backdrop-blur-sm ${toastStyles[t.type].wrapper}`}
+          >
             <div className="flex items-start gap-2">
               {toastStyles[t.type].icon}
               <p className="min-w-0 flex-1 text-xs whitespace-pre-wrap break-words text-text-main">{t.message}</p>

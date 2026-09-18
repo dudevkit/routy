@@ -1,18 +1,26 @@
 import type { ComponentProps } from "react";
 import {
   ArrowsClockwise,
+  ArrowDown,
+  ArrowUp,
   Broadcast,
+  CaretRight,
   ChartBar,
   Check,
   CheckCircle,
   Coins,
   Copy,
+  Gauge,
   Gear,
   Info,
+  Key,
+  List,
   Moon,
   Network,
   Palette,
+  PencilSimple,
   Plus,
+  Prohibit,
   ShareNetwork,
   SquaresFour,
   Stack,
@@ -29,16 +37,7 @@ import { cn } from "../utils/cn";
 
 export type IconComponent = typeof SquaresFour;
 
-/**
- * Common Phosphor icon props. Sized to 16–18px by default across the app:
- * nav 18px (regular ↔ fill on active), buttons 16px, badges 13px, indicators 14px.
- */
-export interface IconProps extends ComponentProps<typeof SquaresFour> {
-  size?: number;
-  weight?: "thin" | "light" | "regular" | "bold" | "fill" | "duotone";
-}
-
-/** Standalone spinner — SVG ring, no icon font / glyph baggage. */
+/** Standalone spinner — SVG ring, no icon font or glyph baggage. */
 export function Spinner({ size = 16, className }: { size?: number; className?: string }) {
   return (
     <svg
@@ -46,34 +45,43 @@ export function Spinner({ size = 16, className }: { size?: number; className?: s
       height={size}
       viewBox="0 0 16 16"
       fill="none"
-      className={cn("animate-spin shrink-0", className)}
+      className={cn("shrink-0 animate-spin", className)}
       aria-hidden="true"
     >
       <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeOpacity="0.25" />
-      <path
-        d="M8 2a6 6 0 0 1 6 6"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
+      <path d="M8 2a6 6 0 0 1 6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   );
 }
 
+/** Phosphor props we actually vary across the app. */
+export interface PhosphorProps extends ComponentProps<typeof SquaresFour> {
+  size?: number;
+  weight?: "thin" | "light" | "regular" | "bold" | "fill" | "duotone";
+}
+
 export {
   ArrowsClockwise,
+  ArrowDown,
+  ArrowUp,
   Broadcast,
+  CaretRight,
   ChartBar,
   Check,
   CheckCircle,
   Coins,
   Copy,
+  Gauge,
   Gear,
   Info,
+  Key,
+  List,
   Moon,
   Network,
   Palette,
+  PencilSimple,
   Plus,
+  Prohibit,
   ShareNetwork,
   SquaresFour,
   Stack,

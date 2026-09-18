@@ -179,3 +179,47 @@ Screenshots `.preview/01–04*.png`.
 
 Carried to v1.1: ⌘K command palette, density toggle (40↔32px rows), skeleton
 loaders, header activity hairline, icon-only collapsible rail.
+
+## 2026-09-18 — All v1 screens built against the live gateway (settled)
+
+Merged `axolotl` (no conflicts; identity patch preserved). Transport is live by
+default (`client.ts` + `transport.ts`); `mock.ts` re-purposed as a **fresh-install
+simulator** (`VITE_API_MODE=mock`) so empty states stay testable without a gateway.
+
+**Built:** Upstreams (dense table, status filter tabs + search, per-node Test/Reset/
+Keys/delete-confirm, connections drawer with masked keys), Usage (URL-synced tabs:
+Overview with recharts 24h hourly series + metric switch, Details with history table
+→ drawer of REQUEST/RESPONSE payloads, Quota = token-share-by-node bars + explicit
+disclaimer that provider quotas don't exist in v1), Live Console (SSE init snapshot +
+live line events, JSON parse, level chips + tag select derived from the buffer,
+follow/pause, view-local clear, ring at 2000 with ~10fps coalescing), Combos & Aliases
+(dnd-kit ordering with keyboard Arrow up/down fallback, unsaved badge + Save, strategy
+select, alias CRUD, routable-name suggestions from `GET /v1/models`), Proxy Pools
+(CRUD, enabled toggle, per-URL test results), Token Saver (RTK master switch + honest
+notes), Settings (gateway chip row, requireApiKey toggle, key table with the
+show-once plaintext panel, appearance), and Overview re-pointed at `GET /api/gateway`
+with ISO timestamps formatted and no failure section when there are no failures.
+`/upstreams|/usage|/console|/combos|/pools|/token-saver|/settings` routed.
+
+**Verified against the running gateway** (power cut mid-session; both processes
+relaunched, `re-e-core` needs `npm install` in this worktree — deps are not shared
+between worktrees): fresh install renders zeros/empty states on every screen; created
+a node through the modal (probe surfaced the real `HTTP 404`), combo + alias through
+the UI, client key through Settings (plaintext shown once → verified absent from the
+DOM afterwards → row persists), then broke a node on purpose to prove live SSE
+(0→2 `warn` CHAT lines while mounted, `CHAT` appears in the tag filter, tag filter →
+3, warn off → 0 + empty state) and real breaker status in Upstreams. Temporary nodes
+and keys were deleted afterwards; production build also verified served **by the
+gateway itself** at `http://127.0.0.1:8010/` (same-origin, no dev proxy).
+
+**Dev loop note:** `vite.config.ts` now proxies `/api` and `/v1` to `127.0.0.1:8010`;
+`/v1` is only needed for the model-suggestion list.
+
+**Follow-ups filed:** round 2 of `contract-requests.md` — node `PUT`/enable,
+`usageEventId` on details, connection delete, key enable toggle, request-path
+info-level logs (a healthy gateway's console is empty today), BOOT via
+`log.info` + cleartext `bootstrapToken` in boot output, combo `<combo>/<model>`
+semantics question, and whether `GET /v1/models` is intentionally public.
+
+**Also fixed:** Combos suggestion copy no longer blames the gateway for an empty
+install (tri-state: loading / reachable-empty / unavailable-with-reason).
