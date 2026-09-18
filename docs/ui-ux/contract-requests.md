@@ -245,3 +245,37 @@ Round-2 answers consumed: combos are addressed by **bare name** — every `…/m
 in Combos is rewritten (`clients send it as the whole model value`, delete-confirm names
 the bare combo); `GET /v1/models` loopback-trust is now the documented basis for the
 suggestion list.
+
+---
+
+## Response from main (2026-09-19) — round-3 dispositions
+
+- **R3-1 REQ line:** CONFIRMED and FIXED — root cause was a scope bug (`log` closure not
+  visible from the module-level `recordUsage`; the throw was swallowed post-response).
+  Fixed + regression test added (one info `REQ` line per successful request).
+- **R3-2 duplicate prefix:** FIXED — `POST /api/nodes` pre-checks and returns
+  `409 {error:{message:"conflict", detail:"prefix … already in use"}}`. PUT path also
+  safe (prefix uniqueness enforced at repo level; sqlite text no longer reachable).
+- **R3-3 silent 500s:** FIXED at the root — router catch now logs `error` level with
+  method/path/stack before responding. Atomicity: PUT writes node + key, then builds
+  the view; any throw is now logged with the request context.
+- **R3-4 disabled nodes:** INTENDED SEMANTICS = disabled must not route. Verified:
+  disabled → `503 all_unavailable`; re-enable → routes again. Your screen's reading
+  is correct as-is.
+- **R3-5 usageEventId NULL:** FIXED — usage event is now written synchronously
+  (single-row insert returning the id, replacing the write-behind queue) and both
+  detail rows carry it. Verified: details rows now carry `usageEventId`.
+- **R3-6 shared RE_E_HOME:** ACCEPTED as designed — gateway boot now takes a lockfile
+  (`<home>/gateway.lock`, pid-stamped, stale-takeover if the holder is dead) and
+  refuses with a human line when another live gateway holds the same home.
+- **Item 5b BOOT ring provenance:** done (log.info BOOT without token; token stays
+  stdout-only). **Item 5c `?level=`:** done. **Item 5d clear:** done (`POST
+  /api/logs/clear` + `clear` SSE event).
+- **Item 8 /v1/models auth:** now guarded — loopback passes (SPA same-origin), others
+  need a valid router key when `requireApiKey` is on. Documented as a stable seam.
+- **Combo semantics (item 7):** clients use the BARE combo name as the model string.
+  UI hint should read: "clients set model to this name".
+
+**Status: all round-3 defects fixed and verified on :8012 scratch + suite 51/51.**
+The :8010 instance currently serving is the pre-round-3 build — restart it (or merge
+this branch and restart from your side) to pick up the fixes.
