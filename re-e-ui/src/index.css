@@ -593,7 +593,11 @@ button:disabled,
   color-scheme: light;
 }
 
-.dark.scheme-neo {
+/* Two shapes: app-wide (both classes on <html>) and catalogue-scoped (`.dark` on
+   <html>, the skin on a panel) — without the descendant form the preview could only
+   ever render light neo. */
+.dark.scheme-neo,
+.dark .scheme-neo {
   --neu-shadow-dark: #1a202c;
   --neu-shadow-light: #3d4a5c;
 
@@ -628,7 +632,10 @@ button:disabled,
    those labels go ink-on-tint — which is also how neo handles an accent slab. */
 .dark.scheme-neo button[data-variant="primary"],
 .dark.scheme-neo button[data-variant="danger"],
-.dark.scheme-neo button[data-variant="success"] {
+.dark.scheme-neo button[data-variant="success"],
+.dark .scheme-neo button[data-variant="primary"],
+.dark .scheme-neo button[data-variant="danger"],
+.dark .scheme-neo button[data-variant="success"] {
   color: #1a202c; /* 6.2:1 on #7f9cf5 */
 }
 

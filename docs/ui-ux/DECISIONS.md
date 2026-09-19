@@ -429,3 +429,10 @@ alpha flattened) and per-route class coherence assertions.
 per run, **0 AA failures**, worst measured ratio **4.64** (light) / **4.55** (dark), one
 canvas per mode (`#e6e8ed` / `#2d3748`), html class coherent on every route. Still open
 by choice: neo's 44px touch target vs our 32px row density.
+
+**Catalogue preview followed only one mode.** `.dark.scheme-neo` needs both classes on
+the *same* element, but in the catalogue `.scheme-neo` sits on the panel's `.mini-app`
+while `.dark` is on `<html>` — so entry H could only ever render light neo, and dark
+neo was reachable solely through “Try in the live app”. Fixed by adding the descendant
+form (`.dark .scheme-neo`), so the preview tracks the header's mode like every other
+genre.
