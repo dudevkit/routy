@@ -8,55 +8,99 @@ import { useCallback, useEffect, useState } from "react";
  * whole app, so a genre can be judged on real density — tables, row actions, the
  * console — not just on a two-card preview. Preview-only texture rules keyed to
  * `.mini-app` simply do not fire, which is the intended split.
+ *
+ * `variant` is the second axis: Neuphorism ships several *raised* geometries and the
+ * right one can only be picked by wearing each across real screens, so the choice is
+ * stored and applied as `data-neu` on the same element that carries the scheme.
  */
-const STORAGE_KEY = "re-e.lab-scheme";
-const listeners = new Set<(scheme: string | null) => void>();
+const SCHEME_KEY = "re-e.lab-scheme";
+const VARIANT_KEY = "re-e.lab-neu";
+const VARIANTS = ["a", "b", "c", "d"] as const;
 
-let current: string | null = null;
+export type NeuVariant = (typeof VARIANTS)[number];
 
-function stored(): string | null {
+export interface LabState {
+  scheme: string | null;
+  variant: NeuVariant | null;
+}
+
+const listeners = new Set<(state: LabState) => void>();
+
+let current: LabState = { scheme: null, variant: null };
+
+function stored(): LabState {
   try {
-    const value = localStorage.getItem(STORAGE_KEY);
-    return value && /^scheme-[a-z-]+$/.test(value) ? value : null;
+    const scheme = localStorage.getItem(SCHEME_KEY);
+    const variant = localStorage.getItem(VARIANT_KEY);
+    return {
+      scheme: scheme && /^scheme-[a-z-]+$/.test(scheme) ? scheme : null,
+      variant: (VARIANTS as readonly string[]).includes(variant ?? "") ? (variant as NeuVariant) : null,
+    };
   } catch {
-    return null;
+    return { scheme: null, variant: null };
   }
 }
 
-/** Idempotent; safe before React mounts. Returns the scheme now active. */
-export function initLabScheme(): string | null {
-  if (!current) current = stored();
-  if (current) document.documentElement.classList.add(current);
-  return current;
+let painted: string | null = null;
+
+function paint() {
+  const root = document.documentElement;
+  if (painted && painted !== current.scheme) root.classList.remove(painted);
+  if (current.scheme) root.classList.add(current.scheme);
+  painted = current.scheme;
+  /* the variant only means something inside the neo skin */
+  if (current.scheme === "scheme-neo" && current.variant) root.dataset.neu = current.variant;
+  else root.removeAttribute("data-neu");
 }
 
-export function setLabScheme(scheme: string | null): void {
-  if (current) document.documentElement.classList.remove(current);
-  current = scheme;
-  if (scheme) document.documentElement.classList.add(scheme);
+function persist() {
   try {
-    if (scheme) localStorage.setItem(STORAGE_KEY, scheme);
-    else localStorage.removeItem(STORAGE_KEY);
+    if (current.scheme) localStorage.setItem(SCHEME_KEY, current.scheme);
+    else localStorage.removeItem(SCHEME_KEY);
+    if (current.variant) localStorage.setItem(VARIANT_KEY, current.variant);
+    else localStorage.removeItem(VARIANT_KEY);
   } catch {
     /* private mode: the preview just will not persist */
   }
-  for (const fn of listeners) fn(scheme);
+}
+
+function publish() {
+  paint();
+  persist();
+  for (const fn of listeners) fn({ ...current });
+}
+
+/** Idempotent, safe before React mounts. Returns the state now active. */
+export function initLabScheme(): LabState {
+  if (!current.scheme && !current.variant) current = stored();
+  paint();
+  return { ...current };
+}
+
+export function setLabScheme(scheme: string | null): void {
+  current = { scheme, variant: scheme === "scheme-neo" ? current.variant : null };
+  publish();
+}
+
+export function setLabVariant(variant: NeuVariant | null): void {
+  current = { ...current, variant };
+  publish();
 }
 
 export function useLabScheme() {
-  const [scheme, setScheme] = useState<string | null>(current);
+  const [state, setState] = useState<LabState>(current);
 
   useEffect(() => {
-    const fn = (value: string | null) => setScheme(value);
+    const fn = (next: LabState) => setState(next);
     listeners.add(fn);
     return () => {
       listeners.delete(fn);
     };
   }, []);
 
-  const toggle = useCallback((candidate: string) => {
-    setLabScheme(current === candidate ? null : candidate);
+  const toggleScheme = useCallback((candidate: string) => {
+    setLabScheme(current.scheme === candidate ? null : candidate);
   }, []);
 
-  return { scheme, toggle, clear: () => setLabScheme(null) };
+  return { ...state, toggleScheme, setVariant: setLabVariant, clear: () => setLabScheme(null) };
 }

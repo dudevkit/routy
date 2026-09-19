@@ -26,7 +26,7 @@ const queryClient = new QueryClient({
 });
 
 export default function App() {
-  const { scheme, clear } = useLabScheme();
+  const { scheme, variant, clear } = useLabScheme();
   return (
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
@@ -65,6 +65,7 @@ export default function App() {
               <div className="fixed bottom-4 left-4 z-[70] flex items-center gap-2 rounded-full border border-border-subtle bg-surface/95 px-3 py-1.5 shadow-[var(--shadow-elev)] backdrop-blur">
                 <span className="text-[11px] text-text-muted">
                   Theme Lab preview · <code className="font-mono text-text-main">{scheme}</code>
+                  {variant && <code className="font-mono text-text-main">[{variant}]</code>}
                 </span>
                 <button onClick={clear} className="text-[11px] font-semibold text-primary hover:underline">
                   Revert
