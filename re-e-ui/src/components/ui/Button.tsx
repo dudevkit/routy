@@ -49,6 +49,7 @@ export function Button({
         className,
       )}
       disabled={disabled || loading}
+      data-variant={variant}
       {...rest}
     >
       {loading ? <Spinner size={16} /> : icon}

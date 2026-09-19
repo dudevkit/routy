@@ -3,6 +3,8 @@ import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { StatusDot } from "../components/ui/StatusDot";
+import { useLabScheme } from "../hooks/useSchemeLab";
+import { cn } from "../utils/cn";
 
 /**
  * Sparkline with an 8% accent area fill (decoration patch D5.3):
@@ -50,11 +52,28 @@ function CatalogPanel({
   tagline: string;
   texture: string;
 }) {
+  const { scheme, toggle } = useLabScheme();
   return (
     <section id={id} className="flex scroll-mt-4 flex-col gap-3">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-1">
-        <h2 className="text-base font-semibold text-text-main">{name}</h2>
-        <span className="text-xs text-text-muted">{tagline}</span>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-1">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h2 className="text-base font-semibold text-text-main">{name}</h2>
+          <span className="text-xs text-text-muted">{tagline}</span>
+        </div>
+        {schemeClass && (
+          <button
+            onClick={() => toggle(schemeClass)}
+            aria-pressed={scheme === schemeClass}
+            className={cn(
+              "rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors",
+              scheme === schemeClass
+                ? "border-transparent bg-primary text-white"
+                : "border-border text-text-muted hover:text-primary",
+            )}
+          >
+            {scheme === schemeClass ? "Live in app · revert" : "Try in the live app"}
+          </button>
+        )}
       </div>
 
       <div
@@ -170,6 +189,14 @@ const catalog = [
     texture:
       "Translucent blur cards over gradient glow. Gorgeous for chrome (sidebar/modals); a legibility tax on dense tables.",
   },
+  {
+    id: "neo",
+    schemeClass: "scheme-neo",
+    name: "H · Soft Neumorphic",
+    tagline: "one canvas · paired light/shadow · borderless extrusion",
+    texture:
+      "No borders: extrusion is the affordance, press = inset shadow. Two deliberate departures from textbook neo for an ops surface — text keeps AA contrast and focus rings survive. Honest costs: depth cues are subtle on a 1px row separator, and every control looks equally pressable, so scan speed on dense tables drops.",
+  },
 ];
 
 function MonoRow({
@@ -202,8 +229,8 @@ export function ThemeSampler() {
       <div className="flex flex-col gap-2">
         <h1 className="text-lg font-semibold text-text-main">Theme Catalog</h1>
         <p className="text-xs text-text-muted">
-          Seven genre candidates on the approved shell — same components, same blocking; only tokens + texture change.
-          Base theme = Graphite Pro. Jump:{" "}
+          Eight genre candidates on the approved shell — same components, same blocking; only tokens + texture change.
+          Tap “Try in the live app” to wear a scheme across every screen (bottom-left chip reverts it). Base theme = Graphite Pro. Jump:{" "}
           {catalog.map((c, i) => (
             <span key={c.id}>
               {i > 0 && " · "}

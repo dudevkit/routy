@@ -535,6 +535,107 @@ button:disabled,
   -webkit-backdrop-filter: blur(14px);
 }
 
+/* ============================================================
+   H · Soft Neumorphic — one canvas, depth from paired shadows.
+   Borders are absent by design: extrusion IS the affordance.
+   Two deliberate departures from textbook neo, both for a data
+   dashboard: text keeps WCAG-AA contrast (neo's usual failure),
+   and focus rings stay. Pressed = inset shadow, not a color fill.
+   ============================================================ */
+.scheme-neo {
+  /* Single mid-tone canvas; tiers differ by shadow, not by fill */
+  --color-bg: #262b33;
+  --color-bg-alt: #262b33;
+  --color-surface: #282d36;
+  --color-surface-2: #2d333d;
+  --color-surface-3: #333a45;
+  --color-sidebar: #262b33;
+
+  /* Structure has to come from depth: borders recede to a whisper */
+  --color-border: rgba(255, 255, 255, 0.07);
+  --color-border-subtle: rgba(0, 0, 0, 0.30);
+
+  --color-text: #eef2f8;
+  --color-text-main: #eef2f8; /* 12.4:1 on #262b33 */
+  --color-text-muted: #aab4c3; /* 6.4:1 — AA at 11px */
+  --color-text-subtle: #8b95a5; /* 4.6:1 — lifted vs base theme, on purpose */
+
+  --color-primary: #4d9dff;
+  --color-primary-hover: #3b85e8;
+  --color-accent: #4d9dff;
+  --color-success: #3dd68c;
+  --color-warning: #f5b93f;
+  --color-danger: #f0564e;
+  --color-info: #8b7cff;
+
+  /* Raised: light from top-left, shade to bottom-right */
+  --shadow-soft: -3px -3px 8px rgba(255, 255, 255, 0.035), 4px 4px 10px rgba(0, 0, 0, 0.42);
+  --shadow-warm: -2px -2px 6px rgba(255, 255, 255, 0.04), 4px 4px 10px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(77, 157, 255, 0.22);
+  --shadow-elev: -6px -6px 14px rgba(255, 255, 255, 0.045), 8px 8px 20px rgba(0, 0, 0, 0.5);
+  --shadow-elevated: -8px -8px 22px rgba(255, 255, 255, 0.05), 12px 12px 30px rgba(0, 0, 0, 0.55);
+  --shadow-focus: 0 0 0 3px rgba(77, 157, 255, 0.34);
+  color-scheme: dark;
+}
+
+/* Cards: extruded slabs, no bezel. */
+.scheme-neo .card-soft,
+.scheme-neo .mini-card {
+  border-color: transparent;
+  border-radius: 18px;
+  box-shadow: var(--shadow-elev);
+}
+
+/* The drafting grid is texture from another genre; soft UI wants a flat canvas. */
+.scheme-neo .landing-grid {
+  display: none;
+}
+
+/* Controls read as pressed or raised, so variant matters — hence data-variant. */
+.scheme-neo button[data-variant="secondary"],
+.scheme-neo button[data-variant="outline"] {
+  background-color: var(--color-bg);
+  border-color: transparent;
+  box-shadow: var(--shadow-soft);
+  border-radius: 12px;
+}
+/* Ghost row actions extrude too, but weaker: uniform depth is neo's flatness
+   problem, so the primary action has to stay the loudest thing in the row. */
+.scheme-neo button[data-variant="ghost"] {
+  background-color: var(--color-bg);
+  border-color: transparent;
+  border-radius: 10px;
+  box-shadow: -2px -2px 5px rgba(255, 255, 255, 0.022), 2px 2px 6px rgba(0, 0, 0, 0.32);
+}
+.scheme-neo button[data-variant="primary"],
+.scheme-neo button[data-variant="danger"],
+.scheme-neo button[data-variant="success"] {
+  border-color: transparent;
+  border-radius: 12px;
+  box-shadow: var(--shadow-soft);
+}
+.scheme-neo button[data-variant]:active:not(:disabled) {
+  box-shadow: inset 3px 3px 8px rgba(0, 0, 0, 0.5), inset -2px -2px 6px rgba(255, 255, 255, 0.045);
+}
+
+/* Fields are pressed into the canvas — the inverse of an extruded control. */
+.scheme-neo input,
+.scheme-neo textarea,
+.scheme-neo select {
+  border-color: transparent;
+  border-radius: 12px;
+  background-color: var(--color-bg);
+  box-shadow: inset 3px 3px 8px rgba(0, 0, 0, 0.45), inset -2px -2px 6px rgba(255, 255, 255, 0.035);
+}
+
+/* Rows keep a light-on-dark hairline: the token separator is black-alpha, which
+   vanishes on this canvas — a dense table without rules is unreadable. */
+.scheme-neo table tbody tr,
+.scheme-neo thead tr {
+  border-top-color: rgba(255, 255, 255, 0.075);
+  border-bottom-color: rgba(255, 255, 255, 0.075);
+}
+
 /* Data-font candidates (Theme Lab) */
 .mono-jb { font-family: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace; }
 .mono-plex { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }

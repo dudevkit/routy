@@ -300,3 +300,44 @@ session's API key when row ordering shifted between two reads). Withdrawn: the
 `persist: true`), default log level this time — the level is now part of what we are
 testing. Note `hub send` to `Main` is this session, so cross-session coordination goes
 through the user.
+
+## 2026-09-19 — Neumorphism tried as catalog entry H (not adopted)
+
+User asked to give soft UI a shot. Added **H · Soft Neumorphic** to the Theme Catalog
+(`.scheme-neo`) — token-only, same components/shell, exactly the mechanism the other
+seven genres use: one mid-tone canvas (`#262b33`) where `bg`/`bg-alt`/`surface`/
+`sidebar` converge, borders receding to a whisper, depth carried by paired shadows
+(`rgba(255,255,255,.04) -6px -6px 14px` + `rgba(0,0,0,.5) 8px 8px 20px`), fields pressed
+*inset*, cards extruded at 18px radius, drafting grid suppressed (wrong texture for this
+genre).
+
+**Two departures from textbook neo, deliberate.** (1) Text keeps AA contrast — neo's
+classic failure is illegible muted-on-mute; measured in-browser: **12.67 : 1** main,
+**6.79** muted, **4.70** subtle, **5.14** accent. (2) Focus rings survive, and the
+filled primary button stays filled, because an ops surface needs the primary action to
+dominate. Ghost row actions extrude at half depth (blur 5–6 px vs secondary's 8–10 px)
+for the same reason — verified `hierarchyPreserved: true`.
+
+**New hook, now a styling contract:** `Button` emits `data-variant`, so skins can style
+per variant instead of guessing from utility classes. `data-variant` is documented here
+because a scheme breaking it is a silent visual regression.
+
+**Catalog became a lab.** Each panel now has **Try in the live app**, which applies the
+scheme class to `<html>` via `hooks/useSchemeLab.ts` (persisted, applied pre-paint in
+`App.tsx`) so a genre can be judged on real density — Upstreams rows, the console, the
+dashboard grid — instead of a two-card preview. A bottom-left chip reverts it; preview
+textures keyed to `.mini-app` intentionally do not fire app-wide. Verified: apply →
+`dark scheme-neo`, chip visible, Revert → `dark`, storage cleared.
+
+**Costs I hit while building it, which are the style's real costs.** Rows use
+`border-t`, so the token separator (black-alpha) vanished on the dark canvas — the table
+lost its rules until I overrode them with a light hairline; neo wants no borders but a
+dense table cannot survive that. Uniform extrusion makes every control look equally
+pressable, which slows scanning. Radii are not tokenized (`rounded-[10px]` is hardcoded
+across the kit), so neo can only re-round cards/buttons/selectors, not every element —
+the one gap that would need a real refactor before neo could take over as the identity.
+
+**Verdict: keep Graphite Pro as the default.** Neo is the strongest of the eight for
+chrome (sidebar, modals, settings), the weakest for the two screens that matter most —
+Upstreams and Usage Details. Recommendation stands until someone wears it for a week on
+real traffic: `cd re-e-ui && npm run dev` → `/theme` → Try in the live app.
