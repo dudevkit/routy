@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   useAddConnection,
+  useBatchAddConnections,
   useConnections,
   useDeleteConnection,
   useNodes,
@@ -51,22 +52,31 @@ function ConnectionsDrawer({ node, onClose }: { node: UpstreamNode | null; onClo
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const connections = useConnections(node?.id ?? null);
   const addConnection = useAddConnection();
+  const batchAdd = useBatchAddConnections();
   const updateConnection = useUpdateConnection();
   const deleteConnection = useDeleteConnection();
 
   const submit = () => {
-    if (!node || !apiKey.trim()) return;
-    addConnection.mutate(
-      { nodeId: node.id, name: name.trim() || undefined, apiKey: apiKey.trim() },
-      {
-        onSuccess: () => {
-          toast("Key added");
-          setApiKey("");
-          setName("");
+    if (!node) return;
+    const keys = apiKey.split("\n").map((k) => k.trim()).filter(Boolean);
+    if (keys.length === 0) return;
+    if (keys.length === 1) {
+      addConnection.mutate(
+        { nodeId: node.id, name: name.trim() || undefined, apiKey: keys[0] },
+        {
+          onSuccess: () => { toast("Key added"); setApiKey(""); setName(""); },
+          onError: (err) => toastApiError(toast, err, "Failed to add key"),
         },
-        onError: (err) => toastApiError(toast, err, "Failed to add key"),
-      },
-    );
+      );
+    } else {
+      batchAdd.mutate(
+        { nodeId: node.id, keys, name: name.trim() || undefined },
+        {
+          onSuccess: (r) => { toast(`${r.created} keys added`); setApiKey(""); setName(""); },
+          onError: (err) => toastApiError(toast, err, "Failed to add keys"),
+        },
+      );
+    }
   };
 
   return (
@@ -74,7 +84,6 @@ function ConnectionsDrawer({ node, onClose }: { node: UpstreamNode | null; onClo
       open={!!node}
       onClose={onClose}
       title={node ? `${node.name} · keys` : "keys"}
-      subtitle={node && <span className="font-mono">{node.baseUrl}</span>}
     >
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
@@ -133,27 +142,30 @@ function ConnectionsDrawer({ node, onClose }: { node: UpstreamNode | null; onClo
         <div className="h-px bg-border-subtle" />
 
         <div className="flex flex-col gap-3">
-          <p className="text-sm font-medium text-text-main">Add key</p>
-          <Input label="Label" value={name} onChange={(e) => setName(e.target.value)} placeholder="primary" />
-          <Input
-            label="API Key"
-            mono
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="sk-…"
-            hint="Plaintext is sent once and never returned by the API"
-          />
+          <p className="text-sm font-medium text-text-main">Add keys</p>
+          <Input label="Label prefix" value={name} onChange={(e) => setName(e.target.value)} placeholder="primary" />
+          <div>
+            <label className="text-xs font-medium text-text-main mb-1 block">API keys — one per line, blank lines skipped</label>
+            <textarea
+              className="w-full rounded-md border border-border-subtle bg-surface-2 px-3 py-2 text-sm font-mono text-text-main placeholder:text-text-main/40 focus:outline-none focus:ring-2 focus:ring-accent/40 min-h-[120px] resize-y"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={"sk-key1\nsk-key2\nsk-key3"}
+            />
+            <p className="text-xs text-text-main/50 mt-1">
+              {apiKey.split("\n").filter((k) => k.trim()).length} key{apiKey.split("\n").filter((k) => k.trim()).length !== 1 ? "s" : ""} detected
+            </p>
+          </div>
           <div>
             <Button
               variant="primary"
               size="sm"
               icon={<Plus size={14} />}
               disabled={!apiKey.trim()}
-              loading={addConnection.isPending}
+              loading={addConnection.isPending || batchAdd.isPending}
               onClick={submit}
             >
-              Add Key
+              {apiKey.split("\n").filter((k) => k.trim()).length > 1 ? "Add All Keys" : "Add Key"}
             </Button>
           </div>
         </div>

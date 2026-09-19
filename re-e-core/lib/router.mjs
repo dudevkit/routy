@@ -1,5 +1,6 @@
 // RE-E tiny router — raw Node req/res, zero deps.
 // routes: [{ method, pattern: RegExp with named groups, handler(req, res, params, match) }]
+import { log } from "./log.mjs";
 // Handlers either fully respond, or return a Promise (errors → 500 JSON, no crash).
 export function createRouter(routes) {
   return async function dispatch(req, res) {
@@ -12,6 +13,11 @@ export function createRouter(routes) {
       try {
         await route.handler(req, res, m.groups || {}, url);
       } catch (err) {
+        // R3-3a: handler exceptions must never be silent — log before responding
+        log.error("HTTP", `${req.method} ${pathname} failed`, {
+          error: String(err?.message || err),
+          stack: err?.stack?.split("\n").slice(0, 4),
+        });
         if (!res.headersSent) {
           res.writeHead(500, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: { message: "internal_error", detail: String(err?.message || err) } }));

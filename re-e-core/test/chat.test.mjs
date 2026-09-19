@@ -178,4 +178,24 @@ describe("chat handler (end-to-end)", () => {
     expect(sentContent.length).toBeLessThan(DIFF.length * 0.9); // RTK rewrote the payload
     expect(sentContent).toContain("added line 0-0");
   });
+
+  it("emits exactly one REQ info line per successful request (R3-1)", async () => {
+    const seen = [];
+    const { subscribeLog } = await import("../lib/log.mjs");
+    const unsub = subscribeLog((text) => { const p = JSON.parse(text); if (p.tag === "REQ") seen.push(p); });
+    repos.settings.update({ requireApiKey: false });
+    await post({ model: "a/m1", stream: true, messages: [{ role: "user", content: "x" }] });
+    unsub();
+    expect(seen).toHaveLength(1);
+    expect(seen[0].data.status).toBe("ok");
+    expect(seen[0].data.nodeId).toBe(repos.nodes.list()[0].id);
+  });
+
+  it("503s with all_unavailable when the only node is disabled (R3-4)", async () => {
+    repos.settings.update({ requireApiKey: false });
+    repos.nodes.update(repos.nodes.list()[0].id, { enabled: false });
+    const r = await post({ model: "a/m1", stream: true, messages: [{ role: "user", content: "x" }] });
+    expect(r.status).toBe(503);
+    expect(r.body).toContain("all_unavailable");
+  });
 });

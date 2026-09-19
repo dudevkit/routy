@@ -1,6 +1,8 @@
 // RE-E gateway core — bootstrap.
 // P1 complete (proxy pipeline). P2: management API + /ui/* static + loopback guard.
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
 import { resolveConfig } from "./lib/config.mjs";
 import { log, setLogLevel } from "./lib/log.mjs";
 import { createRouter, json } from "./lib/router.mjs";
@@ -18,6 +20,24 @@ setLogLevel(cfg.logLevel);
 const VERSION = "0.1.0";
 let bootstrapToken = null; // printed once at boot; required for /api from non-loopback peers
 globalThis.__bootedAt = Date.now();
+
+// ── single-gateway lock (R3-6): one re-e.db implies one gateway ─────────────
+const lockPath = path.join(cfg.home, "gateway.lock");
+if (fs.existsSync(lockPath)) {
+  let holder = null;
+  try { holder = JSON.parse(fs.readFileSync(lockPath, "utf8")); } catch { /* stale */ }
+  let alive = false;
+  if (holder?.pid) {
+    try { process.kill(holder.pid, 0); alive = true; } catch { /* dead holder */ }
+  }
+  if (alive && holder.pid !== process.pid) {
+    console.error(`re-e: another gateway (pid ${holder.pid}, started ${holder.startedAt}) already holds ${cfg.dataDir}. One re-e.db implies one gateway.`);
+    process.exit(1);
+  }
+  fs.rmSync(lockPath); // stale lock from a dead process — take over
+}
+fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+const releaseLock = () => { try { fs.rmSync(lockPath); } catch { /* already gone */ } };
 
 const db = openDatabase(cfg.dataDir);
 const repos = createRepos(db);
@@ -85,7 +105,6 @@ server.listen(cfg.port, cfg.host, () => {
     host: cfg.host,
     port: cfg.port,
     home: cfg.home,
-    ui: cfg.uiDir || "not built",
     bootstrapToken, // intentionally unredacted: printed exactly once at boot
   });
 });
@@ -99,6 +118,7 @@ function shutdown(signal) {
   } catch (err) {
     log.error("SHUTDOWN", "db close failed", { error: err.message });
   }
+  releaseLock();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 }

@@ -9,6 +9,7 @@ import type {
   ApiKey,
   Combo,
   ComboInput,
+  BatchConnectionResult,
   CreatedApiKey,
   GatewayHealth,
   GatewayInfo,
@@ -147,6 +148,24 @@ export const api = {
     state.connections.push(conn);
     const { nodeId: _n, ...view } = conn;
     return view;
+  },
+
+  async batchAddConnections(id: string, input: { keys: string[] }): Promise<BatchConnectionResult> {
+    const results = input.keys.filter(Boolean).map((apiKey, i) => {
+      const conn = {
+        id: uuid(),
+        nodeId: id,
+        name: `batch key ${i + 1}`,
+        status: "active",
+        priority: 100 + i,
+        keyMasked: maskKey(apiKey),
+        lastError: null,
+      };
+      state.connections.push(conn);
+      const { nodeId: _n, ...view } = conn;
+      return { ...view, priority: conn.priority ?? 100 + i };
+    });
+    return { created: results.length, connections: results.map((r) => ({ id: r.id, name: r.name, keyMasked: r.keyMasked, priority: r.priority })) };
   },
   async updateConnection(id: string, patch: { name?: string; status?: string; priority?: number }): Promise<NodeConnection> {
     const conn = state.connections.find((c) => c.id === id);

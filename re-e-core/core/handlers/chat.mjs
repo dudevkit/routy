@@ -191,13 +191,13 @@ export function createChatHandler(repos) {
           promptTokens = translator.state.usage.prompt_tokens ?? promptTokens;
           completionTokens = translator.state.usage.completion_tokens ?? completionTokens;
         }
-        recordUsage(repos, r, connection, body.model, {
+        const usageEventId = recordUsage(repos, log, r, connection, body.model, {
           status: clientGone ? "aborted" : "ok",
           usage: { promptTokens, completionTokens, ttftMs: usage.ttftMs },
           durationMs: Date.now() - t0,
           apiKeyId,
         });
-        saveDetail(repos, { request: body, responseText: logBuffer, truncated: logBuffer.truncated });
+        saveDetail(repos, { usageEventId, request: body, responseText: logBuffer, truncated: logBuffer.truncated });
         return;
       }
 
@@ -223,8 +223,8 @@ export function createChatHandler(repos) {
       if (clientAbort.signal.aborted) return; // client gone
       res.writeHead(result.response.status, { "content-type": "application/json" });
       res.end(JSON.stringify(parsed ?? text));
-      recordUsage(repos, r, connection, body.model, { status: "ok", usage, durationMs: Date.now() - t0, apiKeyId });
-      saveDetail(repos, { request: body, responseText: new LogBuffer(), truncated: false });
+      const usageEventId = recordUsage(repos, log, r, connection, body.model, { status: "ok", usage, durationMs: Date.now() - t0, apiKeyId });
+      saveDetail(repos, { usageEventId, request: body, responseText: new LogBuffer(), truncated: false });
       return;
     }
 
@@ -275,7 +275,7 @@ function recordSuccess(repos, node) {
   repos.breakers.record(`node:${node.id}`, { state: "closed", failures: -999, lastError: null });
 }
 
-function recordUsage(repos, route, connection, clientModel, { status, usage, durationMs, apiKeyId }) {
+function recordUsage(repos, log, route, connection, clientModel, { status, usage, durationMs, apiKeyId }) {
   const event = repos.usage.record({
     nodeId: route.node.id,
     connectionId: connection.id,
@@ -289,7 +289,7 @@ function recordUsage(repos, route, connection, clientModel, { status, usage, dur
   });
   // Console visibility on the healthy path (ui-ux contract round 2, item 5a)
   log.info("REQ", `${route.node.prefix} ← ${status}`, {
-    requestId: event?.id ?? null,
+    requestId: event.id,
     model: clientModel,
     nodeId: route.node.id,
     status,
@@ -298,13 +298,14 @@ function recordUsage(repos, route, connection, clientModel, { status, usage, dur
     promptTokens: usage.promptTokens ?? null,
     completionTokens: usage.completionTokens ?? null,
   });
+  return event.id;
 }
 
-function saveDetail(repos, { request, responseText, truncated }) {
+function saveDetail(repos, { usageEventId = null, request, responseText, truncated }) {
   try {
-    repos.requestDetails.save({ kind: "request", content: { body: request } });
+    repos.requestDetails.save({ usageEventId, kind: "request", content: { body: request } });
     if (responseText?.text?.length > 0) {
-      repos.requestDetails.save({ kind: "response", content: responseText.text, truncated });
+      repos.requestDetails.save({ usageEventId, kind: "response", content: responseText.text, truncated });
     }
   } catch { /* details must never break the proxy */ }
 }

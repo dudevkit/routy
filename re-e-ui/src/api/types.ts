@@ -45,6 +45,18 @@ export interface NewConnectionInput {
   apiKey: string;
 }
 
+/** POST /api/nodes/{id}/connections/batch — N keys → N connections in one call */
+export interface BatchConnectionInput {
+  keys: string[];
+  name?: string;
+  priority?: number;
+}
+
+export interface BatchConnectionResult {
+  created: number;
+  connections: { id: string; name: string; keyMasked: string; priority: number }[];
+}
+
 /** GET/POST /api/nodes/{id}/connections — keys stay masked */
 export interface NodeConnection {
   id: string;

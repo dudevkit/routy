@@ -93,6 +93,17 @@ export const useUpdateConnection = () =>
   useMutation({ mutationFn: ({ id, patch }: { id: string; patch: { name?: string; priority?: number } }) => api.updateConnection(id, patch), onSuccess: useInvalidator(CONNECTIONS, NODES) });
 export const useDeleteConnection = () =>
   useMutation({ mutationFn: api.deleteConnection, onSuccess: useInvalidator(CONNECTIONS, NODES) });
+export interface BatchAddConnectionsInput {
+  nodeId: string;
+  keys: string[];
+  name?: string;
+  priority?: number;
+}
+export const useBatchAddConnections = () =>
+  useMutation({
+    mutationFn: ({ nodeId, keys, name, priority }: BatchAddConnectionsInput) => api.batchAddConnections(nodeId, { keys, name, priority }),
+    onSuccess: useInvalidator(CONNECTIONS, NODES),
+  });
 
 export const usePutSettings = () =>
   useMutation({ mutationFn: api.putSettings, onSuccess: useInvalidator(["settings"]) });

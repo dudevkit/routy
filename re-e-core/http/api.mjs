@@ -145,6 +145,9 @@ export function buildApiRoutes(repos, cfg, version) {
     for (const f of ["name", "baseUrl", "prefix"]) {
       if (!input[f] || typeof input[f] !== "string") return json(res, 400, { error: { message: "bad_request", detail: `missing ${f}` } });
     }
+    if (repos.nodes.byPrefix(input.prefix.trim())) {
+      return json(res, 409, { error: { message: "conflict", detail: `prefix "${input.prefix.trim()}" is already in use` } });
+    }
     const node = repos.nodes.create({
       name: input.name.trim(), prefix: input.prefix.trim(),
       apiType: input.apiType || "openai", baseUrl: input.baseUrl.trim(),
@@ -347,6 +350,24 @@ export function buildApiRoutes(repos, cfg, version) {
     const input = JSON.parse((await readBody(req)).toString("utf8"));
     const conn = repos.connections.create({ nodeId: p.id, name: input.name || "key", credentials: { apiKey: input.apiKey } });
     json(res, 201, { id: conn.id, name: conn.name, status: conn.status, priority: conn.priority, keyMasked: maskKey(input.apiKey) });
+  });
+  // batch key import — one POST, N connections under the same node
+  route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/connections\/batch$/, async (req, res, p) => {
+    const input = JSON.parse((await readBody(req)).toString("utf8"));
+    const keys = (Array.isArray(input.keys) ? input.keys : []).filter((k) => typeof k === "string" && k.trim().length > 0);
+    if (keys.length === 0) return json(res, 400, { error: { message: "bad_request", detail: "keys array required (non-empty strings)" } });
+    const node = repos.nodes.get(p.id);
+    if (!node) return json(res, 404, { error: { message: "not_found" } });
+    const created = keys.map((apiKey, i) => {
+      const conn = repos.connections.create({
+        nodeId: node.id,
+        name: input.name ? `${input.name} ${i + 1}` : `${node.name} key ${i + 1}`,
+        credentials: { apiKey: apiKey.trim() },
+        priority: (input.priority ?? 100) + i,
+      });
+      return { id: conn.id, name: conn.name, keyMasked: maskKey(apiKey.trim()), priority: conn.priority };
+    });
+    json(res, 201, { created: created.length, connections: created });
   });
   route("PUT", /^\/api\/connections\/(?<id>[^/]+)$/, async (req, res, p) => {
     const input = JSON.parse((await readBody(req)).toString("utf8"));

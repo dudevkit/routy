@@ -310,46 +310,26 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
       breakerDirty = true;
       return next;
     },
-    flush: persistBreakers,
   };
 
-  // ── usage (write-behind queue) ────────────────────────────────────────────
-  const usageQueue = [];
-  const usageStmt = () => db.prepare(`INSERT INTO usage_events (ts, node_id, connection_id, api_key_id, model, status, prompt_tokens, completion_tokens, cached_tokens, cost_usd, ttft_ms, duration_ms, error_code)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-  function flushUsage() {
-    if (usageQueue.length === 0) return 0;
-    const batch = usageQueue.splice(0, usageQueue.length);
-    const stmt = usageStmt();
-    db.exec("BEGIN");
-    try {
-      for (const u of batch) {
-        stmt.run(u.ts ?? Date.now(), u.nodeId ?? null, u.connectionId ?? null, u.apiKeyId ?? null,
-                 u.model ?? null, u.status ?? null,
-                 u.promptTokens ?? null, u.completionTokens ?? null, u.cachedTokens ?? null,
-                 u.costUsd ?? null, u.ttftMs ?? null, u.durationMs ?? null, u.errorCode ?? null);
-      }
-      db.exec("COMMIT");
-    } catch (err) {
-      db.exec("ROLLBACK");
-      // re-queue: losing usage is worse than delaying it
-      usageQueue.unshift(...batch);
-      throw err;
-    }
-    return batch.length;
-  }
-  const usageFlushTimer = setInterval(() => {
-    try { flushUsage(); } catch (err) { /* retried next tick; logged by caller if needed */ }
-  }, flushIntervalMs);
-  usageFlushTimer.unref?.();
+  // ── usage (synchronous single-row insert; see R3-5 notes) ─────────────────
 
   const usage = {
+    // Synchronous single-row insert returning the event id (R3-5: details need to
+    // reference it immediately). One insert per completed request is cheap on WAL;
+    // the old write-behind queue existed to batch N-per-request writes.
     record(ev) {
-      usageQueue.push({ ts: ev.ts ?? Date.now(), ...ev });
-      if (usageQueue.length >= flushBatchSize) flushUsage();
+      const info = db.prepare(`INSERT INTO usage_events (ts, node_id, connection_id, api_key_id, model, status, prompt_tokens, completion_tokens, cached_tokens, cost_usd, ttft_ms, duration_ms, error_code)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        ev.ts ?? Date.now(), ev.nodeId ?? null, ev.connectionId ?? null, ev.apiKeyId ?? null,
+        ev.model ?? null, ev.status ?? null,
+        ev.promptTokens ?? null, ev.completionTokens ?? null, ev.cachedTokens ?? null,
+        ev.costUsd ?? null, ev.ttftMs ?? null, ev.durationMs ?? null, ev.errorCode ?? null,
+      );
+      return { id: Number(info.lastInsertRowid) };
     },
-    flush: flushUsage,
-    pending: () => usageQueue.length,
+    flush: () => 0,
+    pending: () => 0,
     query: ({ since, until, nodeId, limit = 1000 } = {}) => {
       const where = [];
       const params = [];
@@ -394,9 +374,6 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
   return {
     settings, nodes, connections, apiKeys, combos, aliases, proxyPools, breakers, usage, requestDetails,
     close() {
-      clearInterval(usageFlushTimer);
-      clearInterval(breakerFlushTimer);
-      flushUsage();
       persistBreakers();
     },
   };

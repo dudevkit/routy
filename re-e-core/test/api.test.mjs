@@ -76,6 +76,25 @@ describe("management API", () => {
     expect((await get("/api/nodes")).body).toHaveLength(0);
   });
 
+  it("409s on duplicate prefix instead of leaking SQLite errors (R3-2)", async () => {
+    const first = await post("/api/nodes", { name: "A", baseUrl: `http://127.0.0.1:${stubPort}/v1`, apiKey: "k", prefix: "dup" });
+    expect(first.status).toBe(201);
+    const second = await post("/api/nodes", { name: "B", baseUrl: `http://127.0.0.1:${stubPort}/v1`, apiKey: "k", prefix: "dup" });
+    expect(second.status).toBe(409);
+    expect(second.body.error.detail).toContain("already in use");
+  });
+
+  it("batch key import creates N connections with staggered priority", async () => {
+    const node = await post("/api/nodes", { name: "Batch", baseUrl: `http://127.0.0.1:${stubPort}/v1`, apiKey: "sk-first000000000000", prefix: "batch" });
+    const r = await post(`/api/nodes/${node.body.id}/connections/batch`, { keys: ["sk-aaa111222333444555", "sk-bbb111222333444555", "", "sk-ccc111222333444555"] });
+    expect(r.status).toBe(201);
+    expect(r.body.created).toBe(3); // empty string filtered out
+    expect(r.body.connections[0].keyMasked).toContain("sk-");
+    expect(r.body.connections[0].keyMasked).not.toContain("aaa111");
+    const conns = (await get(`/api/nodes/${node.body.id}/connections`)).body;
+    expect(conns).toHaveLength(4); // 1 initial + 3 batch
+    expect(conns[1].priority).toBeLessThan(conns[2].priority); // staggered
+  });
   it("probes an unsaved baseUrl via POST /api/nodes/test", async () => {
     const r = await post("/api/nodes/test", { baseUrl: `http://127.0.0.1:${stubPort}/v1` });
     expect(r.status).toBe(200);

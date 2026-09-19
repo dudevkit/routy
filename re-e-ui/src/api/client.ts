@@ -9,6 +9,8 @@
  *  - DELETE answers 204
  */
 import type {
+  BatchConnectionInput,
+  BatchConnectionResult,
   AliasMap,
   ApiKey,
   Combo,
@@ -180,6 +182,8 @@ export const api = {
   updateConnection: (id: string, patch: { name?: string; status?: string; priority?: number }): Promise<NodeConnection> =>
     putJson<NodeConnection>(`/api/connections/${enc(id)}`, patch),
   deleteConnection: (id: string): Promise<void> => deleteJson(`/api/connections/${enc(id)}`),
+  batchAddConnections: (id: string, input: BatchConnectionInput): Promise<BatchConnectionResult> =>
+    postJson<BatchConnectionResult>(`/api/nodes/${enc(id)}/connections/batch`, input),
 
   /* usage */
   getStats: (): Promise<UsageStats> => getJson<UsageStats>("/api/usage/stats"),
