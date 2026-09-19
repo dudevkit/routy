@@ -391,3 +391,41 @@ Catalog entry renamed **H · Neuphorism** with its texture note rewritten to des
 it actually does, and it now says where to judge it: Upstreams. `re-e-ui/.preview/
 neo-{light,dark,catalog}.png` hold the renders (no vision path in this session, so those
 are for your eyes).
+
+## 2026-09-19 — user-reported blending text under neo: three real bugs, one measurement error of mine
+
+Reported: primary button label blends into the button, plus "many things like that". All
+reproducible and all fixed.
+
+1. **Filled buttons lost their fill.** My blanket `.scheme-neo button[data-variant] {
+   background-color: var(--color-bg) }` hit *every* variant, and unlayered CSS outranks
+   Tailwind utilities, so `bg-primary` was overridden while `text-white` stayed →
+   measured **1.23:1** light, **1.36:1** dark (the dark case was worse still: my
+   ink-label rule then put `#1a202c` on the canvas). Fixed by splitting the rule —
+   secondary/outline/ghost take the canvas (depth is their affordance), primary/danger/
+   success keep their accent fill.
+2. **Tinted chips break AA at 10px.** `bg-primary/10` etc. shift the background toward
+   the ink: version pill **4.09** light / **3.82** dark, status badges up to **4.21**.
+   Under neo chips/badges are now **pressed pills with coloured ink on the canvas**
+   (`[data-badge]` + `[aria-pressed="true"]`), which also matches the style's own logic.
+   `Badge` gained `data-badge`, mirroring `data-variant` as a styling contract.
+3. **Header's version chip was a hand-rolled span with a hardcoded `v0.1.0`.** Now the
+   real `Badge` component reading `GET /api/gateway`'s version — one less duplicate of
+   Badge's CSS, and the header can no longer lie about the running build.
+4. **Mode applied from an effect.** `.dark` was toggled in `useTheme`'s effect, so first
+   paint could resolve one palette's text on another's canvas; `initTheme()` now runs
+   pre-paint beside `initLabScheme()` in `App.tsx`, and `toggleTheme` reads the DOM class
+   as truth instead of duplicating state per component instance.
+
+**Where I was wrong in the earlier pass:** my first audit compared **tokens** to tokens
+(so `--color-primary` vs `--color-text` always passed) instead of measuring the
+*rendered* background of each text node. It also used a regex color parser that silently
+discarded Tailwind v4's `oklab()`/`color(srgb)` values, and one run wrote `localStorage`
+on the dev origin while navigating the prod origin, producing ~30 fake failures like
+"1.17:1 white on light canvas". Rebuilt with canvas-composited resolution (ancestor chain,
+alpha flattened) and per-route class coherence assertions.
+
+**Final audit, 10 routes × {dev :5173, served :8010} × {light, dark}:** 625 text nodes
+per run, **0 AA failures**, worst measured ratio **4.64** (light) / **4.55** (dark), one
+canvas per mode (`#e6e8ed` / `#2d3748`), html class coherent on every route. Still open
+by choice: neo's 44px touch target vs our 32px row density.

@@ -650,24 +650,32 @@ button:disabled,
   opacity: 0.75;
 }
 
-/* Three shadow states per interactive element — spec's Pattern 2. */
-.scheme-neo button[data-variant] {
+/* Three shadow states per interactive element — spec's Pattern 2.
+   Canvas-tone controls take the fill from the surface; filled variants KEEP their
+   accent fill. A blanket `background-color` here silently painted white labels on
+   the canvas (measured 1.23:1 light / 1.36:1 dark) — this split is that bug's fix,
+   and unlayered CSS outranks Tailwind utilities, so order cannot save it either. */
+.scheme-neo button[data-variant="secondary"],
+.scheme-neo button[data-variant="outline"],
+.scheme-neo button[data-variant="ghost"] {
   background-color: var(--color-bg);
   border-color: transparent;
   border-radius: 12px;
   box-shadow: var(--neu-extruded-sm);
 }
-.scheme-neo button[data-variant="primary"],
-.scheme-neo button[data-variant="danger"],
-.scheme-neo button[data-variant="success"] {
-  box-shadow: var(--neu-extruded-sm);
-}
 /* Ghost row actions extrude at half depth: uniform depth is neo's flatness
    problem, so the primary action has to stay the loudest thing in the row. */
 .scheme-neo button[data-variant="ghost"] {
-  box-shadow: 3px 3px 6px var(--neu-shadow-dark), -3px -3px 6px var(--neu-shadow-light);
   border-radius: 8px;
+  box-shadow: 3px 3px 6px var(--neu-shadow-dark), -3px -3px 6px var(--neu-shadow-light);
   color: var(--color-text-muted);
+}
+.scheme-neo button[data-variant="primary"],
+.scheme-neo button[data-variant="danger"],
+.scheme-neo button[data-variant="success"] {
+  border-color: transparent;
+  border-radius: 12px;
+  box-shadow: var(--neu-extruded-sm);
 }
 .scheme-neo button[data-variant]:hover:not(:disabled) {
   box-shadow: var(--neu-elevated-sm);
@@ -680,6 +688,22 @@ button:disabled,
    whole affordance, so the transform has to go or the element fights itself. */
 .scheme-neo button[data-variant]:active {
   transform: none;
+}
+
+/* Chips and badges become pressed pills carrying coloured ink. The translucent
+   status fills (bg-success/10 and friends) shift the background toward the text and
+   break AA at 10px — measured 3.82–4.21:1. Ink on canvas passes (4.55–5.49) and the
+   inset shadow still reads as “a chip that is on”. `data-badge` mirrors Button's
+   `data-variant` so skins can target the component, not its utility soup. */
+.scheme-neo [data-badge] {
+  background-color: var(--color-bg);
+  border-color: transparent;
+  box-shadow: var(--neu-pressed-sm);
+}
+.scheme-neo button[aria-pressed="true"] {
+  background-color: var(--color-bg);
+  color: var(--color-primary);
+  box-shadow: var(--neu-pressed-sm);
 }
 
 /* Fields are pressed into the canvas — the inverse of an extruded control. */

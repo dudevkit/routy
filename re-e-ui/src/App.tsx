@@ -14,8 +14,11 @@ import { TokenSaver } from "./screens/TokenSaver";
 import { Upstreams } from "./screens/Upstreams";
 import { Usage } from "./screens/Usage";
 import { initLabScheme, useLabScheme } from "./hooks/useSchemeLab";
+import { initTheme } from "./hooks/useTheme";
 
-/* Applied before first paint so a Theme Lab preview never flashes back to Graphite. */
+/* Both before first paint: a skin or a mode applied from an effect renders one frame
+   of the wrong palette, which is how "dark text on the light canvas" gets reported. */
+initTheme();
 initLabScheme();
 
 const queryClient = new QueryClient({
