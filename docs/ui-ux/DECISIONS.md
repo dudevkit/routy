@@ -436,3 +436,43 @@ while `.dark` is on `<html>` — so entry H could only ever render light neo, an
 neo was reachable solely through “Try in the live app”. Fixed by adding the descendant
 form (`.dark .scheme-neo`), so the preview tracks the header's mode like every other
 genre.
+
+## 2026-09-19 — Raised state rebuilt: canvas-locked colour, asymmetric geometry, four variants
+
+User report: raised elements looked like separate objects lying on the background, too
+strong in dark mode, and the white highlight read as a blurry glow rather than lit
+material. Measured cause: the spec's dark highlight `#3d4a5c` is **ΔL +7.1 and loses
+saturation** (23.1 → 20.3) — a different material on the `#2d3748` canvas; and its
+symmetric `12px/24px` pair has a **36px reach**, which is what reads as a drop shadow
+under a card. Light mode's `#ffffff` highlight is ΔL +8.4 at saturation 0 (pure white,
+no hue) — same failure.
+
+Fix, two principles, neither of them "more blur/opacity":
+1. **The raised pair is the canvas, lit and occluded.** Hue and saturation locked, only
+   lightness moves: light `#f5f6f8`/`#d1d5de` (ΔL +5.1/−7.1), dark `#374358`/`#1f2632`.
+   Measured saturation drift across all variants: **−0.3 … +1.9** (spec: −2.8; pure
+   white: −100).
+2. **Occlusion and highlight are not symmetric.** A diffused source gives a tight,
+   attached highlight and a wider, softer occlusion, so the default (D) pairs `9px/19px`
+   shadow with `7px/13px` highlight. Symmetric wide pairs are precisely what make a card
+   look detached.
+
+Pressed/inset states left exactly as the spec, per instruction (`--neu-shadow-dark/light`
+untouched, only the raised composition changed).
+
+**Four selectable variants instead of one guess** — A spec distance (12/24, colour
+corrected: isolates tint from travel), B tight symmetric (7/13), C carved emboss (4/8
+with a gentler ΔL step +4.1/−5.1), D asymmetric (9/19 + 7/13, **default**). Reach:
+A 36px · B 20px · C 12px · D 28px/20px. The catalogue panel now carries four
+side-by-side tiles, sample and backdrop on the identical canvas so only the shadow pair
+varies, each with a **Wear** control (`html[data-neu]`, persisted) so a geometry can be
+judged on real tables. Composition tokens are declared on `.scheme-neo` **and**
+`[data-neu]`, so each tile resolves its own geometry rather than inheriting the panel's.
+
+Two bugs caught by measuring layers individually: the tiles were first inserted *after*
+the panel's closing div, so they hung off `html.scheme-neo` and variant C measured
+**ΔL +63.5** (near-white) in dark mode; and the dark override had only the descendant
+form (`.dark .scheme-neo [data-neu]`), missing the same-element case when the skin sits
+on `<html>`. Both selector shapes now exist; dark C verifies at −5.1/+4.1.
+
+`re-e-ui/.preview/raised-variants-{light,dark}.png` show all four in each mode.
