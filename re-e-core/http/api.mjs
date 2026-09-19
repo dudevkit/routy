@@ -44,6 +44,7 @@ function nodeView(repos, node, now = Date.now()) {
     status,
     latencyMs: lastOk ? lastOk.ttft_ms : null,
     modelCount: Number(node.data?.modelCount) || 0,
+    models: Array.isArray(node.data?.models) ? node.data.models : [],
     keyMasked: maskKey(primary?.credentials?.apiKey),
     lastError: breaker?.lastError || undefined,
   };
@@ -63,11 +64,15 @@ async function probe(baseUrl, apiKey = null, timeoutMs = 5000) {
     const latencyMs = Date.now() - t0;
     if (!res.ok) return { ok: false, latencyMs, error: `HTTP ${res.status}` };
     let modelCount = 0;
+    let models = [];
     try {
       const body = await res.json();
-      modelCount = Array.isArray(body?.data) ? body.data.length : 0;
+      if (Array.isArray(body?.data)) {
+        modelCount = body.data.length;
+        models = body.data.map((m) => (typeof m === "string" ? m : m?.id || "")).filter(Boolean);
+      }
     } catch { /* non-JSON models endpoint — probe still ok */ }
-    return { ok: true, latencyMs, modelCount };
+    return { ok: true, latencyMs, modelCount, models };
   } catch (err) {
     return { ok: false, latencyMs: Date.now() - t0, error: String(err?.cause?.message || err?.message || err).slice(0, 200) };
   } finally {
@@ -186,8 +191,8 @@ export function buildApiRoutes(repos, cfg, version) {
     if (!node) return json(res, 404, { error: { message: "not_found" } });
     const conn = repos.connections.list(node.id)[0];
     const result = await probe(node.baseUrl, conn?.credentials?.apiKey || null);
-    if (result.ok && result.modelCount) {
-      repos.nodes.update(node.id, { data: { ...(node.data || {}), modelCount: result.modelCount } });
+    if (result.ok && result.models?.length) {
+      repos.nodes.update(node.id, { data: { ...(node.data || {}), modelCount: result.modelCount, models: result.models } });
     }
     json(res, 200, result);
   });
@@ -196,6 +201,14 @@ export function buildApiRoutes(repos, cfg, version) {
     const input = await readBody(req).then((b) => JSON.parse(b.toString("utf8")));
     if (!input?.baseUrl) return json(res, 400, { error: { message: "bad_request", detail: "baseUrl required" } });
     json(res, 200, await probe(input.baseUrl, input.apiKey || null));
+  });
+
+  // real model list per node (cached from last probe)
+  route("GET", /^\/api\/nodes\/(?<id>[^/]+)\/models$/, (req, res, p) => {
+    const node = repos.nodes.get(p.id);
+    if (!node) return json(res, 404, { error: { message: "not_found" } });
+    const models = node.data?.models || [];
+    json(res, 200, { node: node.prefix, models, count: models.length });
   });
 
   // usage

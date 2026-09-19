@@ -78,7 +78,8 @@ export const api = {
       prefix: input.prefix.trim(),
       status: "healthy",
       latencyMs: null,
-      modelCount: 0, // stays 0 until a probe lands, same as the real nodeView
+      modelCount: 0,
+      models: [],
       keyMasked: maskKey(input.apiKey),
       apiKey: input.apiKey,
     };
@@ -129,6 +130,11 @@ export const api = {
 
   async testConnection(_input: { baseUrl: string; apiKey?: string }): Promise<TestResult> {
     return probeUnavailable();
+  },
+
+  async getNodeModels(id: string): Promise<{ node: string; models: string[]; count: number }> {
+    const node = state.nodes.find((n) => n.id === id);
+    return { node: node?.prefix || "", models: [], count: 0 };
   },
 
   async listConnections(id: string): Promise<NodeConnection[]> {

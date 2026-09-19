@@ -19,6 +19,7 @@ export interface UpstreamNode {
   latencyMs: number | null;
   /** 0 until a Test probe runs (the probe caches modelCount on the node) */
   modelCount: number;
+  models: string[];
   /** always masked — plaintext never returns */
   keyMasked: string;
   lastError?: string;

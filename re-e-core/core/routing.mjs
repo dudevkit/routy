@@ -96,7 +96,15 @@ export function listModels(repos) {
     data.push({ id: c.name, object: "model", owned_by: "re-e-combo" });
   }
   for (const n of repos.nodes.list({ enabled: true })) {
-    data.push({ id: `${n.prefix}/*`, object: "model", owned_by: "re-e-node" });
+    const models = Array.isArray(n.data?.models) ? n.data.models : [];
+    if (models.length > 0) {
+      for (const m of models) {
+        data.push({ id: `${n.prefix}/${m}`, object: "model", owned_by: `re-e-node:${n.prefix}` });
+      }
+    } else {
+      // no cached model list — expose the wildcard so the prefix is still discoverable
+      data.push({ id: `${n.prefix}/*`, object: "model", owned_by: `re-e-node:${n.prefix}` });
+    }
   }
   return { object: "list", data };
 }

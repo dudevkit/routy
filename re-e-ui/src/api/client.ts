@@ -176,6 +176,8 @@ export const api = {
   testNode: (id: string): Promise<TestResult> => postJson<TestResult>(`/api/nodes/${enc(id)}/test`),
   testConnection: (input: { baseUrl: string; apiKey?: string }): Promise<TestResult> =>
     postJson<TestResult>("/api/nodes/test", input),
+  getNodeModels: (id: string): Promise<{ node: string; models: string[]; count: number }> =>
+    getJson(`/api/nodes/${enc(id)}/models`),
   listConnections: (id: string): Promise<NodeConnection[]> => getJson<NodeConnection[]>(`/api/nodes/${enc(id)}/connections`),
   addConnection: (id: string, input: NewConnectionInput): Promise<NodeConnection> =>
     postJson<NodeConnection>(`/api/nodes/${enc(id)}/connections`, input),

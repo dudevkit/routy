@@ -139,6 +139,24 @@ function ConnectionsDrawer({ node, onClose }: { node: UpstreamNode | null; onClo
           ))}
         </div>
 
+        {/* model list per upstream */}
+        {node && node.models.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm font-medium text-text-main">
+              Models <span className="text-text-subtle">({node.models.length})</span>
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {node.models.map((m) => (
+                <span key={m} className="rounded-[6px] border border-border-subtle bg-surface-2 px-2 py-0.5 font-mono text-xs text-text-main">
+                  {m}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="h-px bg-border-subtle" />
+
         <div className="h-px bg-border-subtle" />
 
         <div className="flex flex-col gap-3">
