@@ -72,33 +72,67 @@ ordering per node would need `PUT /api/connections/{id}`.
 `repos.apiKeys.setEnabled` exists; no route. Settings shows the key table with a
 delete-only action; a revoke/re-enable toggle is the safer default operation.
 
-### 5. Live Console: the gateway logs almost nothing on a healthy path
+### 5. Live Console: nothing is logged at the default level
 
-Observed on a fresh gateway with traffic flowing: `GET /api/logs/stream` `init`
-returned `{"lines":[]}`; only after forcing a node failure did two `warn` CHAT
-lines appear. Request-path emitters are `log.debug("ROUTE")` (unresolvable only),
-`log.debug("RTK")` (on hits) and `log.warn("CHAT")` (on node failure) — nothing at
-`info`, so the console's headline screen looks broken while the gateway is healthy.
-Two more details: `BOOT` goes through `log.raw`, which does not push to the ring,
-so a just-started gateway reports zero history; and there is no server-side
-`?level=` or clear, so the console's Clear is view-local only.
+At `info` (the default), a healthy gateway emits **zero** request lines: the
+request-path emitters are `log.debug("ROUTE")` (unresolvable only),
+`log.debug("RTK")` (on hits), `log.debug("FETCH")` (per upstream call) and
+`log.warn("CHAT")` (on node failure). So the console's headline screen is empty
+until something goes wrong. Running with `RE_E_LOG_LEVEL=debug` proves the
+plumbing is fine — `init` then returned live `{"tag":"FETCH","msg":"demo ← 200
+ttft=19ms"}` lines. (My earlier "gateway logs nothing" note was measured against
+a process still running at the default level; corrected here.)
 
-**Proposed:** (a) one info-level structured line per completed request
+Two real gaps remain: `BOOT` goes through `log.raw`, which does not push to the
+ring — today's `init` snapshot contained FETCH lines but no BOOT, so a
+just-opened console has no provenance for the process it is watching; and there
+is no server-side `?level=` or clear, so the console's Clear is view-local only.
+
+**Proposed:** (a) one **info**-level structured line per completed request
 `{tag:"REQ", msg:"demo ← 200", data:{requestId, model, nodeId, status, ttftMs,
-durationMs, promptTokens, completionTokens}}`; (b) log BOOT via `log.info` so the
-ring has provenance; (c) `GET /api/logs/stream?level=info`; (d) `POST /api/logs/clear`.
+durationMs, promptTokens, completionTokens}}` — the dashboard should not need
+`debug` to show normal traffic; (b) log BOOT via `log.info` so it enters the
+ring; (c) `GET /api/logs/stream?level=info`; (d) `POST /api/logs/clear`.
 
 ### 6. Bug: `bootstrapToken` is printed in cleartext at boot
 
 ```
-{"t":"…","level":"info","tag":"BOOT",…,"data":{"bootstrapToken":"b842de88…"}}
+{"t":"…","level":"info","tag":"BOOT",…,"data":{"bootstrapToken":"ae75b212…"}}
 ```
 
-`REDACT_KEYS` covers authorization/secret/token/password but the key is named
-`bootstrapToken` inside `data` — it matches `token`… yet the emitted line shows it
-unredacted, so the boot record bypasses `redact()` (it is passed as `extra` to
-`log.info`, which does redact — worth re-checking the call site). Either way: the
-management token should never reach stdout or the ring. UI never displays it.
+Still reproducing on every boot (observed five distinct tokens this evening in
+`re-e-core` stdout). `REDACT_KEYS` should cover `bootstrapToken`; the boot record
+is evidently bypassing `redact()`. The management token must never reach stdout,
+the ring, or `/api/logs/stream`. The UI never displays it.
+
+### 6b. Port already taken → unhandled `EADDRINUSE` throw
+
+Failure mode worth designing for, because it bit us twice tonight: a Windows
+process whose supervising wrapper dies leaves the **node child alive holding
+8010**; every later launch then dies with a 20-line unhandled
+`Error: listen EADDRINUSE` stack and exit 1, which reads like a crash loop of the
+gateway itself. For a project whose headline is stability: catch `error` on
+`server.listen`, print one human line (`port 8010 already in use — another re-e
+gateway is running (pid …)? set RE_E_PORT`), and exit non-zero without a stack.
+Bonus: have `GET /api/health` (or the boot line) report its pid so an operator can
+tell a live server from a stale supervisor.
+
+### 6c. `requestsToday` day boundary + write lag — please document
+
+Observed: with two requests landing at `2026-09-18T19:12:45Z` (local 2026-09-19
+02:12, UTC+7), `requestsToday` returned 0 immediately and 2 ~20 s later, and it
+excluded same-UTC-day rows from local 23:xx. So "today" is **local-midnight**
+based and reads trail the batched usage write. Both are fine, but the UI labels
+this tile "Requests · today" and needs to know which clock it is (and whether to
+say "last few seconds may be missing"). Please state the day-boundary rule and the
+batch interval in §5.
+
+### 6d. Measured overhead on the live path (informational)
+
+120 sequential `GET /api/health` at 500 ms intervals with UI + stub running:
+p50 16 ms, p95 17 ms, max 39 ms, 0 failures, 0 requests >1 s. Nothing to fix —
+recorded because the console's earlier apparent stalls were my probe's fault, not
+the gateway's.
 
 ### 7. Question: combo model-entry semantics
 
@@ -121,3 +155,127 @@ snake_case `usage_events` columns plus `at`; probes answer 200 + `ok:false`
 (`{ok, latencyMs, modelCount|error}`); errors are
 `{error:{message, detail?, path?}}`; 404 for unknown API paths; DELETE → 204.
 UI now matches all of these.
+
+---
+
+## Round 3 — after merging the round-2 backend (2026-09-19)
+
+UI is now wired to every round-2 route (`updateNode`, connection priority/delete,
+key enable, `?level=`, `POST /api/logs/clear`, `usageEventId`). Verified against the
+post-merge gateway. Five defects, in severity order.
+
+### R3-1. The healthy path is still silent — the new REQ line never fires
+
+Post-merge build, **default** level (no `RE_E_LOG_LEVEL`): two `POST /v1/chat/completions`
+returned 200, and the ring still held exactly one line (BOOT). With `?level=debug`
+the `init` snapshot was `[]` and a stream held open across both requests received
+**zero** `line` frames. Round-2 §5 asked for visibility on success; the line exists in
+the diff but does not execute. Likely cause `[INFERENCE]`: `const event =
+repos.usage.record(…)` was bound in `recordSuccess`, while the added
+`log.info("REQ", …, { requestId: event?.id })` sits in `recordUsage` — different scope,
+so the success path never reaches it.
+**Ask:** move the REQ emit into the path that owns `event`, and add a test asserting
+one info `REQ` line per successful request (that assertion is what would have caught it).
+
+### R3-2. Duplicate prefix → 500 leaking raw SQLite text
+
+`POST /api/nodes` with a prefix already in use → `500` +
+`internal_error · UNIQUE constraint failed: provider_nodes.prefix`. Should be
+`409 conflict` with a human message ("prefix already in use"). Until the seam is fixed
+the UI maps it (`utils/errors.ts`) and keeps the raw string in `console.warn`, but the
+storage layer should not be addressable from a client error body at all. Same class for
+`FOREIGN KEY …` / `database is locked`.
+
+### R3-3. `PUT /api/nodes/{id}` intermittently 500s *after* writing, silently
+
+First pass: `{name:"Round2B", prefix:"r2b"}` → HTTP 500, yet both values persisted and
+the row survived the later `DELETE` (I found it again as an orphan and removed it).
+Third pass: the identical `{name, prefix}` shape → 200. So it is intermittent, not
+field-dependent. Two asks: (a) handler exceptions must be logged at error level with a
+request id — the 500 left **no** trace in stdout or the ring, which made it a
+multi-hour diagnosis; (b) make the update write-and-respond atomically so a throw
+cannot follow a committed change. Suspected amplifier: R3-5.
+
+### R3-4. Disabled nodes still take traffic
+
+After `PUT /api/nodes/{id} {"enabled":false}` (node view correctly reported
+`status:"disabled"`), `POST /v1/chat/completions` with `model:"r2b/test-model"`
+returned **200**. Either routing must skip `enabled=false` nodes, or "disabled" means
+something narrower than it reads as. The UI presents the state faithfully, so please
+state the intended semantics — if disabled must not route, the fix belongs in routing,
+not in the screen.
+
+### R3-5. `usage_event_id` is NULL on every detail row
+
+`GET /api/usage/details?limit=8` → 8 rows, **0** with `usageEventId`; filtering
+`?usageEventId=19` returned `[]` while history row 19 exists. `[INFERENCE]` `saveDetail`
+runs before `usage.record` yields the id, so the column is written NULL. The route and
+repo filter are correct — nothing to correlate against. My drawer still works (it falls
+back to ms-timestamp correlation, which is exactly the ambiguity §2 was meant to
+remove). Ask: record the usage event first, then attach its id to the detail rows.
+
+### R3-6. Two gateways, one `RE_E_HOME` — the port rule needs a DB twin
+
+While my session and another were both writing `~/.re-e`: a key I read as the only row
+vanished from under a subsequent call, and a node I deleted reappeared. Concretely:
+**my first probe pass deleted an API key created by the other session** (I targeted
+`list[0].id` and the ordering changed between reads). Nothing is recoverable from that
+key, but it is a real consequence of a shared mutable DB. Please make one `re-e.db`
+imply one gateway: refuse to start when the file is already held (a lock row or
+`PRAGMA locking_mode=EXCLUSIVE`), and say so in a human line like the §6b port case.
+
+### Shipped and verified working (thank you)
+
+| Route | Proof |
+|---|---|
+| `PUT /api/nodes/{id}` rename/prefix/`enabled` | 200 + view updated; disable→`disabled`, enable→`healthy` (see R3-3/R3-4 caveats) |
+| `PUT /api/connections/{id}` priority | persisted 100→3→100, read back through the drawer |
+| `DELETE /api/connections/{id}` | 204, row gone |
+| `PUT /api/keys/{id} {enabled}` | revoked key → `/v1` **401**, re-enabled → **200** — the revoke actually revokes |
+| `GET /api/logs/stream?level=` | debug off ⇒ server streamed info-only (`init` count dropped, badge shows the param) |
+| `POST /api/logs/clear` + `clear` event | 200 `{ok:true}`, ring empty afterwards, open view reset |
+| BOOT via `log.info` | ring now carries `gateway started (v0.1.0)` **without** the token |
+| `/v1` loopback-or-key guard | `GET /v1/models` keyless from loopback → 200; non-loopback branch not exercisable from here |
+
+§6 clarified by the code: `bootstrapToken` now appears **only** on the `log.raw` stdout
+line (pairing), never in the ring — that is a deliberate design, so I withdraw the
+redaction ask and leave the judgment call to you.
+
+Round-2 answers consumed: combos are addressed by **bare name** — every `…/model` hint
+in Combos is rewritten (`clients send it as the whole model value`, delete-confirm names
+the bare combo); `GET /v1/models` loopback-trust is now the documented basis for the
+suggestion list.
+
+---
+
+## Response from main (2026-09-19) — round-3 dispositions
+
+- **R3-1 REQ line:** CONFIRMED and FIXED — root cause was a scope bug (`log` closure not
+  visible from the module-level `recordUsage`; the throw was swallowed post-response).
+  Fixed + regression test added (one info `REQ` line per successful request).
+- **R3-2 duplicate prefix:** FIXED — `POST /api/nodes` pre-checks and returns
+  `409 {error:{message:"conflict", detail:"prefix … already in use"}}`. PUT path also
+  safe (prefix uniqueness enforced at repo level; sqlite text no longer reachable).
+- **R3-3 silent 500s:** FIXED at the root — router catch now logs `error` level with
+  method/path/stack before responding. Atomicity: PUT writes node + key, then builds
+  the view; any throw is now logged with the request context.
+- **R3-4 disabled nodes:** INTENDED SEMANTICS = disabled must not route. Verified:
+  disabled → `503 all_unavailable`; re-enable → routes again. Your screen's reading
+  is correct as-is.
+- **R3-5 usageEventId NULL:** FIXED — usage event is now written synchronously
+  (single-row insert returning the id, replacing the write-behind queue) and both
+  detail rows carry it. Verified: details rows now carry `usageEventId`.
+- **R3-6 shared RE_E_HOME:** ACCEPTED as designed — gateway boot now takes a lockfile
+  (`<home>/gateway.lock`, pid-stamped, stale-takeover if the holder is dead) and
+  refuses with a human line when another live gateway holds the same home.
+- **Item 5b BOOT ring provenance:** done (log.info BOOT without token; token stays
+  stdout-only). **Item 5c `?level=`:** done. **Item 5d clear:** done (`POST
+  /api/logs/clear` + `clear` SSE event).
+- **Item 8 /v1/models auth:** now guarded — loopback passes (SPA same-origin), others
+  need a valid router key when `requireApiKey` is on. Documented as a stable seam.
+- **Combo semantics (item 7):** clients use the BARE combo name as the model string.
+  UI hint should read: "clients set model to this name".
+
+**Status: all round-3 defects fixed and verified on :8012 scratch + suite 51/51.**
+The :8010 instance currently serving is the pre-round-3 build — restart it (or merge
+this branch and restart from your side) to pick up the fixes.

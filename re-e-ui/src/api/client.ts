@@ -121,13 +121,22 @@ export interface LogStreamHandlers {
   onInit: (lines: string[]) => void;
   /** one live line, still a JSON string — parse at render time */
   onLine: (text: string) => void;
+  /** server-side ring was cleared (POST /api/logs/clear) — drop local buffer */
+  onClear?: () => void;
   onOpen?: () => void;
   onClose?: () => void;
 }
 
-/** Subscribe to the SSE log stream; returns an unsubscribe function. */
-export function streamLogs(handlers: LogStreamHandlers): () => void {
-  const source = new EventSource(LOG_STREAM_URL);
+/** Lowest level the server should stream; anything above it is filtered in-view. */
+export type StreamLevel = "debug" | "info" | "warn" | "error";
+
+/**
+ * Subscribe to the SSE log stream; returns an unsubscribe function. `level` maps
+ * to the server-side `?level=` filter, so a console watching only warn/error does
+ * not pay for debug traffic over the wire.
+ */
+export function streamLogs(handlers: LogStreamHandlers, level?: StreamLevel): () => void {
+  const source = new EventSource(LOG_STREAM_URL + qs({ level }));
 
   source.addEventListener("init", (event: MessageEvent) => {
     try {
@@ -146,6 +155,8 @@ export function streamLogs(handlers: LogStreamHandlers): () => void {
     }
   });
 
+  source.addEventListener("clear", () => handlers.onClear?.());
+
   source.onopen = () => handlers.onOpen?.();
   source.onerror = () => handlers.onClose?.();
   return () => source.close();
@@ -155,6 +166,9 @@ export const api = {
   /* nodes / upstreams */
   listNodes: (): Promise<UpstreamNode[]> => getJson<UpstreamNode[]>("/api/nodes"),
   addNode: (input: NewNodeInput): Promise<UpstreamNode> => postJson<UpstreamNode>("/api/nodes", input),
+  /** round-2: rename, fix baseUrl/prefix/apiType, rotate apiKey, enable/disable */
+  updateNode: (id: string, patch: Partial<NewNodeInput> & { enabled?: boolean; apiType?: string }): Promise<UpstreamNode> =>
+    putJson<UpstreamNode>(`/api/nodes/${enc(id)}`, patch),
   removeNode: (id: string): Promise<void> => deleteJson(`/api/nodes/${enc(id)}`),
   resetBreaker: (id: string): Promise<UpstreamNode> => postJson<UpstreamNode>(`/api/nodes/${enc(id)}/reset`),
   testNode: (id: string): Promise<TestResult> => postJson<TestResult>(`/api/nodes/${enc(id)}/test`),
@@ -163,13 +177,17 @@ export const api = {
   listConnections: (id: string): Promise<NodeConnection[]> => getJson<NodeConnection[]>(`/api/nodes/${enc(id)}/connections`),
   addConnection: (id: string, input: NewConnectionInput): Promise<NodeConnection> =>
     postJson<NodeConnection>(`/api/nodes/${enc(id)}/connections`, input),
+  updateConnection: (id: string, patch: { name?: string; status?: string; priority?: number }): Promise<NodeConnection> =>
+    putJson<NodeConnection>(`/api/connections/${enc(id)}`, patch),
+  deleteConnection: (id: string): Promise<void> => deleteJson(`/api/connections/${enc(id)}`),
 
   /* usage */
   getStats: (): Promise<UsageStats> => getJson<UsageStats>("/api/usage/stats"),
   getFailures: (limit = 20): Promise<RecentFailure[]> => getJson<RecentFailure[]>(`/api/usage/failures${qs({ limit })}`),
   getHistory: (params: { since?: number; limit?: number } = {}): Promise<UsageHistoryRow[]> =>
     getJson<UsageHistoryRow[]>(`/api/usage/history${qs(params)}`),
-  getDetails: (limit = 50): Promise<RequestDetail[]> => getJson<RequestDetail[]>(`/api/usage/details${qs({ limit })}`),
+  getDetails: (limit = 50, usageEventId?: number): Promise<RequestDetail[]> =>
+    getJson<RequestDetail[]>(`/api/usage/details${qs({ limit, usageEventId })}`),
 
   /* gateway */
   getGateway: (): Promise<GatewayInfo> => getJson<GatewayInfo>("/api/gateway"),
@@ -180,6 +198,8 @@ export const api = {
   putSettings: (patch: Settings): Promise<Settings> => putJson<Settings>("/api/settings", patch),
   listKeys: (): Promise<ApiKey[]> => getJson<ApiKey[]>("/api/keys"),
   createKey: (name?: string): Promise<CreatedApiKey> => postJson<CreatedApiKey>("/api/keys", { name }),
+  /** round-2: revoke without deleting (backend returns 204) */
+  setKeyEnabled: (id: string, enabled: boolean): Promise<void> => putJson<void>(`/api/keys/${enc(id)}`, { enabled }),
   removeKey: (id: string): Promise<void> => deleteJson(`/api/keys/${enc(id)}`),
 
   /* routing: combos + aliases */
@@ -199,4 +219,8 @@ export const api = {
     putJson<ProxyPool>(`/api/proxy-pools/${enc(id)}`, patch),
   deletePool: (id: string): Promise<void> => deleteJson(`/api/proxy-pools/${enc(id)}`),
   testPool: (id: string): Promise<PoolTestResult> => postJson<PoolTestResult>(`/api/proxy-pools/${enc(id)}/test`),
+
+  /* logs */
+  /** clears the server ring and notifies every open stream (`clear` event) */
+  clearLogs: (): Promise<{ ok: boolean }> => postJson<{ ok: boolean }>("/api/logs/clear"),
 };

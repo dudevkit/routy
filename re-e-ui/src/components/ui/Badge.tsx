@@ -48,6 +48,7 @@ export function Badge({
         sizes[size],
         className,
       )}
+      data-badge={variant}
     >
       {dot && <span className={cn("size-1.5 rounded-full", dotColors[variant])} />}
       {icon}

@@ -3,6 +3,8 @@ import { Card } from "../components/ui/Card";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { StatusDot } from "../components/ui/StatusDot";
+import { useLabScheme, type NeuVariant } from "../hooks/useSchemeLab";
+import { cn } from "../utils/cn";
 
 /**
  * Sparkline with an 8% accent area fill (decoration patch D5.3):
@@ -37,6 +39,18 @@ const latency = [420, 380, 355, 402, 348, 330, 372, 341, 318, 335, 302, 310];
  * vars (and, for some genres, adds texture via scoped CSS in index.css).
  * Panels without a class render the base theme (Graphite Pro).
  */
+/**
+ * The raised axis, isolated: sample and backdrop are the same canvas in every tile,
+ * so what differs is only the shadow pair's colour step and its geometry.
+ * `geom` reads occlusionOffset/blur · highlightOffset/blur.
+ */
+const RAISED: { key: NeuVariant; name: string; geom: string; why: string }[] = [
+  { key: "a", name: "A · spec distance", geom: "occ 12/24 · hi 12/24", why: "The spec's geometry with the colour pair corrected — tells you whether the complaint is distance or tint." },
+  { key: "b", name: "B · tight symmetric", geom: "occ 7/13 · hi 7/13", why: "Half the travel, equal blur both sides. Less distance under the element, so less air." },
+  { key: "c", name: "C · carved emboss", geom: "occ 4/8 · hi 4/8", why: "Smallest step in lightness as well as distance — closest to milled from one sheet, weakest on large cards." },
+  { key: "d", name: "D · asymmetric · default", geom: "occ 9/19 · hi 7/13", why: "Wide soft occlusion under a tight attached highlight, which is how a diffused source actually falls off." },
+];
+
 function CatalogPanel({
   id,
   schemeClass,
@@ -50,11 +64,28 @@ function CatalogPanel({
   tagline: string;
   texture: string;
 }) {
+  const { scheme, toggleScheme, variant, setVariant } = useLabScheme();
   return (
     <section id={id} className="flex scroll-mt-4 flex-col gap-3">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-1">
-        <h2 className="text-base font-semibold text-text-main">{name}</h2>
-        <span className="text-xs text-text-muted">{tagline}</span>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-1">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h2 className="text-base font-semibold text-text-main">{name}</h2>
+          <span className="text-xs text-text-muted">{tagline}</span>
+        </div>
+        {schemeClass && (
+          <button
+            onClick={() => toggleScheme(schemeClass)}
+            aria-pressed={scheme === schemeClass}
+            className={cn(
+              "rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors",
+              scheme === schemeClass
+                ? "border-transparent bg-primary text-white"
+                : "border-border text-text-muted hover:text-primary",
+            )}
+          >
+            {scheme === schemeClass ? "Live in app · revert" : "Try in the live app"}
+          </button>
+        )}
       </div>
 
       <div
@@ -106,6 +137,41 @@ function CatalogPanel({
         <div className="mt-3 truncate font-mono text-xs text-text-muted">
           req_9f2c81ab · https://openrouter.ai/api/v1 · sk-or-v1-88f2…9f2c · TTFT 380ms
         </div>
+
+        {id === "neo" && (
+          <div className="mt-4">
+            <p className="pb-2 text-[11px] text-text-muted">
+              Raised variants — identical canvas for sample and backdrop, so only the shadow pair changes. Compare
+              these four, then wear one across the real screens.
+            </p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {RAISED.map((v) => (
+                <div key={v.key} data-neu={v.key} className="flex flex-col gap-2.5 rounded-[16px] bg-bg p-3.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-text-main">{v.name}</span>
+                    <button
+                      onClick={() => setVariant(variant === v.key ? null : v.key)}
+                      aria-pressed={variant === v.key}
+                      className="rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold text-text-muted transition-colors hover:text-primary"
+                    >
+                      {variant === v.key ? "Worn" : "Wear"}
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="size-12 shrink-0 rounded-[12px] bg-bg shadow-[var(--neu-extruded)]" />
+                    <div className="flex min-w-0 flex-col items-start gap-1.5">
+                      <span className="font-mono text-[10px] text-text-subtle">{v.geom}</span>
+                      <Button size="sm" variant="secondary">
+                        Raised
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="text-[10.5px] leading-snug text-text-muted">{v.why}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <p className="px-1 text-xs text-text-subtle">{texture}</p>
@@ -170,6 +236,14 @@ const catalog = [
     texture:
       "Translucent blur cards over gradient glow. Gorgeous for chrome (sidebar/modals); a legibility tax on dense tables.",
   },
+  {
+    id: "neo",
+    schemeClass: "scheme-neo",
+    name: "H · Neuphorism",
+    tagline: "soft UI · extrude / elevate / press · light #e6e8ed · dark #2d3748",
+    texture:
+      "Per the Neuphorism system: opaque shadow pairs (dark bottom-right, light top-left) carve the surface — no borders, no fills. Elements extrude at rest, elevate and lift on hover, press inward on active/focus; fields are always pressed. Canvas + accent (#667eea) follow the spec in both modes, with a directional light gradient where the drafting grid used to be. Two recorded departures: shadow distance scales down for 32px controls (the spec's 12/24 blurs small buttons into mush) and type stays IBM Plex at the spec's light weights. Judge it on Upstreams — the row rules and ghost actions are where soft UI earns or loses you.",
+  },
 ];
 
 function MonoRow({
@@ -202,8 +276,8 @@ export function ThemeSampler() {
       <div className="flex flex-col gap-2">
         <h1 className="text-lg font-semibold text-text-main">Theme Catalog</h1>
         <p className="text-xs text-text-muted">
-          Seven genre candidates on the approved shell — same components, same blocking; only tokens + texture change.
-          Base theme = Graphite Pro. Jump:{" "}
+          Eight genre candidates on the approved shell — same components, same blocking; only tokens + texture change.
+          Tap “Try in the live app” to wear a scheme across every screen (bottom-left chip reverts it). Base theme = Graphite Pro. Jump:{" "}
           {catalog.map((c, i) => (
             <span key={c.id}>
               {i > 0 && " · "}

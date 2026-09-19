@@ -250,7 +250,7 @@ function ComboCard({ combo, suggestions }: { combo: Combo; suggestions: string[]
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <span className="text-xs text-text-muted">Route order · first entry is the primary</span>
+        <span className="text-xs text-text-muted">Route order · clients send the bare combo name; entries are tried top to bottom</span>
         {draft.length === 0 ? (
           <p className="rounded-[8px] border border-dashed border-border px-3 py-4 text-center text-xs text-text-subtle">
             Empty combo — add at least one model to route.
@@ -330,7 +330,7 @@ function ComboCard({ combo, suggestions }: { combo: Combo; suggestions: string[]
         }
       >
         <p className="text-sm text-text-muted">
-          Clients still calling <span className="font-mono text-text-main">{combo.name}/…</span> lose this route.
+          Clients still sending <span className="font-mono text-text-main">{combo.name}</span> as the model lose this route.
         </p>
       </Modal>
     </Card>
@@ -385,7 +385,7 @@ function NewComboModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="dev-combo"
-        hint="Letters, digits, dot, dash, underscore — clients call it as <name>/<model>"
+        hint="Letters, digits, dot, dash, underscore — clients set model to this name (never name/model)"
         error={trimmed.length > 0 && !valid ? "Invalid characters in name" : undefined}
       />
     </Modal>

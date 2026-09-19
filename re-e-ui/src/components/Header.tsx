@@ -11,6 +11,8 @@ import {
   TerminalWindow,
   type IconComponent,
 } from "./icons";
+import { useGateway } from "../api/hooks";
+import { Badge } from "./ui/Badge";
 import { StatusDot } from "./ui/StatusDot";
 import { ThemeToggle } from "./ui/ThemeToggle";
 
@@ -34,6 +36,7 @@ function getPageInfo(pathname: string): PageInfo {
 export function Header() {
   const { pathname } = useLocation();
   const pageInfo = useMemo(() => getPageInfo(pathname), [pathname]);
+  const gateway = useGateway();
   const { title, description, icon: Icon } = pageInfo;
 
   return (
@@ -57,9 +60,9 @@ export function Header() {
         >
           <StatusDot tone="green" pulse />
           <span>online</span>
-          <span className="ml-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-            v0.1.0
-          </span>
+          <Badge variant="primary" size="sm" className="ml-1 font-mono uppercase tracking-wide">
+            {gateway.data ? `v${gateway.data.version}` : "—"}
+          </Badge>
         </div>
         <ThemeToggle />
       </div>

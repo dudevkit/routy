@@ -223,3 +223,256 @@ semantics question, and whether `GET /v1/models` is intentionally public.
 
 **Also fixed:** Combos suggestion copy no longer blames the gateway for an empty
 install (tri-state: loading / reachable-empty / unavailable-with-reason).
+
+## 2026-09-19 — Supervisor recovery incident (02:0x local)
+
+`ree-core`, `ree-stub`, `ree-ui-dev` all reported exit. Sequence, with the two
+conclusions that matter for how we run this stack:
+
+1. **Orphan + EADDRINUSE, not a gateway crash.** The hub-tracked launch died with
+   its wrapper, but the Windows node child survived holding 8010; the
+   `restart=on-failure` policy then spawned attempts that each threw an unhandled
+   `EADDRINUSE` and exited 1 (8 restarts). Read "crash loop", actually a stale
+   supervisor. Fixed by stopping the job, `Stop-Process` on the orphan, then
+   starting fresh; all three are now `persist: true` so client teardown stops
+   killing them. Filed as §6b: the gateway should fail with one human line + a
+   pid in the boot record, not a stack.
+2. **My async probes were the bug, twice.** Backgrounded `bash` jobs in this
+   environment have no `curl` (and a different `/tmp`), so a `if ! curl …` liveness
+   loop reports "DOWN" on its first poll every time. Two false "the core died
+   again" calls came from that. Use `node -e` with `fetch` for background probes.
+   Real measurement: 120 × `GET /api/health` at 500 ms → p50 16 ms, p95 17 ms,
+   max 39 ms, 0 failures. Gateway was healthy throughout.
+
+Also corrected §5 of `contract-requests.md`: request lines *do* exist at `debug`
+(`FETCH demo ← 200 ttft=19ms` appeared live in the ring), so the accurate claim is
+"nothing at the default `info` level" — the ask (an info-level per-request line)
+stands, my earlier framing was wrong. `requestsToday` proved to be
+local-midnight-based with batched-write lag (§6c).
+
+State left: nodes `[demo]`, `dev-combo`, `smart` alias, **no API keys** (both
+verification keys deleted; the plaintext of yesterday's `re_2aca…` never existed
+outside my session, so mint your own through Settings). `Gate Test` vanished
+between two reads — main's session edits the same `~/.re-e` DB, so screens must
+tolerate config changing underneath them (they do: react-query refetch on window
+focus, no cached-write assumptions).
+
+## 2026-09-19 — Round 3: merged backend, wired the newly-unlocked operations (settled)
+
+Merged `axolotl` (round-2 backend). Every affordance that was deliberately absent for
+missing routes is now live: **Edit upstream** (the add-modal in edit mode over
+`PUT /api/nodes/{id}`, blank key = keep), **Disable/Enable** per node, keys drawer
+**priority** (blur-to-save) and **remove key** with confirm, Settings **Revoke /
+Enable** per client key, Live Console **server-side level** (the level chips derive a
+`?level=` floor when the enabled set is a suffix of debug<info<warn<error, otherwise
+they filter in-view) and a **real Clear** (`POST /api/logs/clear` → `clear` broadcast →
+every open console resets). Combos copy rewritten for bare-name addressing.
+
+`transport.ts` now types the swap as `typeof liveApi`, so the mock transport fails the
+build if it drifts from the real surface — it was silently missing five methods before
+I pinned it. `useDetailsForEvent` correlates the payload drawer by `usageEventId` with
+the old millisecond fallback kept (the column is NULL today; see R3-5).
+
+**Verified in the browser, not just by reading code:** created → renamed via PUT →
+disabled → enabled → added a second key → set priority (persisted 100→3→100, read back)
+→ removed key → minted key → revoked (proxy returned **401**) → re-enabled (**200**) →
+deleted; console badge moved to `?level=info` when debug was switched off and the
+ring-empty state after Clear. All test rows deleted afterwards: `nodes [Demo Stub/demo]`,
+`keys []`, `combos [dev-combo]`, `alias {smart}` — the shared DB is back to its
+pre-session state.
+
+**UI fixes made on evidence:** toast stack gained `role="status" aria-live="polite"`
+(feedback was invisible to assistive tech — and to my own probes); `utils/errors.ts`
+maps storage text to intent, because a duplicate prefix arrives as
+`internal_error · UNIQUE constraint failed: provider_nodes.prefix`, and that string must
+not be user-facing (raw kept in `console.warn`). Console empty-state copy rewritten: with
+R3-1 open, silence does **not** mean no traffic, and the screen now says so.
+
+**Filed as round 3:** R3-1 REQ line never fires (the healthy console is still empty;
+likely scope slip between `recordSuccess` and `recordUsage`), R3-2 duplicate-prefix 500
+leaking SQLite, R3-3 intermittent `PUT /api/nodes` 500 *after* commit with no server
+trace, R3-4 disabled nodes still serve 200, R3-5 `usage_event_id` NULL everywhere,
+R3-6 one-DB-one-gateway guard (a real consequence: a probe of mine deleted another
+session's API key when row ordering shifted between two reads). Withdrawn: the
+`bootstrapToken` redaction ask — it is now stdout-only by design and out of the ring.
+
+**Ops:** gateway restarted on post-merge code, single supervisor (`ree-core`,
+`persist: true`), default log level this time — the level is now part of what we are
+testing. Note `hub send` to `Main` is this session, so cross-session coordination goes
+through the user.
+
+## 2026-09-19 — Neumorphism tried as catalog entry H (not adopted)
+
+User asked to give soft UI a shot. Added **H · Soft Neumorphic** to the Theme Catalog
+(`.scheme-neo`) — token-only, same components/shell, exactly the mechanism the other
+seven genres use: one mid-tone canvas (`#262b33`) where `bg`/`bg-alt`/`surface`/
+`sidebar` converge, borders receding to a whisper, depth carried by paired shadows
+(`rgba(255,255,255,.04) -6px -6px 14px` + `rgba(0,0,0,.5) 8px 8px 20px`), fields pressed
+*inset*, cards extruded at 18px radius, drafting grid suppressed (wrong texture for this
+genre).
+
+**Two departures from textbook neo, deliberate.** (1) Text keeps AA contrast — neo's
+classic failure is illegible muted-on-mute; measured in-browser: **12.67 : 1** main,
+**6.79** muted, **4.70** subtle, **5.14** accent. (2) Focus rings survive, and the
+filled primary button stays filled, because an ops surface needs the primary action to
+dominate. Ghost row actions extrude at half depth (blur 5–6 px vs secondary's 8–10 px)
+for the same reason — verified `hierarchyPreserved: true`.
+
+**New hook, now a styling contract:** `Button` emits `data-variant`, so skins can style
+per variant instead of guessing from utility classes. `data-variant` is documented here
+because a scheme breaking it is a silent visual regression.
+
+**Catalog became a lab.** Each panel now has **Try in the live app**, which applies the
+scheme class to `<html>` via `hooks/useSchemeLab.ts` (persisted, applied pre-paint in
+`App.tsx`) so a genre can be judged on real density — Upstreams rows, the console, the
+dashboard grid — instead of a two-card preview. A bottom-left chip reverts it; preview
+textures keyed to `.mini-app` intentionally do not fire app-wide. Verified: apply →
+`dark scheme-neo`, chip visible, Revert → `dark`, storage cleared.
+
+**Costs I hit while building it, which are the style's real costs.** Rows use
+`border-t`, so the token separator (black-alpha) vanished on the dark canvas — the table
+lost its rules until I overrode them with a light hairline; neo wants no borders but a
+dense table cannot survive that. Uniform extrusion makes every control look equally
+pressable, which slows scanning. Radii are not tokenized (`rounded-[10px]` is hardcoded
+across the kit), so neo can only re-round cards/buttons/selectors, not every element —
+the one gap that would need a real refactor before neo could take over as the identity.
+
+**Verdict: keep Graphite Pro as the default.** Neo is the strongest of the eight for
+chrome (sidebar, modals, settings), the weakest for the two screens that matter most —
+Upstreams and Usage Details. Recommendation stands until someone wears it for a week on
+real traffic: `cd re-e-ui && npm run dev` → `/theme` → Try in the live app.
+
+## 2026-09-19 — Neuphorism entry rebuilt against the real spec (supersedes the guess above)
+
+First pass was my own idea of neumorphism and the user rightly said it wasn't it. Read
+the actual **Neuphorism SKILL.md** (mcpmarket listing; upstream repo `gahoccode/prds` is
+404) and rebuilt `.scheme-neo` to its letter. What my guess got wrong, all of it
+load-bearing for the look:
+
+| spec | my first pass |
+|---|---|
+| **opaque** shadow pair `#c5c8ce` / `#ffffff` | `rgba(…,0.04)` alphas — extrusion invisible |
+| symmetric `12px 12px 24px` + `-12/-12/24` | asymmetric `-6/-6/14` + `8/8/20` |
+| pressed `inset 6 6 12` | `inset 3 3 8` |
+| hover **elevates** (`16/16/32` + `translateY(-2px)`), press only on active/focus | hover painted an accent ring |
+| canvas `#e6e8ed` / dark `#2d3748`, accent `#667eea` | my own `#262b33` + Graphite blue |
+| radii 8/12/20, spacing to 64px | 18/12/10 |
+| 250ms transitions + reduced-motion guard, focus = pressed + ring, 44px targets | 150ms, ring only |
+| "subtle gradients" | flat canvas |
+
+Now `.scheme-neo` (light) + `.dark.scheme-neo` (dark) carry the spec's shadow/palette
+tokens verbatim; the app's `landing-grid` layer is repurposed as the **directional light
+simulation** (radial highlight top-left, fall-off bottom-right) instead of being hidden,
+because the shadows imply that light source. `@media (prefers-reduced-motion:
+no-preference)` guards the lift/transition; `:active` kills our `active:scale` so the
+inset shadow is the only press cue. Verified in-browser, both modes: card shadow computes
+to exactly `rgb(197,200,206) 12px 12px 24px, rgb(255,255,255) -12px -12px 24px` (light)
+and `rgb(26,32,44) … , rgb(61,74,92) …` (dark), fields `inset 6 6 12`, radius 20px,
+`border-color: transparent`, and the three state rules are present in the CSSOM.
+
+**The spec's own accessibility numbers are wrong and I did not copy them.** Measured on
+its `#e6e8ed` canvas: accent `#667eea` **2.99:1** (it is the *interactive* colour and
+fails AA as text/links), subtle text **3.28:1**, warning-as-text **2.97:1**, and white
+button labels on the dark tints **2.63:1** — while the spec claims "all text colors pass
+WCAG AA". Fixes, hue preserved: accent → `#4a5fc0` (4.64 on canvas, 5.69 under white),
+subtle → `#5a6779` (4.69), warning → `#8f5a10` (4.71), danger → `#b22222` (5.45),
+success → `#276749` (5.49), and dark-mode filled buttons switch to **ink labels**
+(`#1a202c` on `#7f9cf5` = 6.2:1). Final live audit: **zero AA small-text failures** in
+either mode, across text.main/muted/subtle/accent/success/warning/danger plus every
+filled-button label.
+
+**Two deviations kept, on purpose.** Type stays IBM Plex (the identity patch owns the
+font; Inter 300/400/500 is the spec's, and swapping it is a separate decision) at the
+spec's light weights. And the spec's 12/24 extrusion is scaled to 6/12 on 32px controls
+— at full size a row of ghost actions is a blur blob. Spec's 44px touch minimum also
+loses to our 32px row density; unresolved, flagged rather than silently ignored.
+
+Catalog entry renamed **H · Neuphorism** with its texture note rewritten to describe what
+it actually does, and it now says where to judge it: Upstreams. `re-e-ui/.preview/
+neo-{light,dark,catalog}.png` hold the renders (no vision path in this session, so those
+are for your eyes).
+
+## 2026-09-19 — user-reported blending text under neo: three real bugs, one measurement error of mine
+
+Reported: primary button label blends into the button, plus "many things like that". All
+reproducible and all fixed.
+
+1. **Filled buttons lost their fill.** My blanket `.scheme-neo button[data-variant] {
+   background-color: var(--color-bg) }` hit *every* variant, and unlayered CSS outranks
+   Tailwind utilities, so `bg-primary` was overridden while `text-white` stayed →
+   measured **1.23:1** light, **1.36:1** dark (the dark case was worse still: my
+   ink-label rule then put `#1a202c` on the canvas). Fixed by splitting the rule —
+   secondary/outline/ghost take the canvas (depth is their affordance), primary/danger/
+   success keep their accent fill.
+2. **Tinted chips break AA at 10px.** `bg-primary/10` etc. shift the background toward
+   the ink: version pill **4.09** light / **3.82** dark, status badges up to **4.21**.
+   Under neo chips/badges are now **pressed pills with coloured ink on the canvas**
+   (`[data-badge]` + `[aria-pressed="true"]`), which also matches the style's own logic.
+   `Badge` gained `data-badge`, mirroring `data-variant` as a styling contract.
+3. **Header's version chip was a hand-rolled span with a hardcoded `v0.1.0`.** Now the
+   real `Badge` component reading `GET /api/gateway`'s version — one less duplicate of
+   Badge's CSS, and the header can no longer lie about the running build.
+4. **Mode applied from an effect.** `.dark` was toggled in `useTheme`'s effect, so first
+   paint could resolve one palette's text on another's canvas; `initTheme()` now runs
+   pre-paint beside `initLabScheme()` in `App.tsx`, and `toggleTheme` reads the DOM class
+   as truth instead of duplicating state per component instance.
+
+**Where I was wrong in the earlier pass:** my first audit compared **tokens** to tokens
+(so `--color-primary` vs `--color-text` always passed) instead of measuring the
+*rendered* background of each text node. It also used a regex color parser that silently
+discarded Tailwind v4's `oklab()`/`color(srgb)` values, and one run wrote `localStorage`
+on the dev origin while navigating the prod origin, producing ~30 fake failures like
+"1.17:1 white on light canvas". Rebuilt with canvas-composited resolution (ancestor chain,
+alpha flattened) and per-route class coherence assertions.
+
+**Final audit, 10 routes × {dev :5173, served :8010} × {light, dark}:** 625 text nodes
+per run, **0 AA failures**, worst measured ratio **4.64** (light) / **4.55** (dark), one
+canvas per mode (`#e6e8ed` / `#2d3748`), html class coherent on every route. Still open
+by choice: neo's 44px touch target vs our 32px row density.
+
+**Catalogue preview followed only one mode.** `.dark.scheme-neo` needs both classes on
+the *same* element, but in the catalogue `.scheme-neo` sits on the panel's `.mini-app`
+while `.dark` is on `<html>` — so entry H could only ever render light neo, and dark
+neo was reachable solely through “Try in the live app”. Fixed by adding the descendant
+form (`.dark .scheme-neo`), so the preview tracks the header's mode like every other
+genre.
+
+## 2026-09-19 — Raised state rebuilt: canvas-locked colour, asymmetric geometry, four variants
+
+User report: raised elements looked like separate objects lying on the background, too
+strong in dark mode, and the white highlight read as a blurry glow rather than lit
+material. Measured cause: the spec's dark highlight `#3d4a5c` is **ΔL +7.1 and loses
+saturation** (23.1 → 20.3) — a different material on the `#2d3748` canvas; and its
+symmetric `12px/24px` pair has a **36px reach**, which is what reads as a drop shadow
+under a card. Light mode's `#ffffff` highlight is ΔL +8.4 at saturation 0 (pure white,
+no hue) — same failure.
+
+Fix, two principles, neither of them "more blur/opacity":
+1. **The raised pair is the canvas, lit and occluded.** Hue and saturation locked, only
+   lightness moves: light `#f5f6f8`/`#d1d5de` (ΔL +5.1/−7.1), dark `#374358`/`#1f2632`.
+   Measured saturation drift across all variants: **−0.3 … +1.9** (spec: −2.8; pure
+   white: −100).
+2. **Occlusion and highlight are not symmetric.** A diffused source gives a tight,
+   attached highlight and a wider, softer occlusion, so the default (D) pairs `9px/19px`
+   shadow with `7px/13px` highlight. Symmetric wide pairs are precisely what make a card
+   look detached.
+
+Pressed/inset states left exactly as the spec, per instruction (`--neu-shadow-dark/light`
+untouched, only the raised composition changed).
+
+**Four selectable variants instead of one guess** — A spec distance (12/24, colour
+corrected: isolates tint from travel), B tight symmetric (7/13), C carved emboss (4/8
+with a gentler ΔL step +4.1/−5.1), D asymmetric (9/19 + 7/13, **default**). Reach:
+A 36px · B 20px · C 12px · D 28px/20px. The catalogue panel now carries four
+side-by-side tiles, sample and backdrop on the identical canvas so only the shadow pair
+varies, each with a **Wear** control (`html[data-neu]`, persisted) so a geometry can be
+judged on real tables. Composition tokens are declared on `.scheme-neo` **and**
+`[data-neu]`, so each tile resolves its own geometry rather than inheriting the panel's.
+
+Two bugs caught by measuring layers individually: the tiles were first inserted *after*
+the panel's closing div, so they hung off `html.scheme-neo` and variant C measured
+**ΔL +63.5** (near-white) in dark mode; and the dark override had only the descendant
+form (`.dark .scheme-neo [data-neu]`), missing the same-element case when the skin sits
+on `<html>`. Both selector shapes now exist; dark C verifies at −5.1/+4.1.
+
+`re-e-ui/.preview/raised-variants-{light,dark}.png` show all four in each mode.
