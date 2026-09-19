@@ -19,17 +19,50 @@ function humanize(text: string): string {
   return text;
 }
 
+/** §7 taxonomy + management-plane codes: machine tokens, never user copy. */
+const CODES = new Set([
+  "auth_error",
+  "rate_limited",
+  "upstream_error",
+  "network_error",
+  "all_unavailable",
+  "not_found",
+  "bad_request",
+  "conflict",
+  "internal_error",
+]);
+
+/** Fallback wording for a code that arrives without a detail. */
+const CODE_COPY: Record<string, string> = {
+  auth_error: "This client key is not valid",
+  rate_limited: "Upstream is rate limiting — retry shortly",
+  upstream_error: "Upstream returned an error",
+  network_error: "Upstream is unreachable",
+  all_unavailable: "Every route is unavailable — breakers open",
+  not_found: "That record no longer exists — refresh",
+  bad_request: "The gateway rejected this request",
+  conflict: "That value is already taken",
+  internal_error: "Gateway error — see Live Console for the line",
+};
+
 /**
  * One place to turn a transport failure into the Voice & Content rule: what
- * happened, plus the backend `detail`. Probes are excluded — they answer with
- * HTTP 200 + `ok:false` and are handled as results, not errors.
+ * happened, in human terms. Round 3 returns `409 {message:"conflict", detail:
+ * 'prefix "x" is already in use'}` — when the code adds nothing to the detail,
+ * lead with the detail. Probes are excluded: they answer 200 + `ok:false` and
+ * are handled as results, not errors.
  */
 export function toastApiError(toast: ToastPush, err: unknown, fallbackMessage: string): void {
   if (err instanceof ApiRequestError) {
-    const raw = err.detail ? `${err.message} · ${err.detail}` : err.message;
-    const friendly = humanize(raw);
-    if (friendly !== raw) console.warn("[re-e-ui] backend error:", raw);
-    toast(friendly, "error");
+    const code = err.message.trim();
+    const text = err.detail
+      ? CODES.has(code)
+        ? err.detail
+        : `${code} · ${err.detail}`
+      : CODE_COPY[code] ?? code;
+    const friendly = humanize(text);
+    if (friendly !== text) console.warn("[re-e-ui] backend error:", text);
+    toast(friendly || fallbackMessage, "error");
     return;
   }
   const message = err instanceof Error ? err.message : "";

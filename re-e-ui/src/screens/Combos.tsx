@@ -385,7 +385,7 @@ function NewComboModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="dev-combo"
-        hint="Letters, digits, dot, dash, underscore — clients send it as the whole model value (bare name, no /model suffix)"
+        hint="Letters, digits, dot, dash, underscore — clients set model to this name (never name/model)"
         error={trimmed.length > 0 && !valid ? "Invalid characters in name" : undefined}
       />
     </Modal>
