@@ -192,10 +192,10 @@ const catalog = [
   {
     id: "neo",
     schemeClass: "scheme-neo",
-    name: "H · Soft Neumorphic",
-    tagline: "one canvas · paired light/shadow · borderless extrusion",
+    name: "H · Neuphorism",
+    tagline: "soft UI · extrude / elevate / press · light #e6e8ed · dark #2d3748",
     texture:
-      "No borders: extrusion is the affordance, press = inset shadow. Two deliberate departures from textbook neo for an ops surface — text keeps AA contrast and focus rings survive. Honest costs: depth cues are subtle on a 1px row separator, and every control looks equally pressable, so scan speed on dense tables drops.",
+      "Per the Neuphorism system: opaque shadow pairs (dark bottom-right, light top-left) carve the surface — no borders, no fills. Elements extrude at rest, elevate and lift on hover, press inward on active/focus; fields are always pressed. Canvas + accent (#667eea) follow the spec in both modes, with a directional light gradient where the drafting grid used to be. Two recorded departures: shadow distance scales down for 32px controls (the spec's 12/24 blurs small buttons into mush) and type stays IBM Plex at the spec's light weights. Judge it on Upstreams — the row rules and ghost actions are where soft UI earns or loses you.",
   },
 ];
 

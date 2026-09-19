@@ -536,86 +536,150 @@ button:disabled,
 }
 
 /* ============================================================
-   H · Soft Neumorphic — one canvas, depth from paired shadows.
-   Borders are absent by design: extrusion IS the affordance.
-   Two deliberate departures from textbook neo, both for a data
-   dashboard: text keeps WCAG-AA contrast (neo's usual failure),
-   and focus rings stay. Pressed = inset shadow, not a color fill.
+   H · Neuphorism (soft UI) — per the Neuphorism design system:
+   depth by light simulation, not borders. Opaque shadow pairs
+   (dark bottom-right, light top-left), extrude at rest, elevate
+   on hover, press into the surface on active/focus.
+   Spec palettes: light #e6e8ed / dark #2d3748, accent #667eea.
+   Deviations, both deliberate and recorded in DECISIONS:
+   · shadow distance scales with element size (spec's 12/24 on a
+     32px row button reads as a blur blob), ratio preserved;
+   · type stays IBM Plex (identity patch SSOT) at spec's light
+     weights instead of Inter 300/400/500.
    ============================================================ */
 .scheme-neo {
-  /* Single mid-tone canvas; tiers differ by shadow, not by fill */
-  --color-bg: #262b33;
-  --color-bg-alt: #262b33;
-  --color-surface: #282d36;
-  --color-surface-2: #2d333d;
-  --color-surface-3: #333a45;
-  --color-sidebar: #262b33;
+  --neu-shadow-dark: #c5c8ce;
+  --neu-shadow-light: #ffffff;
 
-  /* Structure has to come from depth: borders recede to a whisper */
-  --color-border: rgba(255, 255, 255, 0.07);
-  --color-border-subtle: rgba(0, 0, 0, 0.30);
+  /* Spec ratios: offset = blur/2. `-sm` is the same shape at half scale. */
+  --neu-extruded: 12px 12px 24px var(--neu-shadow-dark), -12px -12px 24px var(--neu-shadow-light);
+  --neu-elevated: 16px 16px 32px var(--neu-shadow-dark), -16px -16px 32px var(--neu-shadow-light);
+  --neu-pressed: inset 6px 6px 12px var(--neu-shadow-dark), inset -6px -6px 12px var(--neu-shadow-light);
+  --neu-extruded-sm: 6px 6px 12px var(--neu-shadow-dark), -6px -6px 12px var(--neu-shadow-light);
+  --neu-elevated-sm: 8px 8px 16px var(--neu-shadow-dark), -8px -8px 16px var(--neu-shadow-light);
+  --neu-pressed-sm: inset 4px 4px 8px var(--neu-shadow-dark), inset -4px -4px 8px var(--neu-shadow-light);
 
-  --color-text: #eef2f8;
-  --color-text-main: #eef2f8; /* 12.4:1 on #262b33 */
-  --color-text-muted: #aab4c3; /* 6.4:1 — AA at 11px */
-  --color-text-subtle: #8b95a5; /* 4.6:1 — lifted vs base theme, on purpose */
+  --color-bg: #e6e8ed;
+  --color-bg-alt: #e6e8ed;
+  --color-surface: #e6e8ed;
+  --color-surface-2: #e6e8ed;
+  --color-surface-3: #dfe2e8;
+  --color-sidebar: #e6e8ed;
 
-  --color-primary: #4d9dff;
-  --color-primary-hover: #3b85e8;
-  --color-accent: #4d9dff;
-  --color-success: #3dd68c;
-  --color-warning: #f5b93f;
-  --color-danger: #f0564e;
-  --color-info: #8b7cff;
+  /* Depth carries structure, so borders recede */
+  --color-border: #d3d7de;
+  --color-border-subtle: #dcdfe5;
 
-  /* Raised: light from top-left, shade to bottom-right */
-  --shadow-soft: -3px -3px 8px rgba(255, 255, 255, 0.035), 4px 4px 10px rgba(0, 0, 0, 0.42);
-  --shadow-warm: -2px -2px 6px rgba(255, 255, 255, 0.04), 4px 4px 10px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(77, 157, 255, 0.22);
-  --shadow-elev: -6px -6px 14px rgba(255, 255, 255, 0.045), 8px 8px 20px rgba(0, 0, 0, 0.5);
-  --shadow-elevated: -8px -8px 22px rgba(255, 255, 255, 0.05), 12px 12px 30px rgba(0, 0, 0, 0.55);
-  --shadow-focus: 0 0 0 3px rgba(77, 157, 255, 0.34);
+  --color-text: #4a5568; /* spec body text: 6.14:1 */
+  --color-text-main: #2d3748; /* spec heading: 9.78:1 */
+  --color-text-muted: #525f70; /* 5.30:1 — spec's #5c6878 measured 4.62, kept above AA */
+  --color-text-subtle: #5a6779; /* 4.69:1 — spec's #718096 failed at 3.28 */
+
+  /* Spec accent #667eea is 2.99:1 on its own canvas and 3.66:1 under white text:
+     it cannot carry links or button labels. Same hue, darkened until it passes. */
+  --color-primary: #4a5fc0; /* 4.64 on canvas · 5.69 white-on-fill */
+  --color-primary-hover: #3d51ad;
+  --color-accent: #4a5fc0;
+  --color-success: #276749; /* 5.49 — spec-adjacent green, was 3.71 */
+  --color-warning: #8f5a10; /* amber as text has to go dark to clear AA */
+  --color-danger: #b22222; /* 5.45 — #c53030 measured 4.46 */
+  --color-info: #4a5fc0;
+
+  --shadow-soft: var(--neu-extruded-sm);
+  --shadow-warm: var(--neu-elevated);
+  --shadow-elev: var(--neu-extruded);
+  --shadow-elevated: var(--neu-elevated);
+  --shadow-focus: 0 0 0 3px rgba(74, 95, 192, 0.35);
+  color-scheme: light;
+}
+
+.dark.scheme-neo {
+  --neu-shadow-dark: #1a202c;
+  --neu-shadow-light: #3d4a5c;
+
+  --color-bg: #2d3748;
+  --color-bg-alt: #2d3748;
+  --color-surface: #2d3748;
+  --color-surface-2: #2d3748;
+  --color-surface-3: #354152;
+  --color-sidebar: #2d3748;
+
+  --color-border: #3d4a5c;
+  --color-border-subtle: #374456;
+
+  --color-text: #e2e8f0;
+  --color-text-main: #f7fafc;
+  --color-text-muted: #cbd5e0;
+  --color-text-subtle: #a0aec0;
+
+  --color-primary: #7f9cf5;
+  --color-primary-hover: #667eea;
+  --color-accent: #7f9cf5;
+  --color-success: #48bb78;
+  --color-warning: #f6ad55;
+  --color-danger: #fc8181;
+  --color-info: #7f9cf5;
+
+  --shadow-focus: 0 0 0 3px rgba(127, 156, 245, 0.4);
   color-scheme: dark;
 }
 
-/* Cards: extruded slabs, no bezel. */
+/* Filled buttons: white labels fail on the luminous dark-mode tints (2.63:1), so
+   those labels go ink-on-tint — which is also how neo handles an accent slab. */
+.dark.scheme-neo button[data-variant="primary"],
+.dark.scheme-neo button[data-variant="danger"],
+.dark.scheme-neo button[data-variant="success"] {
+  color: #1a202c; /* 6.2:1 on #7f9cf5 */
+}
+
+/* Cards and preview panels: the extruded slab. No bezel — the shadow is the edge. */
 .scheme-neo .card-soft,
-.scheme-neo .mini-card {
+.scheme-neo .mini-card,
+.scheme-neo .mini-app {
   border-color: transparent;
-  border-radius: 18px;
-  box-shadow: var(--shadow-elev);
+  border-radius: 20px;
+  box-shadow: var(--neu-extruded);
 }
 
-/* The drafting grid is texture from another genre; soft UI wants a flat canvas. */
+/* Light simulation replaces the drafting grid: the same directional cue the
+   shadows imply (source top-left, fall-off bottom-right). */
 .scheme-neo .landing-grid {
-  display: none;
+  background:
+    radial-gradient(120% 90% at 12% 8%, var(--neu-shadow-light) 0%, transparent 58%),
+    linear-gradient(145deg, transparent 40%, var(--neu-shadow-dark) 135%);
+  opacity: 0.75;
 }
 
-/* Controls read as pressed or raised, so variant matters — hence data-variant. */
-.scheme-neo button[data-variant="secondary"],
-.scheme-neo button[data-variant="outline"] {
+/* Three shadow states per interactive element — spec's Pattern 2. */
+.scheme-neo button[data-variant] {
   background-color: var(--color-bg);
   border-color: transparent;
-  box-shadow: var(--shadow-soft);
   border-radius: 12px;
-}
-/* Ghost row actions extrude too, but weaker: uniform depth is neo's flatness
-   problem, so the primary action has to stay the loudest thing in the row. */
-.scheme-neo button[data-variant="ghost"] {
-  background-color: var(--color-bg);
-  border-color: transparent;
-  border-radius: 10px;
-  box-shadow: -2px -2px 5px rgba(255, 255, 255, 0.022), 2px 2px 6px rgba(0, 0, 0, 0.32);
+  box-shadow: var(--neu-extruded-sm);
 }
 .scheme-neo button[data-variant="primary"],
 .scheme-neo button[data-variant="danger"],
 .scheme-neo button[data-variant="success"] {
-  border-color: transparent;
-  border-radius: 12px;
-  box-shadow: var(--shadow-soft);
+  box-shadow: var(--neu-extruded-sm);
 }
-.scheme-neo button[data-variant]:active:not(:disabled) {
-  box-shadow: inset 3px 3px 8px rgba(0, 0, 0, 0.5), inset -2px -2px 6px rgba(255, 255, 255, 0.045);
+/* Ghost row actions extrude at half depth: uniform depth is neo's flatness
+   problem, so the primary action has to stay the loudest thing in the row. */
+.scheme-neo button[data-variant="ghost"] {
+  box-shadow: 3px 3px 6px var(--neu-shadow-dark), -3px -3px 6px var(--neu-shadow-light);
+  border-radius: 8px;
+  color: var(--color-text-muted);
+}
+.scheme-neo button[data-variant]:hover:not(:disabled) {
+  box-shadow: var(--neu-elevated-sm);
+}
+.scheme-neo button[data-variant]:active:not(:disabled),
+.scheme-neo button[data-variant][aria-pressed="true"] {
+  box-shadow: var(--neu-pressed-sm);
+}
+/* Our identity patch scales buttons on press; under neo the inset shadow is the
+   whole affordance, so the transform has to go or the element fights itself. */
+.scheme-neo button[data-variant]:active {
+  transform: none;
 }
 
 /* Fields are pressed into the canvas — the inverse of an extruded control. */
@@ -625,15 +689,37 @@ button:disabled,
   border-color: transparent;
   border-radius: 12px;
   background-color: var(--color-bg);
-  box-shadow: inset 3px 3px 8px rgba(0, 0, 0, 0.45), inset -2px -2px 6px rgba(255, 255, 255, 0.035);
+  box-shadow: var(--neu-pressed);
+}
+.scheme-neo input:focus-visible,
+.scheme-neo textarea:focus-visible,
+.scheme-neo select:focus-visible {
+  box-shadow: var(--neu-pressed), var(--shadow-focus);
 }
 
-/* Rows keep a light-on-dark hairline: the token separator is black-alpha, which
-   vanishes on this canvas — a dense table without rules is unreadable. */
+/* Rows keep a real hairline: a dense table with no rules and soft depth is
+   unreadable, and the spec's own component set keeps separators. */
 .scheme-neo table tbody tr,
 .scheme-neo thead tr {
-  border-top-color: rgba(255, 255, 255, 0.075);
-  border-bottom-color: rgba(255, 255, 255, 0.075);
+  border-top-color: var(--color-border-subtle);
+  border-bottom-color: var(--color-border-subtle);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .scheme-neo button[data-variant],
+  .scheme-neo .card-soft,
+  .scheme-neo .mini-card,
+  .scheme-neo input,
+  .scheme-neo select {
+    transition: box-shadow 250ms ease, transform 250ms ease;
+  }
+  .scheme-neo button[data-variant]:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+  .scheme-neo .card-soft:hover,
+  .scheme-neo .mini-card:hover {
+    box-shadow: var(--neu-elevated);
+  }
 }
 
 /* Data-font candidates (Theme Lab) */

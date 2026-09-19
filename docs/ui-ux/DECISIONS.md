@@ -341,3 +341,53 @@ the one gap that would need a real refactor before neo could take over as the id
 chrome (sidebar, modals, settings), the weakest for the two screens that matter most —
 Upstreams and Usage Details. Recommendation stands until someone wears it for a week on
 real traffic: `cd re-e-ui && npm run dev` → `/theme` → Try in the live app.
+
+## 2026-09-19 — Neuphorism entry rebuilt against the real spec (supersedes the guess above)
+
+First pass was my own idea of neumorphism and the user rightly said it wasn't it. Read
+the actual **Neuphorism SKILL.md** (mcpmarket listing; upstream repo `gahoccode/prds` is
+404) and rebuilt `.scheme-neo` to its letter. What my guess got wrong, all of it
+load-bearing for the look:
+
+| spec | my first pass |
+|---|---|
+| **opaque** shadow pair `#c5c8ce` / `#ffffff` | `rgba(…,0.04)` alphas — extrusion invisible |
+| symmetric `12px 12px 24px` + `-12/-12/24` | asymmetric `-6/-6/14` + `8/8/20` |
+| pressed `inset 6 6 12` | `inset 3 3 8` |
+| hover **elevates** (`16/16/32` + `translateY(-2px)`), press only on active/focus | hover painted an accent ring |
+| canvas `#e6e8ed` / dark `#2d3748`, accent `#667eea` | my own `#262b33` + Graphite blue |
+| radii 8/12/20, spacing to 64px | 18/12/10 |
+| 250ms transitions + reduced-motion guard, focus = pressed + ring, 44px targets | 150ms, ring only |
+| "subtle gradients" | flat canvas |
+
+Now `.scheme-neo` (light) + `.dark.scheme-neo` (dark) carry the spec's shadow/palette
+tokens verbatim; the app's `landing-grid` layer is repurposed as the **directional light
+simulation** (radial highlight top-left, fall-off bottom-right) instead of being hidden,
+because the shadows imply that light source. `@media (prefers-reduced-motion:
+no-preference)` guards the lift/transition; `:active` kills our `active:scale` so the
+inset shadow is the only press cue. Verified in-browser, both modes: card shadow computes
+to exactly `rgb(197,200,206) 12px 12px 24px, rgb(255,255,255) -12px -12px 24px` (light)
+and `rgb(26,32,44) … , rgb(61,74,92) …` (dark), fields `inset 6 6 12`, radius 20px,
+`border-color: transparent`, and the three state rules are present in the CSSOM.
+
+**The spec's own accessibility numbers are wrong and I did not copy them.** Measured on
+its `#e6e8ed` canvas: accent `#667eea` **2.99:1** (it is the *interactive* colour and
+fails AA as text/links), subtle text **3.28:1**, warning-as-text **2.97:1**, and white
+button labels on the dark tints **2.63:1** — while the spec claims "all text colors pass
+WCAG AA". Fixes, hue preserved: accent → `#4a5fc0` (4.64 on canvas, 5.69 under white),
+subtle → `#5a6779` (4.69), warning → `#8f5a10` (4.71), danger → `#b22222` (5.45),
+success → `#276749` (5.49), and dark-mode filled buttons switch to **ink labels**
+(`#1a202c` on `#7f9cf5` = 6.2:1). Final live audit: **zero AA small-text failures** in
+either mode, across text.main/muted/subtle/accent/success/warning/danger plus every
+filled-button label.
+
+**Two deviations kept, on purpose.** Type stays IBM Plex (the identity patch owns the
+font; Inter 300/400/500 is the spec's, and swapping it is a separate decision) at the
+spec's light weights. And the spec's 12/24 extrusion is scaled to 6/12 on 32px controls
+— at full size a row of ghost actions is a blur blob. Spec's 44px touch minimum also
+loses to our 32px row density; unresolved, flagged rather than silently ignored.
+
+Catalog entry renamed **H · Neuphorism** with its texture note rewritten to describe what
+it actually does, and it now says where to judge it: Upstreams. `re-e-ui/.preview/
+neo-{light,dark,catalog}.png` hold the renders (no vision path in this session, so those
+are for your eyes).
