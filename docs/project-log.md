@@ -200,6 +200,7 @@ axolotl/
   EADDRINUSE. Rule: ONE supervisor owns the gateway port; before starting ree-core,
   confirm no foreign instance holds the port, and the owner must run post-round-2
   code (else UI round-2 calls 404).
+| 2026-09-19 | ui-ux visual round merged (`7 commits`: neo skin rebuild per Neuphorism spec, Soft Neumorphic catalog entry H, raised-state redesign 4 variants canvas-locked, error toasts lead with human detail, theme catalog follows app mode). Build verified; gateway restarted; Overview renders live data |
 - 2026-09-17: Routed overhead ≈16ms flat (p50≈p90≈p99) through upstream's Next.js prod
   build — contributors: Next route layer + body re-parse + uncached reads. RE-E target
   ≤5ms requires bypassing Next + caching (as planned in backend-architecture).
