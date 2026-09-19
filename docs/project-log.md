@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** P2 backend COMPLETE incl. round-3 fixes (51/51 tests; all 5 R3 defects fixed + verified live: REQ line fires, prefix 409, disabled 503, usageEventId correlation, gateway lockfile). Next: P3 stability, P4 speed, P5 packaging.
+- **Phase:** P2 COMPLETE backend + UI (52/52 tests; model list per upstream, batch key import, round-3 fixes all verified live). Remaining: P3 stability, P4 speed, P5 packaging.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -139,6 +139,20 @@ axolotl/
   selector, dev proxy). **Gate loop verified in browser: UI create node → Test Connection
   200·6ms·3 models (real probe) → save → chat request flows through the UI-created node →
   Overview renders live usage (59 reqs, 99.1K tokens, TTFT p50 16ms) + 2 healthy nodes.**
+- 2026-09-19 (model list + batch keys): probe stores full model id list (not just
+  count) in `node.data.models`; `GET /api/nodes/{id}/models` returns it; `/v1/models`
+  expands real model ids per node prefix (not `prefix/*` wildcards). UI shows model
+  chips in the connections drawer. Batch key import: `POST
+  /api/nodes/{id}/connections/batch` — takes `keys[]`, creates N connections with
+  staggered priority, filters empty strings, returns masked views. UI textarea: one
+  key per line in the connections drawer, auto-detects count, button switches between
+  "Add Key" / "Add All Keys". Stub PORT made configurable via `STUB_PORT` env.
+  52/52 tests. Verified live: all 4 stages green (probe → node view → models api →
+  /v1/models expansion).
+- 2026-09-19 (ops): zombie respawn loop — the omp broker daemon auto-restarts
+  supervised processes even after `taskkill /F`. Fix: kill the BROKER first, then the
+  children, then verify the port stays free for 3+ seconds before starting fresh.
+  Never trust a port-probe ready check when a zombie might answer it.
 - 2026-09-18 (P2 round-2 backend): all 5 accepted contract items implemented —
   `PUT /api/nodes/{id}` (update/enable + key rotation), connections `PUT` (priority/
   status) + `DELETE`, `PUT /api/keys/{id}` (enable/disable), `usageEventId` in details

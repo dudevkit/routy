@@ -1,11 +1,19 @@
 // P0.4 stub upstream — deterministic openai-compatible SSE endpoint for baseline bench.
 import http from "http";
 
-const PORT = 20990;
+const PORT = parseInt(process.env.STUB_PORT || "20990", 10);
 const TOKENS = Array.from({ length: 40 }, (_, i) => ` token${i}`);
 let connections = 0;
 
 http.createServer((req, res) => {
+  if (req.method === "GET" && req.url.includes("/models")) {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ object: "list", data: [
+      { id: "stub-large" }, { id: "stub-fast" }, { id: "stub-mini" },
+      { id: "stub-vision" }, { id: "stub-reasoning" }, { id: "stub-code" },
+    ] }));
+    return;
+  }
   if (req.method !== "POST" || !req.url.includes("/chat/completions")) {
     res.writeHead(404).end();
     return;
