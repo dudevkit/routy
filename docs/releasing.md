@@ -100,11 +100,8 @@ is why it is a visible, reversible setting rather than something that happens qu
 
 ## Verifying the pipeline without publishing
 
-```bash
-node rigs/update-verify.mjs
-```
-
-Lays out a real installed copy, builds a real signed release, serves it over HTTP,
-applies it through the API, and checks the launcher brings the new version up — 13
-checks, no GitHub and no network beyond loopback. It uses your real signing key, so
-it also proves the embedded public key still matches.
+The development tree carries an update rig that lays out a real installed copy,
+builds a real signed release, serves it over HTTP, applies it through the API, and
+checks the launcher brings the new version up — 13 checks, no GitHub and no network
+beyond loopback. It uses your real signing key, so it also proves the embedded public
+key still matches. Run it before cutting a release.

@@ -5,7 +5,7 @@
 > `../9router/` so they can be verified or jumped to.
 >
 > **Snapshot date:** 2026-09-17, upstream `decolua/9router` @ v0.5.75 (fresh clone, `main`).
-> Companion living document: [project-log.md](./project-log.md) — always read its
+> Companion living document: the engineering journal kept in the development tree — read its
 > "Current state" section after this one.
 
 ---
@@ -22,7 +22,7 @@ dashboard UI included — runs inside a single **Next.js 16** process.
 **Why it matters to us:** the concept and the translation/fallback core are genuinely
 good and battle-tested; the packaging (Next.js monolith, 4-driver SQLite fallback,
 uncached reads) is what makes it heavy and fragile. Our project goal is a remake into a
-**stable, lightweight, faster** gateway (see project-log for decisions made so far).
+**stable, lightweight, faster** gateway.
 
 ## 2. The numbers
 

@@ -1,28 +1,31 @@
-# Upstream reference clone — read-only, not part of routy history
+# ── Not ours to publish ─────────────────────────────────────────────────────
+# A read-only reference clone of the upstream project routy was re-engineered from.
 /9router/
 
-# Session-local artifacts
-/rigs/orca-guide.json
+# ── Development only ────────────────────────────────────────────────────────
+# Verification rigs and the engineering journal. Users download the release
+# artifact, which contains the app; neither of these belongs in the published tree.
+/rigs/
+/docs/project-log.md
+
+# ── Local state ─────────────────────────────────────────────────────────────
 node_modules/
 *.log
 .DS_Store
-/rigs/bench-data/
-/rigs/golden-data/
 tests/golden/.tmp-data/
-/tests/golden/.tmp-data/
-/rigs/ree-home/
-/rigs/ree-home-r3/
-/rigs/chaos-home/
-# local gateway state dirs (ROUTY_HOME) used by the verification rigs
-/rigs/*-home/
-/rigs/dbg-home/
-routy-core/node_modules/
-# design-phase screenshots — local reference only, not published
+
+# design-phase screenshots — local reference only
 routy-ui/.preview/
 
-# release signing material — never commit a private key
+# ── Never commit ────────────────────────────────────────────────────────────
+# Release signing material. The public half is committed (lib/release-pubkey.mjs);
+# the private half lives offline, and anyone holding it can sign a release every
+# install would accept.
 *.key
 release-signing*
 
-# build output (npm run build in routy-core, npm run build in routy-ui)
+# ── Build output ────────────────────────────────────────────────────────────
 /routy-core/dist/
+/routy-ui/dist/
+# release artifacts (tarball, checksums, signature)
+/dist/

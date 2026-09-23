@@ -4,7 +4,6 @@
 **/dist
 **/.preview
 9router/
-rigs/
 docs/
 tests/
 *.log

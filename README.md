@@ -97,23 +97,21 @@ routy-core/     the gateway — ESM, plain node:http, zero framework
   http/         management API + Prometheus metrics
 routy-ui/       the dashboard — Vite + React + TypeScript + Tailwind
 docs/           architecture, configuration, database design, cli-tools, releasing, roadmap
-rigs/           verification rigs: chaos upstream, benchmarks, E2E and load tests
 tests/golden/   byte-exact translator fixtures captured from real upstreams
 ```
 
 ## Development
 
 ```bash
-cd routy-core && npm test        # 140 tests
+cd routy-core && npm test        # 208 tests
 npm run smoke                    # boots the real bundle and drives it, 13 checks
 npm run build                    # single-file bundle
 ```
 
-The `rigs/` scripts are how the stability and performance claims were measured —
-`p3-verify.mjs` (kill the upstream mid-stream, 20-way concurrency), `p4-verify.mjs`
-(overhead), `chat-e2e.mjs` (normal / tool-calling / code generation round trips).
-They run against a scratch state directory and a stub upstream, and never touch a
-real provider.
+The stability and performance claims in this README were measured with scripts that
+live in the development tree rather than here — a chaos upstream, an overhead
+benchmark, and E2E rigs for chat, tool-calling and the updater. They run against a
+scratch state directory and a stub upstream, and never touch a real provider.
 
 ## Status
 

@@ -1,14 +1,14 @@
 # UI/UX Brainstorm Brief (seed for the ui-ux worktree)
 
 > You are in the `ui-ux` worktree of the routy project. This file is your launching pad.
-> Read order: `../docs/project-log.md` (state) → this file → `../docs/backend-architecture.md`
+> Read order: this file → `../docs/backend-architecture.md`
 > §5 (the API seam) → upstream dashboard inventory (§3 here).
 
 ## What routy is (30 seconds)
 
 Re-engineering of 9Router (local AI gateway) into a stable, lightweight backend + a
 separate UI. The backend (`routy-core`) is planned; **the UI/UX half is what this worktree
-is for.** Project log: `../docs/project-log.md`. Never edit backend docs here except
+is for.** Never edit backend docs here except
 through the merge discipline below.
 
 ## The decision space (from the project log)
@@ -40,7 +40,7 @@ Management API = `docs/backend-architecture.md` §5. Design freedom exists in:
 | You own (ui-ux worktree) | Main worktree owns |
 |---|---|
 | `docs/ui-ux/**` — everything | `docs/roadmap.md`, `backend-architecture.md`, `db-design.md`, `provider-catalog.md`, `9router-reference.md` |
-| UI decisions → `docs/ui-ux/DECISIONS.md` (append-only, dated) | `docs/project-log.md` (the SSOT) |
+| UI decisions → `docs/ui-ux/DECISIONS.md` (append-only, dated) | |
 | API wishes → `docs/ui-ux/contract-requests.md` (never edit backend docs directly) | folding accepted requests into backend docs at merge |
 
 Merge rhythm: commit to your branch freely; when decisions harden, they get merged to

@@ -2,7 +2,7 @@
 
 > **Status:** Active plan. Companion docs: [backend-architecture.md](./backend-architecture.md),
 > [db-design.md](./db-design.md), [provider-catalog.md](./provider-catalog.md),
-> [9router-reference.md](./9router-reference.md). Progress tracking: [project-log.md](./project-log.md).
+> [9router-reference.md](./9router-reference.md).
 >
 > **Working assumptions (veto anytime):** runtime = Node 22+ (builtin `node:sqlite`,
 > builtin undici fetch). "Faster" = the measurable targets in §Goals. Estimates are in
@@ -51,7 +51,7 @@ Purpose: no refactor without a regression net; no "faster" claim without a basel
 | 0.2 | Golden request-translation fixtures | Same for request side: same client body → upstream-bound bytes |
 | 0.3 | Vitest project `tests/golden/` | Fixtures as input/expected pairs; tests import routy's translator (once it exists) and upstream's (now, to validate fixtures) |
 | 0.4 | Baseline bench script | Script: N streaming requests through upstream 9Router → compatible node; record TTFT p50/p99, tokens/s, RSS, proxy-added latency (direct vs routed) |
-| 0.5 | Record baseline numbers | Into project-log Knowledge Gained |
+| 0.5 | Record baseline numbers | Into the engineering journal |
 
 **Gate:** `npm test` green on fixtures validated against upstream; baseline table exists.
 
@@ -136,5 +136,5 @@ proxy-pool edge deployers · media module (TTS/STT/image/embeddings) · cloud sy
 ## Working agreements
 
 1. Upstream `9router/` stays frozen — reference only, never edited.
-2. Every phase gate produces evidence (test output, bench table, screenshot of working flow) recorded in project-log before advancing.
+2. Every phase gate produces evidence (test output, bench table, screenshot of working flow) recorded in the engineering journal before advancing.
 3. New scope = new log decision entry first, code second.
