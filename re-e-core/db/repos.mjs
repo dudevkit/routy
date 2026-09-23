@@ -168,6 +168,12 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
       connections.invalidateCache();
       return connections.get(id);
     },
+    /** Drop every stored key-probe verdict (see nodeModels.clearTestResults). */
+    clearTestResults() {
+      const changed = db.prepare(`UPDATE connections SET last_test_at=NULL, last_test_ok=NULL, last_test_ttft_ms=NULL, last_error=NULL WHERE last_test_at IS NOT NULL`).run().changes;
+      connections.invalidateCache();
+      return changed;
+    },
     delete(id) {
       const info = db.prepare(`DELETE FROM connections WHERE id = ?`).run(id);
       connections.invalidateCache();
@@ -240,6 +246,16 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
         .run(new Date().toISOString(), ok ? 1 : 0, ttftMs, error, new Date().toISOString(), id);
       nodeModels.invalidateCache();
       return nodeModels.get(id);
+    },
+    /**
+     * Drop every stored probe verdict. Used when probe semantics change, so a
+     * result the current code could never produce stops being displayed as current.
+     * Returns how many rows were cleared.
+     */
+    clearTestResults() {
+      const changed = db.prepare(`UPDATE node_models SET last_test_at=NULL, last_test_ok=NULL, last_test_ttft_ms=NULL, last_test_error=NULL WHERE last_test_at IS NOT NULL`).run().changes;
+      nodeModels.invalidateCache();
+      return changed;
     },
     delete(id) {
       const info = db.prepare(`DELETE FROM node_models WHERE id = ?`).run(id);

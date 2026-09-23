@@ -15,6 +15,7 @@ import { createChatHandler } from "./core/handlers/chat.mjs";
 import { closePools } from "./core/executors/pool.mjs";
 import { seedBudget } from "./core/budget.mjs";
 import { seedTtft } from "./core/latency.mjs";
+import { PROBE_VERSION } from "./core/probe.mjs";
 import { buildApiRoutes, mgmtAuthorized } from "./http/api.mjs";
 import { createMetricsRoute } from "./http/metrics.mjs";
 
@@ -55,6 +56,24 @@ if (persistedLogLevel && ["debug", "info", "warn", "error"].includes(persistedLo
 }
 
 const chatHandler = createChatHandler(repos, { streamIdleTimeoutMs: cfg.streamIdleTimeoutMs });
+
+// ── invalidate stored probe verdicts when probe semantics changed ───────────
+// A result produced by an older probe describes a probe that no longer exists,
+// and the UI replays it as if it were current. Clearing beats showing a failure
+// the current code can no longer produce.
+try {
+  const seenVersion = Number(repos.settings.get("probeVersion")) || 0;
+  if (seenVersion !== PROBE_VERSION) {
+    const models = repos.nodeModels.clearTestResults();
+    const keys = repos.connections.clearTestResults();
+    repos.settings.update({ probeVersion: PROBE_VERSION });
+    if (models + keys > 0) {
+      log.info("PROBE", `probe semantics changed (v${seenVersion} → v${PROBE_VERSION}) — cleared ${models} model and ${keys} key result(s)`);
+    }
+  }
+} catch (err) {
+  log.warn("PROBE", "probe-version check failed", { error: err.message });
+}
 
 // ── one-time lift of legacy node.data.models into node_models rows (P6) ─────
 try {

@@ -47,21 +47,38 @@ const NODE_STATUS: Record<string, { badge: "success" | "warning" | "error" | "de
   disabled: { badge: "default", label: "disabled" },
 };
 
+/** "2h ago" — how old a stored probe result is. */
+function fmtAgo(iso: string): string {
+  const ms = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(ms)) return "";
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+
 /** Probe outcome cell — "never" is distinct from "failed". */
 function TestCell({ at, ok, ms, error }: { at?: string | null; ok?: boolean | null; ms?: number | null; error?: string | null }) {
   if (!at) return <span className="text-xs text-text-subtle">never</span>;
+  // A stored verdict is a snapshot, not a live state — always say how old it is,
+  // so a result from before a fix can never read as a current failure.
+  const when = fmtAgo(at);
+  const title = `${error ? `${error}\n` : ""}tested ${when} (${new Date(at).toLocaleString()})`;
   if (ok) {
     return (
-      <span className="inline-flex items-center gap-1.5 font-mono text-xs text-success tabular">
+      <span className="inline-flex items-center gap-1.5 font-mono text-xs text-success tabular" title={title}>
         <CheckCircle size={13} weight="fill" className="shrink-0" />
         ok · {fmtMs(ms ?? null)}
+        <span className="text-text-subtle">{when}</span>
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs text-danger" title={error ?? undefined}>
-      <XCircle size={13} className="shrink-0" />
+    <span className="inline-flex items-center gap-1.5 text-xs text-danger" title={title}>
+      <XCircle size={13} weight="fill" className="shrink-0" />
       <span className="truncate max-w-[22ch]">{error || "failed"}</span>
+      <span className="text-text-subtle shrink-0">{when}</span>
     </span>
   );
 }

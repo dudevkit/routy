@@ -13,6 +13,17 @@
 //   probeModel  POST <baseUrl>/chat/completions  stream      — does this model serve?
 import { getDispatcher, undiciFetch } from "./executors/pool.mjs";
 
+/**
+ * Bump whenever a probe's *verdict* changes meaning — a different timeout, a new
+ * token field, a new success rule. Stored probe results are then invalidated on
+ * boot rather than shown as current: an error string the code can no longer
+ * produce ("timeout after 20000ms") is worse than no result at all, because it
+ * reads as a live failure.
+ *
+ * v2: accept any reasoning field, 45s budget, name the failing stage.
+ */
+export const PROBE_VERSION = 2;
+
 const DEFAULT_TIMEOUT_MS = 5000;
 // Probes get a generous budget: free-tier and reasoning models routinely take
 // 5-15s to their first token, and a probe that times out at 20s reports a healthy

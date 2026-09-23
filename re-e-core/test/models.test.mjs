@@ -442,3 +442,37 @@ describe("model + key endpoints", () => {
     expect(repos.nodeModels.list(node.id)).toHaveLength(0);
   });
 });
+
+describe("stale probe verdicts", () => {
+  it("clears stored results so a superseded error can't read as current", () => {
+    const node = mkNode("a");
+    const row = repos.nodeModels.create({ nodeId: node.id, model: "m1" });
+    repos.nodeModels.recordTest(row.id, { ok: false, error: "timeout after 20000ms" });
+    expect(repos.nodeModels.get(row.id).lastTestError).toBe("timeout after 20000ms");
+
+    expect(repos.nodeModels.clearTestResults()).toBe(1);
+    const after = repos.nodeModels.get(row.id);
+    expect(after.lastTestAt).toBeNull();
+    expect(after.lastTestOk).toBeNull();
+    expect(after.lastTestError).toBeNull();
+    // the model itself is untouched — only the verdict was dropped
+    expect(after.model).toBe("m1");
+  });
+
+  it("clears key probe verdicts too", () => {
+    const node = mkNode("a");
+    const conn = mkKey(node, "k-old");
+    repos.connections.recordTest(conn.id, { ok: false, error: "timeout after 20000ms" });
+    expect(repos.connections.get(conn.id).lastError).toBe("timeout after 20000ms");
+
+    expect(repos.connections.clearTestResults()).toBeGreaterThan(0);
+    expect(repos.connections.get(conn.id).lastError).toBeNull();
+    expect(repos.connections.get(conn.id).lastTestAt).toBeNull();
+  });
+
+  it("does not count a never-tested row as cleared", () => {
+    const node = mkNode("a");
+    repos.nodeModels.create({ nodeId: node.id, model: "untested" });
+    expect(repos.nodeModels.clearTestResults()).toBe(0);
+  });
+});

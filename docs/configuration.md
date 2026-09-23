@@ -175,6 +175,13 @@ Timeouts name the **stage** they died at, because "timeout" alone tells you noth
 
 Budget: `node.data.probeTimeoutMs`, default 45s.
 
+A stored result is a **snapshot, not a live state**, and the UI shows how old it is
+next to every verdict. When probe semantics change — a different timeout, a new
+token field, a new success rule — RE-E bumps an internal probe version and clears
+every stored result on the next boot, so an error string the current code can no
+longer produce is never displayed as a current failure. `never` is honest; a stale
+`timeout after 20000ms` is not.
+
 ---
 
 ## Watching upstream activity

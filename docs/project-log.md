@@ -61,6 +61,21 @@ axolotl/
 
 ## Done
 
+- 2026-09-23 (stale probe verdicts outlived the probe that produced them): the user
+  asked why `timeout after 20000ms` was still on screen after the probe fix. Because
+  a probe result is **stored**, not recomputed — those rows were written at 08:55 by
+  the old code, and the UI replayed them as current. Two fixes: (1) `PROBE_VERSION`
+  is bumped whenever a probe's *verdict* changes meaning, and boot clears every
+  stored model/key result on a version mismatch, so an error string the current code
+  can no longer produce is never shown as a live failure; (2) the UI now prints how
+  old each verdict is (`2h ago`) and puts the exact time in the tooltip — a snapshot
+  that can't say when it was taken reads as a live state. Verified live: after
+  restart, 0 models carry a stored result and no `20000ms` string remains anywhere.
+  Re-tested the two reported models against the new probe and then **bypassing RE-E
+  entirely** — `mimo-v2.6-flash:free` sent no headers in 60s, `qwen3.8-flash:free`
+  took 47.3s, so both genuinely exceed the 45s budget: the free tier really is that
+  slow, and the honest verdict is a stage-named timeout, not a bug. Tests: 125/125.
+
 - 2026-09-23 (client aborts were degrading healthy providers): the user's provider
   showed `degraded` with `lastError: client_aborted: client aborted` and **zero usage
   rows** — a client abort had been counted as a provider failure. Two paths did it:
@@ -380,7 +395,15 @@ axolotl/
 
 *(Append-only; one line per fact with pointer into reference doc where applicable.)*
 
-- 2026-09-23: A circuit breaker must distinguish *who* failed. A client abort is not
+- 2026-09-23: A stored diagnostic verdict outlives the code that produced it. When
+  probe semantics change, bump a version and invalidate — an error string the current
+  code can no longer emit ("timeout after 20000ms") reads as a live failure and sends
+  the user chasing a bug that was already fixed.
+- 2026-09-23: A snapshot must say when it was taken. Any cached ok/failed badge needs
+  an age next to it, or "failed" is indistinguishable from "failed 2 hours ago,
+  before the fix".
+- 2026-09-23: A circuit breaker must distinguish *who* failed.
+  A client abort is not
   upstream ill health; counting it lets a user's Ctrl-C open a healthy provider's
   breaker. Watch for abort errors masquerading as stalls — an aborted fetch rejects
   `response.text()` the same way a dead upstream does.
