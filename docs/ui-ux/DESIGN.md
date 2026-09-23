@@ -1,7 +1,7 @@
 ---
 version: 0.1.0
-name: "RE-E Design"
-description: "RE-E Design is a dense, dark-first, monospace-friendly design system for the RE-E gateway dashboard. This is the Light theme; the Dark theme (primary target) lives at ./DESIGN.dark.md."
+name: "routy Design"
+description: "routy Design is a dense, dark-first, monospace-friendly design system for the routy gateway dashboard. This is the Light theme; the Dark theme (primary target) lives at ./DESIGN.dark.md."
 
 colors:
   # ── Background surfaces ──
@@ -310,13 +310,13 @@ components:
 ---
 
 <!-- COMPLETENESS_LEVEL: 3 — last audited 2026-09-17 -->
-<!-- SUPERSEDED 2026-09-17: user chose upstream 9Router visual identity for v1 (see DECISIONS.md). Token SSOT for code is now upstream `9router/src/app/globals.css`, mirrored verbatim in `re-e-ui/src/index.css`. This file is kept as the record of the rejected alternative and for v2 reconsideration. -->
+<!-- SUPERSEDED 2026-09-17: user chose upstream 9Router visual identity for v1 (see DECISIONS.md). Token SSOT for code is now upstream `9router/src/app/globals.css`, mirrored verbatim in `routy-ui/src/index.css`. This file is kept as the record of the rejected alternative and for v2 reconsideration. -->
 
-# RE-E Design
+# routy Design
 
 ## Overview
 
-RE-E Design is a dense, dark-first, monospace-friendly design system for the RE-E
+routy Design is a dense, dark-first, monospace-friendly design system for the routy
 gateway dashboard — a local developer tool for routing AI traffic. Data is the hero:
 models, URLs, keys, tokens, latencies render in monospace with tabular figures. Chrome
 (controls, labels, prose) is quiet and secondary. Color carries state (health,
@@ -326,8 +326,8 @@ This is the Light theme. The Dark theme — the **primary consumption target** �
 the same token names with different values and lives at `./DESIGN.dark.md`.
 
 > Location note: this file lives in `docs/ui-ux/` while the worktree owns docs only.
-> When `re-e-ui/` materializes, these files migrate to `re-e-ui/DESIGN.md` +
-> `re-e-ui/DESIGN.dark.md` (project-root contract).
+> When `routy-ui/` materializes, these files migrate to `routy-ui/DESIGN.md` +
+> `routy-ui/DESIGN.dark.md` (project-root contract).
 
 ## Colors
 

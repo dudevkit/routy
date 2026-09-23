@@ -1,4 +1,4 @@
-# Upstream reference clone — read-only, not part of RE-E history
+# Upstream reference clone — read-only, not part of routy history
 /9router/
 
 # Session-local artifacts
@@ -13,9 +13,9 @@ tests/golden/.tmp-data/
 /scratch/ree-home/
 /scratch/ree-home-r3/
 /scratch/chaos-home/
-# local gateway state dirs (RE_E_HOME) used by the verification rigs
+# local gateway state dirs (ROUTY_HOME) used by the verification rigs
 /scratch/*-home/
 /scratch/dbg-home/
-re-e-core/node_modules/
-# build output (npm run build in re-e-core, npm run build in re-e-ui)
-/re-e-core/dist/
+routy-core/node_modules/
+# build output (npm run build in routy-core, npm run build in routy-ui)
+/routy-core/dist/

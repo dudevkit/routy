@@ -7,8 +7,8 @@
 // on the light theme. Cropped to the artwork and emitted as two twins that differ
 // only in ink colour:
 //
-//   re-e-ui/src/assets/routy-wordmark-onDark.png   light ink → dark theme
-//   re-e-ui/src/assets/routy-wordmark-onLight.png  dark ink  → light theme
+//   routy-ui/src/assets/routy-wordmark-onDark.png   light ink → dark theme
+//   routy-ui/src/assets/routy-wordmark-onLight.png  dark ink  → light theme
 //
 // Favicon — an opaque square tile, emitted downscaled to a browser-sane size.
 //
@@ -23,8 +23,8 @@ import zlib from "node:zlib";
 
 const wordmarkSrc = process.argv[2] ?? "logo.png";
 const faviconSrc = process.argv[3] ?? "routy-favicon.png";
-const ASSET_DIR = "re-e-ui/src/assets";
-const PUBLIC_DIR = "re-e-ui/public";
+const ASSET_DIR = "routy-ui/src/assets";
+const PUBLIC_DIR = "routy-ui/public";
 const WORDMARK_WIDTH = 600;      // 2× a ~300px render — plenty, and small on disk
 const FAVICON_SIZE = 512;
 const LIGHT_INK = [18, 21, 26];  // graphite, matches the light theme's text

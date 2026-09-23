@@ -5,7 +5,7 @@
 
 ## 1. What changed on main since your last sync
 
-- **P1 complete:** re-e-core proxy pipeline is done and gate-tested (48/48 tests;
+- **P1 complete:** routy-core proxy pipeline is done and gate-tested (48/48 tests;
   streaming output byte-identical to upstream 9Router). The gateway runs at
   `127.0.0.1:8010` — proxy at `/v1`, management at `/api`, your SPA served at `/`.
 - **P2.1-2.3 complete:** the full management API is live (~30 routes, see
@@ -55,7 +55,7 @@ Priority order (highest value first):
 
 ## 4. Rules (unchanged)
 
-- Own: `docs/ui-ux/**` + `re-e-ui/**`. Never edit backend docs — new API needs go
+- Own: `docs/ui-ux/**` + `routy-ui/**`. Never edit backend docs — new API needs go
   to `contract-requests.md`.
 - Append decisions to `DECISIONS.md`; keep the identity patch (Plex/Phosphor,
   Graphite Pro) consistent across new screens.
@@ -66,5 +66,5 @@ Priority order (highest value first):
 
 ## 5. Out of scope for this iteration
 
-- `re-e init` CLI (backend, landed on main).
+- `routy init` CLI (backend, landed on main).
 - Live Console **backend** (exists); translator debugger (v2, blocked on step-log API).

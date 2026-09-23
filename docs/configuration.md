@@ -1,6 +1,6 @@
-# RE-E configuration reference
+# routy configuration reference
 
-Precedence, highest first: **environment → `<RE_E_HOME>/config.json` → defaults**.
+Precedence, highest first: **environment → `<ROUTY_HOME>/config.json` → defaults**.
 Everything below is read once at boot; node and settings values are live (they are
 read per request).
 
@@ -10,12 +10,12 @@ read per request).
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `RE_E_HOME` | `~/.re-e` | State directory: `config.json`, `data/re-e.db`, `gateway.lock` |
-| `RE_E_PORT` | `8010` | Listen port |
-| `RE_E_HOST` | `127.0.0.1` | Bind address. Anything else makes `/api` require the bootstrap token and `/v1` require an API key |
-| `RE_E_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
-| `RE_E_UI_DIR` | auto | Dashboard directory. Auto-resolved: `<bundleDir>/ui` → `./re-e-ui/dist` → `../re-e-ui/dist` → `<home>/ui` |
-| `RE_E_STREAM_IDLE_TIMEOUT_MS` | `120000` | Stall watchdog budget in ms; `0` disables. Overridable per node |
+| `ROUTY_HOME` | `~/.routy` | State directory: `config.json`, `data/routy.db`, `gateway.lock` |
+| `ROUTY_PORT` | `8010` | Listen port |
+| `ROUTY_HOST` | `127.0.0.1` | Bind address. Anything else makes `/api` require the bootstrap token and `/v1` require an API key |
+| `ROUTY_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
+| `ROUTY_UI_DIR` | auto | Dashboard directory. Auto-resolved: `<bundleDir>/ui` → `./routy-ui/dist` → `../routy-ui/dist` → `<home>/ui` |
+| `ROUTY_STREAM_IDLE_TIMEOUT_MS` | `120000` | Stall watchdog budget in ms; `0` disables. Overridable per node |
 
 ## `config.json`
 
@@ -152,7 +152,7 @@ POST /api/nodes/{id}/keys/test       probe every active key (bounded concurrency
 
 A model probe uses the provider's first active key by priority, overridable with
 `?connectionId=` so a specific key can be blamed. Probes send an `x-ree-probe`
-header carrying a short id, which is what lets RE-E match socket events back to
+header carrying a short id, which is what lets routy match socket events back to
 the probe that caused them; providers ignore it.
 
 **A model probe succeeds at the first token of *any* kind** — content, or any of the
@@ -193,7 +193,7 @@ Budget: `node.data.probeTimeoutMs`, default 45s.
 
 A stored result is a **snapshot, not a live state**, and the UI shows how old it is
 next to every verdict. When probe semantics change — a different timeout, a new
-token field, a new success rule — RE-E bumps an internal probe version and clears
+token field, a new success rule — routy bumps an internal probe version and clears
 every stored result on the next boot, so an error string the current code can no
 longer produce is never displayed as a current failure. `never` is honest; a stale
 `timeout after 20000ms` is not.
@@ -293,7 +293,7 @@ and is never returned by anything but the loopback management API.
 ## CLI
 
 ```
-re-e init    connect an upstream, issue a key, point a CLI tool at RE-E
-re-e serve   start the gateway (same as: node server.mjs)
-re-e key     issue a new client API key (sk-…; also copyable from the Overview page)
+routy init    connect an upstream, issue a key, point a CLI tool at routy
+routy serve   start the gateway (same as: node server.mjs)
+routy key     issue a new client API key (sk-…; also copyable from the Overview page)
 ```

@@ -1,6 +1,6 @@
-# Running RE-E as a Windows background service
+# Running routy as a Windows background service
 
-RE-E is a plain Node process (`re-e-core/server.mjs`). Windows has no native way
+routy is a plain Node process (`routy-core/server.mjs`). Windows has no native way
 to run a console program as a service, so there are two supported stories.
 
 Both require **Node 22.5+** on `PATH` (the gateway uses the built-in `node:sqlite`).
@@ -9,27 +9,27 @@ Both require **Node 22.5+** on `PATH` (the gateway uses the built-in `node:sqlit
 
 ## Option A — Scheduled task (no extra software)
 
-`scripts/re-e-task.ps1` registers a scheduled task with restart-on-failure.
+`scripts/routy-task.ps1` registers a scheduled task with restart-on-failure.
 This is the default recommendation: nothing to install, and the gateway starts
 with the machine (or with your session).
 
 ```powershell
 # install (starts at logon for the current user)
-powershell -ExecutionPolicy Bypass -File scripts\re-e-task.ps1 -Action install
+powershell -ExecutionPolicy Bypass -File scripts\routy-task.ps1 -Action install
 
 # install as a machine-wide service (elevated shell; runs as SYSTEM)
-powershell -ExecutionPolicy Bypass -File scripts\re-e-task.ps1 -Action install -AtStartup
+powershell -ExecutionPolicy Bypass -File scripts\routy-task.ps1 -Action install -AtStartup
 
-powershell -ExecutionPolicy Bypass -File scripts\re-e-task.ps1 -Action start
-powershell -ExecutionPolicy Bypass -File scripts\re-e-task.ps1 -Action status
-powershell -ExecutionPolicy Bypass -File scripts\re-e-task.ps1 -Action stop
-powershell -ExecutionPolicy Bypass -File scripts\re-e-task.ps1 -Action uninstall
+powershell -ExecutionPolicy Bypass -File scripts\routy-task.ps1 -Action start
+powershell -ExecutionPolicy Bypass -File scripts\routy-task.ps1 -Action status
+powershell -ExecutionPolicy Bypass -File scripts\routy-task.ps1 -Action stop
+powershell -ExecutionPolicy Bypass -File scripts\routy-task.ps1 -Action uninstall
 ```
 
-Useful flags: `-Port 8010`, `-Home D:\re-e-state`, `-RepoRoot C:\src\axolotl`.
+Useful flags: `-Port 8010`, `-Home D:\routy-state`, `-RepoRoot C:\src\axolotl`.
 
-The task runs `scripts/re-e-serve.cmd`, which sets `RE_E_HOME`/`RE_E_PORT` and
-then `cd`s into `re-e-core` before `node server.mjs`. Task Scheduler settings:
+The task runs `scripts/routy-serve.cmd`, which sets `ROUTY_HOME`/`ROUTY_PORT` and
+then `cd`s into `routy-core` before `node server.mjs`. Task Scheduler settings:
 unlimited execution time, restart 5× at 1-minute intervals, start when available,
 and don't stop on battery.
 
@@ -60,18 +60,18 @@ start/stop/restart semantics and stdout captured to rotating log files.
 
 ```powershell
 choco install nssm          # or scoop install nssm
-nssm install RE-E "C:\Program Files\nodejs\node.exe" "C:\src\axolotl\re-e-core\server.mjs"
-nssm set RE-E AppDirectory "C:\src\axolotl\re-e-core"
-nssm set RE-E AppEnvironmentExtra "RE_E_HOME=C:\Users\me\.re-e" "RE_E_PORT=8010"
-nssm set RE-E AppStdout "C:\Users\me\.re-e\logs\gateway.log"
-nssm set RE-E AppStderr "C:\Users\me\.re-e\logs\gateway.err.log"
-nssm set RE-E AppRotateFiles 1
-nssm set RE-E Start SERVICE_AUTO_START
-nssm start RE-E
+nssm install routy "C:\Program Files\nodejs\node.exe" "C:\src\axolotl\routy-core\server.mjs"
+nssm set routy AppDirectory "C:\src\axolotl\routy-core"
+nssm set routy AppEnvironmentExtra "ROUTY_HOME=C:\Users\me\.routy" "ROUTY_PORT=8010"
+nssm set routy AppStdout "C:\Users\me\.routy\logs\gateway.log"
+nssm set routy AppStderr "C:\Users\me\.routy\logs\gateway.err.log"
+nssm set routy AppRotateFiles 1
+nssm set routy Start SERVICE_AUTO_START
+nssm start routy
 ```
 
 NSSM's stop sends `Ctrl+C` to console programs, which Node surfaces as `SIGINT`
-— so `nssm stop RE-E` already runs the graceful drain path and the shutdown
+— so `nssm stop routy` already runs the graceful drain path and the shutdown
 route above is not needed.
 
 ---
@@ -80,13 +80,13 @@ route above is not needed.
 
 - **One gateway per data directory.** `server.mjs` writes a pid-stamped
   `gateway.lock` next to the database; a second process pointed at the same
-  `RE_E_HOME` refuses to start and exits `1`. A lock whose pid is dead is taken
+  `ROUTY_HOME` refuses to start and exits `1`. A lock whose pid is dead is taken
   over automatically.
-- **State location** defaults to `%USERPROFILE%\.re-e` (`config.json`,
-  `data/re-e.db`, `gateway.lock`). Override with `RE_E_HOME`.
-- **Config precedence** is defaults < `<RE_E_HOME>/config.json` < environment.
-  See `re-e-core/lib/config.mjs`; `retention` and `streamIdleTimeoutMs` are the
+- **State location** defaults to `%USERPROFILE%\.routy` (`config.json`,
+  `data/routy.db`, `gateway.lock`). Override with `ROUTY_HOME`.
+- **Config precedence** is defaults < `<ROUTY_HOME>/config.json` < environment.
+  See `routy-core/lib/config.mjs`; `retention` and `streamIdleTimeoutMs` are the
   keys that matter for long-running hosts.
 - **Firewall**: the default bind is `127.0.0.1`. Exposing the gateway on the LAN
-  (`RE_E_HOST=0.0.0.0`) makes the bootstrap token mandatory for `/api`, and
+  (`ROUTY_HOST=0.0.0.0`) makes the bootstrap token mandatory for `/api`, and
   `/v1` falls back to API-key auth.

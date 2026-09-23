@@ -1,5 +1,5 @@
 # Keep the build context to source only — the runtime image is built from
-# re-e-core/dist, and scratch state must never leak into a layer.
+# routy-core/dist, and scratch state must never leak into a layer.
 **/node_modules
 **/dist
 **/.preview

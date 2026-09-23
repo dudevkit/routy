@@ -1,6 +1,6 @@
-# RE-E Backend Architecture
+# routy Backend Architecture
 
-> Target design for `re-e-core/`. Port mapping from upstream 9Router v0.5.75.
+> Target design for `routy-core/`. Port mapping from upstream 9Router v0.5.75.
 > Frozen reference: `../9router/`. DB details: [db-design.md](./db-design.md).
 > Provider roadmap: [provider-catalog.md](./provider-catalog.md).
 
@@ -9,7 +9,7 @@
 One Node ≥22 process. Two route trees on one HTTP server:
 
 ```
-re-e-core (Node 22+, zero runtime deps)
+routy-core (Node 22+, zero runtime deps)
 ├── /v1/*      → proxy router    (client CLI tools; API-key auth)
 └── /api/*     → management router (dashboard/CLI; session or bootstrap-token auth)
 ```
@@ -25,7 +25,7 @@ re-e-core (Node 22+, zero runtime deps)
 ## 2. Module map (port map)
 
 ```
-re-e-core/
+routy-core/
 ├── server.mjs               # bootstrap: config load → db open → http server → ready
 ├── lib/
 │   ├── router.mjs           # tiny router (write new)
@@ -57,7 +57,7 @@ re-e-core/
 ├── http/
 │   ├── v1.js                # /v1 routes (thin; port of src/sse/handlers/chat.js entry)
 │   └── api.js               # /api management routes (write new, lean)
-└── bin/re-e.mjs             # CLI: init wizard, run, token print
+└── bin/routy.mjs             # CLI: init wizard, run, token print
 ```
 
 **Porting rules:** translate/ and rtk/ arrive as verbatim ports (golden-tested, §P0).
@@ -91,7 +91,7 @@ when upstream supplied one.
 Upstream spec kept: line-based parse, multi-byte-safe `TextDecoder({stream:true})`,
 translate-per-chunk via registry, usage extraction, TTFT stamp. Changes:
 
-| Upstream behavior | RE-E behavior |
+| Upstream behavior | routy behavior |
 |---|---|
 | `accumulatedContent`/`accumulatedThinking` grow unbounded | Counters + rolling hash for dedup/log; hard cap (default 2MB) on any retained text; overflow truncates log only |
 | Per-chunk string concat + re-emit | Byte-buffer chunks, single `formatSSE` emit per event |
@@ -109,7 +109,7 @@ translate-per-chunk via registry, usage extraction, TTFT stamp. Changes:
 **Management (`/api`, session token):**
 `GET/PUT /settings` · CRUD `/nodes`, `/connections`, `/keys`, `/combos`, `/aliases`,
 `/proxy-pools` · `GET /usage/{stats,history,details}` · `POST /breakers/{id}/reset` ·
-`GET /health`, `GET /version`. Deliberately NOT ported: oauth/*, cli-tools/* (→ `re-e init`
+`GET /health`, `GET /version`. Deliberately NOT ported: oauth/*, cli-tools/* (→ `routy init`
 covers the 90% case), mitm/*, tunnels/*, sync/*, updater/*.
 
 **Folded from ui-ux contract-requests.md (2026-09-18, P2 scope):**
@@ -119,17 +119,17 @@ listing) · `POST /proxy-pools/{id}/test` → `{ok, latencyMs, error?}` ·
 · usage `details` rows carry `ttftMs`, `durationMs`, token counts, `nodeId`, `errorCode`
 (schema v1 already captures all of these — confirmation, not new work).
 
-**UI delivery (P2 redefined per ui-ux DECISIONS):** the lean SPA (`re-e-ui/`, Vite +
+**UI delivery (P2 redefined per ui-ux DECISIONS):** the lean SPA (`routy-ui/`, Vite +
 React + TS + Tailwind, Plex/Phosphor identity) replaces the "rewire upstream dashboard"
 plan — upstream reuse is dead (OAuth asset out of v1 scope; 100-route shim tax). SPA is
-served by re-e-core at `/ui/*` (static `dist/`); its `src/api/mock.ts` transport swaps to
+served by routy-core at `/ui/*` (static `dist/`); its `src/api/mock.ts` transport swaps to
 real fetch against these endpoints. Known inconsistency until wired: UI runs on mocks.
 
 ## 6. Config & state
 
-- `~/.re-e/` data dir (override `RE_E_HOME`): `re-e.db` (SQLite WAL), `config.json`,
+- `~/.routy/` data dir (override `ROUTY_HOME`): `routy.db` (SQLite WAL), `config.json`,
   `logs/`.
-- Precedence: defaults < `config.json` < env (`RE_E_PORT`, `RE_E_HOME`, `RE_E_LOG_LEVEL`, …)
+- Precedence: defaults < `config.json` < env (`ROUTY_PORT`, `ROUTY_HOME`, `ROUTY_LOG_LEVEL`, …)
   < settings table (dashboard-writable runtime settings).
 - Secrets (node API keys): SQLite `connections.credentials` — plaintext v1 (upstream
   parity), DPAPI/keychain wrapper behind one interface, P3 hardening.

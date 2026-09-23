@@ -1,6 +1,6 @@
-# RE-E quickstart
+# routy quickstart
 
-RE-E is a local AI gateway: one OpenAI/Anthropic-compatible endpoint in front of
+routy is a local AI gateway: one OpenAI/Anthropic-compatible endpoint in front of
 any number of upstream providers, with translation, fallback, breaker-protected
 retries, token saving and cost accounting.
 
@@ -14,31 +14,31 @@ on 22.5–23.3 that module needs `NODE_OPTIONS=--experimental-sqlite`.
 ### From source
 
 ```bash
-cd re-e-core
+cd routy-core
 npm ci
-npm run build          # optional: produces dist/re-e.mjs + dist/ui
-node bin/re-e.mjs serve
+npm run build          # optional: produces dist/routy.mjs + dist/ui
+node bin/routy.mjs serve
 ```
 
 ### From the single-file bundle
 
 ```bash
-npm --prefix re-e-core ci
-node re-e-core/scripts/build.mjs          # -> re-e-core/dist/re-e.mjs (~1.6 MB, no deps)
-node re-e-core/dist/re-e.mjs serve
+npm --prefix routy-core ci
+node routy-core/scripts/build.mjs          # -> routy-core/dist/routy.mjs (~1.6 MB, no deps)
+node routy-core/dist/routy.mjs serve
 ```
 
 The bundle inlines everything except Node builtins. `dist/ui` (the dashboard) is
-copied next to it automatically when `re-e-ui/dist` exists.
+copied next to it automatically when `routy-ui/dist` exists.
 
 ### With Docker
 
 ```bash
-docker build -t re-e .
-docker run -d --name re-e -p 8010:8010 -v re-e-data:/data re-e
+docker build -t routy .
+docker run -d --name routy -p 8010:8010 -v routy-data:/data routy
 ```
 
-The image sets `RE_E_HOST=0.0.0.0`, so non-loopback callers need the bootstrap
+The image sets `ROUTY_HOST=0.0.0.0`, so non-loopback callers need the bootstrap
 token for `/api` and a valid API key for `/v1`.
 
 ### As a Windows background task
@@ -51,18 +51,18 @@ restart-on-failure, plus the graceful-stop story (Windows has no `SIGTERM`).
 ## First run
 
 ```bash
-re-e init
+routy init
 ```
 
 The wizard probes an upstream, issues a router API key, and offers to point a CLI
-tool (Claude Code's `settings.json`) at RE-E. Everything it writes lands in
-`RE_E_HOME` (default `~/.re-e`): `config.json`, `data/re-e.db`, `gateway.lock`.
+tool (Claude Code's `settings.json`) at routy. Everything it writes lands in
+`ROUTY_HOME` (default `~/.routy`): `config.json`, `data/routy.db`, `gateway.lock`.
 
 By hand, the same thing:
 
 ```bash
 # 1. issue a client key (sk-…; it stays copyable from the Overview page)
-re-e key
+routy key
 
 # 2. add a provider
 curl -s localhost:8010/api/nodes -H 'content-type: application/json' -d '{
@@ -133,7 +133,7 @@ Any tool that takes an OpenAI-compatible base URL works:
 | API key | an `sk-…` client key from the Overview page (required unless `requireApiKey` is off) |
 | Model | `<node-prefix>/<model>`, an alias, or a combo name |
 
-Claude Code additionally works against `/v1/messages` — RE-E translates between the
+Claude Code additionally works against `/v1/messages` — routy translates between the
 OpenAI and Anthropic shapes in both directions, streaming included.
 
 ---

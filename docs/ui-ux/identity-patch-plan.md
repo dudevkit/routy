@@ -1,4 +1,4 @@
-# RE-E UI — Identity Patch Plan (brainstorm, 2026-09-18)
+# routy UI — Identity Patch Plan (brainstorm, 2026-09-18)
 
 > Status: **plan only — nothing built.** Decisions D1–D6 pending user call.
 > Baseline: Graphite Pro base theme + upstream blocking, both approved.

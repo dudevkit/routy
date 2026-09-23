@@ -16,7 +16,7 @@
 
 ## Current State
 
-- **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
+- **Project:** routy — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
 - **Phase:** P6 COMPLETE — per-provider page landed (113/113 tests; bundle + both live rigs green). P0–P6 done; the remaining menu is optional expansion.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
@@ -26,8 +26,8 @@
 **Agreed layout (details pending):**
 ```
 axolotl/
-├── re-e-core/     # backend: /v1 proxy + management API + db + proxy pools (lean Node service)
-├── re-e-ui/       # dashboard, separate process, talks management API only
+├── routy-core/     # backend: /v1 proxy + management API + db + proxy pools (lean Node service)
+├── routy-ui/       # dashboard, separate process, talks management API only
 └── 9router/       # upstream reference (frozen)
 ```
 ## Decision Log
@@ -39,9 +39,9 @@ axolotl/
 | 2026-09-23 | **Per-provider page** with tabs (Models / API Keys / Settings) replaces the `ConnectionsDrawer` | Keys, models and node config are three different concerns with different actions; a drawer cannot carry per-key and per-model test state | keep the drawer; single scrolling page |
 | 2026-09-23 | **UI vocabulary: Providers** (API/DB keep `provider_nodes`) | Matches how the user talks about it and 9Router's vocabulary; label-only change, no migration | keep "Upstreams" |
 | 2026-09-17 | Write master reference + this log before any code | Cross-conversation continuity; every future session starts grounded | — |
-| 2026-09-17 | **Project named "RE-E"** — a *re-engineering* (not port, not rewrite) of 9Router; upstream `open-sse/` core is the preserved asset | Terminology sets scope: keep battle-tested core, rebuild packaging around it | port, remake/rewrite, refactor, fork |
+| 2026-09-17 | **Project named "routy"** — a *re-engineering* (not port, not rewrite) of 9Router; upstream `open-sse/` core is the preserved asset | Terminology sets scope: keep battle-tested core, rebuild packaging around it | port, remake/rewrite, refactor, fork |
 | 2026-09-17 | **Two-part split adopted (user proposal):** separate UI-UX from backend. Backend = lean gateway (`/v1/*` + management API + SQLite); UI = dashboard as its own process | Proxy currently welded into Next.js process (dashboard deps on hot path, shared process fate); management-API seam already exists (~100 `/api/*` routes) | keep monolith; full rewrite |
-| 2026-09-17 | **v1 feature scope accepted:** §A inference core, §B token savers (RTK keep; headroom/caveman/ponytail throw; pxpipe defer), §C providers+media (media deferred), §E additions (metrics, latency-aware routing, budget caps, config-as-file, `re-e init`, single binary) as proposed; §D delegated to assistant recon-based recommendations **with one user override: proxy pools → KEEP, not throw** | User approved wholesale; proxy pools are a hard requirement | throwing proxy pools |
+| 2026-09-17 | **v1 feature scope accepted:** §A inference core, §B token savers (RTK keep; headroom/caveman/ponytail throw; pxpipe defer), §C providers+media (media deferred), §E additions (metrics, latency-aware routing, budget caps, config-as-file, `routy init`, single binary) as proposed; §D delegated to assistant recon-based recommendations **with one user override: proxy pools → KEEP, not throw** | User approved wholesale; proxy pools are a hard requirement | throwing proxy pools |
 | 2026-09-17 | **v1 provider scope: zero embedded providers — custom OpenAI-compatible nodes only** (dynamic nodes: `{id, type, name, prefix, apiType, baseUrl}` + API-key connection) | Minimal start; node mechanism covers most API-key upstreams day one; embedded/OAuth providers added later per [provider-catalog.md](./provider-catalog.md) | assistant's ~12-15 provider trim |
 
 
@@ -56,10 +56,37 @@ axolotl/
 - 2026-09-17 (user): **Backend-only focus.** Proceed P0 → P1 (pure backend: harness,
   core MVP gateway). ~~HOLD P2 until the ui-ux worktree agent delivers the UI/UX guide
   and rules~~ → **LIFTED 2026-09-18**: ui-ux delivered (DECISIONS/DESIGN/ia-proposal/
-  contract-requests + working `re-e-ui` preview); contract requests folded into
+  contract-requests + working `routy-ui` preview); contract requests folded into
   backend-architecture §5; P2 redefined per ui-ux decisions (roadmap).
 
 ## Done
+
+- 2026-09-23 (rename RE-E → routy, with migration): the product is **routy**. The
+  user-visible name, the wordmark (supplied logo, replacing the typed text) and the
+  favicon are done in the same pass as the identifiers, because half a rename is
+  worse than none. 213 references rewritten across 17 docs; directories moved
+  (`re-e-core` → `routy-core`, `re-e-ui` → `routy-ui`, `bin/re-e.mjs` →
+  `bin/routy.mjs`, the Windows service scripts); metrics prefix `re_e_` → `routy_`;
+  bundle output `dist/routy.mjs`; Dockerfile, .dockerignore, .gitignore.
+  **Nothing breaks for an existing install:** `ROUTY_*` env vars fall back to their
+  `RE_E_*` names, the `re-e` CLI name still resolves, and on first boot a pre-rename
+  state dir is *adopted* — `~/.re-e` → `~/.routy` and `re-e.db` → `routy.db`, WAL
+  sidecars included. If the move fails (Windows will not rename a directory with
+  open handles) the legacy location is used in place and a warning is logged, since
+  starting empty would look like data loss. Verified on the live instance:
+  `adopted pre-rename state dir: C:\Users\Ravi\.re-e → C:\Users\Ravi\.routy`, all
+  providers/models/keys/usage intact. 11 new migration tests cover the adopt, the
+  already-migrated, the stale-env-var, the move-failed and the both-databases cases.
+  **Two bugs the blind rename introduced and this pass caught**: `LEGACY_HOME_NAME`
+  and `LEGACY_DB_FILE` were rewritten to `"routy"`/`"routy.db"` — i.e. the migration
+  would have renamed a path onto itself — and the intentional `RE_E_*` env aliases
+  became duplicates of `ROUTY_*`. A rename must be followed by reading the code that
+  is *about* the old name, not just grepping for it.
+  Also fixed the suite's flakiness, which the extra test file exposed: tests are
+  I/O-bound (a real sqlite db + temp dir each) and vitest defaulted to one worker per
+  core, so a migration test that takes 2s alone took 16s in the suite and blew its
+  budget. `vitest.config.mjs` caps the pool at 8: measured 139 tests at ~34s stable,
+  versus ~33s flaky uncapped.
 
 - 2026-09-23 (client keys: create on Overview, always copyable, OpenAI-shaped): the
   user could not copy their API key — creation lived in Settings behind a show-once
@@ -78,7 +105,7 @@ axolotl/
   /api/keys` later, and the clipboard receives the full key while the chip shows
   the mask. Tests: 128/128, bundle rebuilt (1630 KB, 217 modules), smoke 13/13.
 
-- 2026-09-23 (a timeout that named the wrong cause): the user reported that RE-E
+- 2026-09-23 (a timeout that named the wrong cause): the user reported that routy
   said `no response within 45000ms (stage: connect)` while Token Harbor's own
   dashboard showed the request completing in 19s. Measured it end to end rather
   than guessing: **the probe was right and the label was wrong.** A socket-level
@@ -106,7 +133,7 @@ axolotl/
   old each verdict is (`2h ago`) and puts the exact time in the tooltip — a snapshot
   that can't say when it was taken reads as a live state. Verified live: after
   restart, 0 models carry a stored result and no `20000ms` string remains anywhere.
-  Re-tested the two reported models against the new probe and then **bypassing RE-E
+  Re-tested the two reported models against the new probe and then **bypassing routy
   entirely** — `mimo-v2.6-flash:free` sent no headers in 60s, `qwen3.8-flash:free`
   took 47.3s, so both genuinely exceed the 45s budget: the free tier really is that
   slow, and the honest verdict is a stage-named timeout, not a bug. Tests: 125/125.
@@ -191,13 +218,13 @@ axolotl/
 - 2026-09-23 (P5 packaging): shippable artifact. `scripts/build.mjs` esbuild-bundles
   the CLI + gateway + translator tree + undici into **one ESM file** — 1601 KB
   (798 KB minified), 216 modules inlined, zero runtime dependencies (only Node
-  builtins stay external). The build copies `re-e-ui/dist` to `dist/ui` and
+  builtins stay external). The build copies `routy-ui/dist` to `dist/ui` and
   `lib/config.mjs` now resolves `<bundleDir>/ui` via `import.meta.url`, so a
   packaged gateway serves the dashboard with no env var. One non-obvious fix: bundled
   CJS deps (undici) call `require()` for builtins, which esbuild rewrites to
   `__require` — in ESM output that throws `Dynamic require of "node:assert" is not
   supported` unless the bundle carries a `createRequire(import.meta.url)` shim in its
-  banner. `scripts/smoke.mjs` is the gate: it boots `dist/re-e.mjs` **from an
+  banner. `scripts/smoke.mjs` is the gate: it boots `dist/routy.mjs` **from an
   unrelated cwd** (proving no source-tree dependency), checks health/metrics/dashboard
   (from `<bundleDir>/ui`), creates a node, streams a completion, records usage, then
   shuts down through `/api/gateway/shutdown` and asserts exit 0 and the lock released
@@ -262,7 +289,7 @@ axolotl/
   breaker. Success is now recorded only when the response is actually known good
   (clean stream end / body read). **Stream stall watchdog** — `pumpSse` races each
   read against an idle budget (default 120s, `data.streamIdleTimeoutMs` per node,
-  `RE_E_STREAM_IDLE_TIMEOUT_MS` globally, 0 disables) and emits a terminal
+  `ROUTY_STREAM_IDLE_TIMEOUT_MS` globally, 0 disables) and emits a terminal
   `upstream_stalled` error frame instead of hanging the client forever; the same
   budget bounds non-streaming body reads, which previously had **no** read timeout
   at all (headers were bounded, bodies were not). Mid-stream upstream death now
@@ -273,9 +300,9 @@ axolotl/
   purge became an hourly job covering both `usage_events` (new `usage.purge`) and
   `request_details`, with per-key config overrides under `retention`. **Ops** —
   `POST /api/gateway/shutdown` (202, then drain) because Windows has no SIGTERM;
-  `scripts/re-e-task.ps1` + `scripts/re-e-serve.cmd` register the gateway as a
+  `scripts/routy-task.ps1` + `scripts/routy-serve.cmd` register the gateway as a
   scheduled task with restart-on-failure, and `docs/windows-service.md` documents
-  that plus the NSSM path. First-run bug fixed: a non-existent `RE_E_HOME` crashed
+  that plus the NSSM path. First-run bug fixed: a non-existent `ROUTY_HOME` crashed
   boot on the lockfile write. Tests: `test/stability.test.mjs` (8) +
   `test/chaos.test.mjs` (8) — 69/69 total.
 - 2026-09-23 (P3 gate, live): rig = `scratch/chaos-upstream.mjs` (model name selects
@@ -303,7 +330,7 @@ axolotl/
   + WAL, 12-table schema v1, cache layer, write batching, secrets plan).
 - 2026-09-17: UI/UX worktree spun up: `dudevhub/ui-ux` (branch `ui-ux`, child of `axolotl`,
   Orca-managed). Ownership + merge discipline in `docs/ui-ux/brainstorm-brief.md`. First
-  RE-E git commit: b8c269b (all docs). `.gitignore` excludes upstream `9router/` clone.
+  routy git commit: b8c269b (all docs). `.gitignore` excludes upstream `9router/` clone.
 - 2026-09-17 (P0 harness): golden fixture corpus captured — 13 cases (6 request
   translation openai↔claude incl. tools/reasoning; 7 SSE stream cases incl. passthrough,
   tool-calls, thinking) → `tests/golden/fixtures/` (33 files).
@@ -319,7 +346,7 @@ axolotl/
   × tools), verified deterministic across runs after normalization
   (`tests/golden/fixtures-l2/`, capture: `scratch/capture-l2.mjs`). Stub id made
   deterministic; meta timing dropped from fixtures. **P0 gate passed.**
-- 2026-09-17 (P1.1): `re-e-core/` skeleton landed — `server.mjs` + `lib/{router,config,log,auth}.mjs`;
+- 2026-09-17 (P1.1): `routy-core/` skeleton landed — `server.mjs` + `lib/{router,config,log,auth}.mjs`;
   zero runtime deps (Node 22+ builtins only); boots <150ms; `/api/health`, `/api/version`,
   `/v1/models` (empty), 501 stubs for chat endpoints, 404 JSON; structured logging with
   key-redaction + one `log.raw` exception for the management bootstrap token at boot;
@@ -329,7 +356,7 @@ axolotl/
   caches with write-invalidation (settings/nodes/connections/combos/aliases), usage
   write-behind queue (flush @250ms or 50 events, re-queue on failure), breakers
   RAM-first with 1s debounced persist, request_details 64KB cap + retention purge at
-  boot. 9/9 vitest green (`re-e-core/test/db.test.mjs`). Live `ree-core` boots with db.
+  boot. 9/9 vitest green (`routy-core/test/db.test.mjs`). Live `ree-core` boots with db.
 - 2026-09-17 (P1.3): routing landed — `core/routing.mjs`: model-string resolution
   (context-marker strip `[1m]` → alias → combo → node prefix), breaker-aware health
   flags (open+unexpired = unhealthy; expired = half-open candidate), `listModels()` for
@@ -348,15 +375,15 @@ axolotl/
   `core/handlers/chat.mjs`: byte-safe SSE parser (multi-byte split safe, bounded 1MB
   buffer), pump with backpressure + client-disconnect→upstream abort, LogBuffer (2MB cap,
   counters not accumulation), incremental usage estimation with exact override, terminal
-  chunk usage injection (upstream parity; estimator numbers are RE-E's own — normalized
+  chunk usage injection (upstream parity; estimator numbers are routy's own — normalized
   in golden compares), duplicate-[DONE] parity quirk replicated, breaker fail-fast when
   all routes unhealthy (503 + retryAfterMs), combo fallback, API-key auth, usage+detail
-  recording. **33/33 tests. Golden validation: RE-E passthrough output BYTE-IDENTICAL
+  recording. **33/33 tests. Golden validation: routy passthrough output BYTE-IDENTICAL
   to upstream L2 fixture (normalized). Bench: 40/40 ok, TTFT p50 16ms = upstream parity;
   ≤5ms target remains P4 work (residual: ~11-16ms is request handling + undici scheduling,
   possibly Windows timer quantization — investigate in P4).**
 - 2026-09-17: Harness gotcha (stub): content-type header was silently lost in an earlier
-  stub edit → proxies branching on content-type (incl. RE-E) fell into non-streaming
+  stub edit → proxies branching on content-type (incl. routy) fell into non-streaming
   path; upstream 9Router was unaffected (no content-type branch) — caught only by
   per-chunk timing test. Lesson: fixture stubs are part of the tested surface.
 - 2026-09-17 (P1.6): translator port landed — `core/translate/**` (48 files via
@@ -369,13 +396,13 @@ axolotl/
   stream.js: parse→translate→filter→usage-inject→formatSSE + flush; NO [DONE] in
   translate mode = pinned contract). **L2 parity: claude-client fixtures byte-identical;
   openai passthroughs match. Non-stream+translate deferred P1.6b. `undici` added as
-  re-e-core dep for SSRF DNS-pinning in image prefetch only.**
+  routy-core dep for SSRF DNS-pinning in image prefetch only.**
 - 2026-09-18 (P2.1-2.3): management API + SPA wiring landed — `http/api.mjs` (~30 routes:
   nodes CRUD + test probe + reset, connections, keys, combos, aliases, proxy-pools + test,
   usage stats/failures/history/details, settings, gateway, breakers reset, `GET /logs/stream`
   SSE with ring-buffer init + live lines + heartbeat). Auth guard: loopback peers pass,
-  non-loopback requires bootstrap token (unit-tested). `/ui/*` serves re-e-ui dist with
-  SPA fallback. re-e-ui transport swapped mock → live fetch (`client.ts` + `transport.ts`
+  non-loopback requires bootstrap token (unit-tested). `/ui/*` serves routy-ui dist with
+  SPA fallback. routy-ui transport swapped mock → live fetch (`client.ts` + `transport.ts`
   selector, dev proxy). **Gate loop verified in browser: UI create node → Test Connection
   200·6ms·3 models (real probe) → save → chat request flows through the UI-created node →
   Overview renders live usage (59 reqs, 99.1K tokens, TTFT p50 16ms) + 2 healthy nodes.**
@@ -413,10 +440,10 @@ axolotl/
 - 2026-09-18 (P1.6b + P2.4): `core/sse/sseToJson.mjs` (verbatim parseSSEToOpenAIResponse
   port) — nonstream vs SSE-lying upstream now converts to JSON; L2 nonstream fixture
   structurally identical, ONE documented divergence: upstream overwrites exact upstream
-  usage with its buffer-estimate (2050 vs stub's exact 50) — RE-E passes exact usage
+  usage with its buffer-estimate (2050 vs stub's exact 50) — routy passes exact usage
   through (strictly better, kept). `detectFormat` body heuristic ported verbatim
   (deps/detectFormat.js) and wired: source = endpoint override || body heuristic.
-  `bin/re-e.mjs`: init wizard (upstream + probe + key + Claude Code settings.json
+  `bin/routy.mjs`: init wizard (upstream + probe + key + Claude Code settings.json
   merge), serve, key. 48/48 tests.
 - 2026-09-17 (P1.7 + MVP gate): RTK ported (`core/rtk/**`, 17 files, self-contained,
   wired at upstream placement = final body pre-dispatch, default-on, tested: 8KB
@@ -430,6 +457,13 @@ axolotl/
 
 *(Append-only; one line per fact with pointer into reference doc where applicable.)*
 
+- 2026-09-23: A rename is not a find-and-replace. Code that is *about* the old name
+  (a LEGACY_* constant, an env-var alias list) contains the old name on purpose, and
+  a blind sweep silently breaks exactly the migration written to survive it. Grep
+  finds the strings; only reading finds the intent.
+- 2026-09-23: Vitest defaults to one worker per core. For a suite where every file
+  creates a real sqlite database, that is not parallelism, it is disk contention —
+  measured 8x slowdown and intermittent timeouts that look like code failures.
 - 2026-09-23: A "show once, copy it now" key panel is hostile when the dashboard is
   where the key is kept. If the product owns the credential, it must be able to
   hand it back; a mask on screen plus a full value on copy is the useful shape.
@@ -492,7 +526,7 @@ axolotl/
   a good signal for "connection churn", not for timer quantisation.
 - 2026-09-23: Measure before theorising about latency: the same `fetch` to the same
   stub was 15ms inside the gateway process and 0.8ms in a bare probe, which localised
-  the problem to dispatch config rather than RE-E's own code — after two wrong
+  the problem to dispatch config rather than routy's own code — after two wrong
   hypotheses (SQLite blocking, Windows timer tick) that the data ruled out.
 - 2026-09-23: Ranking unknown-latency routes last makes them permanently untried, so
   the router can never discover a faster upstream. Optimistic initialisation (unknown
@@ -530,7 +564,7 @@ axolotl/
 - 2026-09-17: Background subagent spawning is unavailable in this environment ("No model
   selected" error) — do recon inline, don't fan out.
 - 2026-09-17: Upstream ALREADY uses WAL + busy_timeout + synchronous=NORMAL
-  (`schema.js:8-16`) — RE-E's DB wins are driver pinning, caching, write batching, not WAL.
+  (`schema.js:8-16`) — routy's DB wins are driver pinning, caching, write batching, not WAL.
 - 2026-09-17: Compatible-node baseUrl is read from `connection.credentials.providerSpecificData.baseUrl`
   (`open-sse/executors/default.js:111`), not just node data — node record alone is
   insufficient for routing.
@@ -546,7 +580,7 @@ axolotl/
   code (else UI round-2 calls 404).
 | 2026-09-19 | ui-ux visual round merged (`7 commits`: neo skin rebuild per Neuphorism spec, Soft Neumorphic catalog entry H, raised-state redesign 4 variants canvas-locked, error toasts lead with human detail, theme catalog follows app mode). Build verified; gateway restarted; Overview renders live data |
 - 2026-09-17: Routed overhead ≈16ms flat (p50≈p90≈p99) through upstream's Next.js prod
-  build — contributors: Next route layer + body re-parse + uncached reads. RE-E target
+  build — contributors: Next route layer + body re-parse + uncached reads. routy target
   ≤5ms requires bypassing Next + caching (as planned in backend-architecture).
 - 2026-09-17: openai→claude translation injects a Claude Code system prompt
   (CLAUDE_SYSTEM_PROMPT) even with provider=null — fixture-pinned upstream behavior.
@@ -556,7 +590,7 @@ axolotl/
   hub processes `bench-stub` (:20990) + `bench-router` (:20991) kept running for P0 follow-ups.
 - 2026-09-17: Upstream source-format detection = endpoint override THEN body heuristic
   (`detectFormat`: claude body shape counts as claude only when model has NO "/" —
-  slash = provider routing). RE-E is endpoint-fixed today; both agree on slash-model
+  slash = provider routing). routy is endpoint-fixed today; both agree on slash-model
   nodes (verified via l2-claude-tooluse). Porting detectFormat for no-slash bodies = P1.6b.
 - 2026-09-17: `scratch/port-translator.mjs` = regeneration path for translator re-sync
   after upstream updates; deps shims documented inline with their sources.
@@ -588,16 +622,16 @@ axolotl/
 | 2026-09-23 | P5 packaging: single-file ESM bundle (1.6MB / 798KB minified, 216 modules, zero runtime deps) with a `createRequire` banner shim, `<bundleDir>/ui` asset resolution, `scripts/smoke.mjs` gate (13/13 booting from an unrelated cwd), multi-stage Dockerfile + .dockerignore (unbuilt — no docker on this machine), quickstart + configuration docs. The built artifact passes the P3 rig 11/11, the P4 rig 14/14 and the overhead bench at p50 1.4ms |
 | 2026-09-23 | P4 speed: pooled per-origin undici dispatcher (overhead 15.6 → 1.3ms p50, 16.1 → 1.7ms p99 — the P1 residual was Node's built-in fetch connection churn), Prometheus `/metrics`, combo strategies `fastest`/`cheapest` with optimistic latency probing, node pricing + daily budget ceiling with auto-fallback to unmetered nodes, `nodes.update` data-merge fix, SPA router basename fix, UI Spend card + node pricing fields. 92/92 tests |
 | 2026-09-23 | P4 gate verified live: 14/14 routing/budget/metrics checks, 3/3 latency-aware routing (combo declared slow-first pinned to the fast node after one probe, 426ms vs 1ms), P3's 11/11 re-run clean after the executor swap, browser-verified Spend card and node pricing (edit preserved the cached model list) |
-| 2026-09-23 | P3 stability: breaker exponential backoff + 2 latent breaker bugs fixed (reset ignored `failures`; success recorded at headers so dying streams looked healthy), stream stall watchdog (stream + non-streaming body reads), mid-stream death counts as a breaker failure, graceful drain shutdown, hourly retention job, Windows service story (scheduled-task script + docs + `/api/gateway/shutdown`), fresh-`RE_E_HOME` boot crash fixed. 69/69 tests |
+| 2026-09-23 | P3 stability: breaker exponential backoff + 2 latent breaker bugs fixed (reset ignored `failures`; success recorded at headers so dying streams looked healthy), stream stall watchdog (stream + non-streaming body reads), mid-stream death counts as a breaker failure, graceful drain shutdown, hourly retention job, Windows service story (scheduled-task script + docs + `/api/gateway/shutdown`), fresh-`ROUTY_HOME` boot crash fixed. 69/69 tests |
 | 2026-09-23 | P3 gate verified live on :8015 (started through the Windows launcher): 11/11 chaos checks, 4/4 breaker-persistence-across-restart, 5/5 graceful-drain (40/40 chunks after shutdown mid-stream, exit 0, lock released). Boot 317ms; RSS delta 0MB on an 11.4MB stream |
 | 2026-09-17 | Cloned repo; full recon; wrote reference doc + this log; brainstorm delivered; decisions deferred |
-| 2026-09-17 | RE-E named; two-part UI/backend split decided; log restructured |
+| 2026-09-17 | routy named; two-part UI/backend split decided; log restructured |
 | 2026-09-17 | v1 scope locked (A/B/C/E + D-with-override); provider catalog written; provider scope = compatible nodes only |
 | 2026-09-17 | Build plan delivered: roadmap (6 phases/gates/estimates), backend architecture (port map + SSE rewrite spec), DB design (schema v1 + caching + batching). Runtime default Node 22+, "faster" = measurable targets — both pending user veto |
 | 2026-09-17 | Parallel-work workflow: UI brainstorm in Orca worktree `ui-ux` (user-driven); ownership split + merge discipline in `docs/ui-ux/brainstorm-brief.md`; log stays single-SSOT |
 | 2026-09-17 | P1.5+P1.6: SSE pipeline + chat handler (passthrough byte-parity, bench 16ms parity), translator port (48 files) + claude/responses wiring — L2 claude byte-identical; undici dep for SSRF pinning |
 | 2026-09-17 | P1.7 RTK + MVP gate PASSED: 4/5 L2 streaming fixtures byte-identical vs upstream through live ree-core; 34/34 tests; P1.6b residuals logged |
-| 2026-09-18 | ui-ux deliverables merged (`82d3316`, 0 conflicts): DECISIONS/DESIGN/ia-proposal/contract-requests + re-e-ui SPA preview (Plex/Phosphor, build verified). Contracts folded into backend-architecture §5; P2 redefined — lean SPA replaces dashboard rewire; re-e-ui on MOCK transport until 2.3 |
-| 2026-09-18 | P2.1-2.3: management API (~30 routes) + auth guard + /ui/* static + re-e-ui live transport swap; browser-verified gate loop (create node → test 200·6ms → chat flows → usage live). Remaining: 2.4 CLI, Live Console screen (ui-ux), P1.6b |
-| 2026-09-18 | P1.6b + P2.4: sseToJson + detectFormat ported (L2 nonstream: exact-usage divergence documented as intentional improvement); re-e CLI (init/serve/key) |
+| 2026-09-18 | ui-ux deliverables merged (`82d3316`, 0 conflicts): DECISIONS/DESIGN/ia-proposal/contract-requests + routy-ui SPA preview (Plex/Phosphor, build verified). Contracts folded into backend-architecture §5; P2 redefined — lean SPA replaces dashboard rewire; routy-ui on MOCK transport until 2.3 |
+| 2026-09-18 | P2.1-2.3: management API (~30 routes) + auth guard + /ui/* static + routy-ui live transport swap; browser-verified gate loop (create node → test 200·6ms → chat flows → usage live). Remaining: 2.4 CLI, Live Console screen (ui-ux), P1.6b |
+| 2026-09-18 | P1.6b + P2.4: sseToJson + detectFormat ported (L2 nonstream: exact-usage divergence documented as intentional improvement); routy CLI (init/serve/key) |
 | 2026-09-18 | P2 round-2 backend: 5 contract items implemented + 2 questions answered (combo name semantics, /v1/models loopback-or-key guard); zombie-instance incident diagnosed and documented |

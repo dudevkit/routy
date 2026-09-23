@@ -1,4 +1,4 @@
-# RE-E DB Design
+# routy DB Design
 
 > SQLite via `node:sqlite` (builtin, Node ≥22.5). Replaces upstream's 4-driver chain
 > (`9router/src/lib/db/driver.js`). Companion: [backend-architecture.md](./backend-architecture.md).
@@ -85,7 +85,7 @@ Removes upstream's 2–3 uncached `getSettings()` SQLite reads per request
 
 ## 4. Write discipline (event loop protection)
 
-| Concern | Upstream | RE-E |
+| Concern | Upstream | routy |
 |---|---|---|
 | Usage event per request | sync insert mid-stream | queue + flush every 250ms or 50 events; usage `SELECT`s hit the same WAL db without blocking readers |
 | Request detail blobs | full raw bodies | cap 64KB per blob, truncate flag, retention: 7 days + 50k rows (configurable), eviction on flush |

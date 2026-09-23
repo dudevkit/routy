@@ -1,7 +1,7 @@
 ---
 version: 0.1.0
-name: "RE-E Design (Dark)"
-description: "RE-E Design dark theme — the primary consumption target for the gateway dashboard. Same token names as DESIGN.md; only values differ."
+name: "routy Design (Dark)"
+description: "routy Design dark theme — the primary consumption target for the gateway dashboard. Same token names as DESIGN.md; only values differ."
 
 colors:
   # ── Background surfaces ──
@@ -310,9 +310,9 @@ components:
 ---
 
 <!-- COMPLETENESS_LEVEL: 3 — last audited 2026-09-17 -->
-<!-- SUPERSEDED 2026-09-17: user chose upstream 9Router visual identity for v1 (see DECISIONS.md). Token SSOT for code is now upstream `9router/src/app/globals.css`, mirrored verbatim in `re-e-ui/src/index.css`. This file is kept as the record of the rejected alternative and for v2 reconsideration. -->
+<!-- SUPERSEDED 2026-09-17: user chose upstream 9Router visual identity for v1 (see DECISIONS.md). Token SSOT for code is now upstream `9router/src/app/globals.css`, mirrored verbatim in `routy-ui/src/index.css`. This file is kept as the record of the rejected alternative and for v2 reconsideration. -->
 
-# RE-E Design — Dark Theme
+# routy Design — Dark Theme
 
 The primary consumption target. Same token names and semantics as `DESIGN.md`; only
 values differ. All usage rules, component state rules, motion, shapes, voice, and

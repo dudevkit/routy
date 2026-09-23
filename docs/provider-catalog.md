@@ -1,9 +1,9 @@
-# RE-E Provider Catalog
+# routy Provider Catalog
 
 > **Purpose:** complete inventory of 9Router's 122 provider registry entries with the
-> information needed to implement any of them later in RE-E. Generated from
+> information needed to implement any of them later in routy. Generated from
 > `9router/open-sse/providers/registry/*.js` on 2026-09-17 (upstream v0.5.75).
-> Scope decision: **RE-E v1 ships zero embedded providers — only custom OpenAI-compatible
+> Scope decision: **routy v1 ships zero embedded providers — only custom OpenAI-compatible
 > nodes** (user-provided baseUrl + apiKey). This catalog is the implementation menu for
 > everything beyond v1.
 >
@@ -39,7 +39,7 @@ separate layers — (1) translator pair (format-driven), (2) executor instance
 (`executors/index.js` provider-id map), (3) token refresh function
 (`tokenRefresh/providers.js`). Implementing a provider later = filling 1-3 of these layers.
 
-## 2. RE-E v1: custom OpenAI-compatible node only
+## 2. routy v1: custom OpenAI-compatible node only
 
 Zero embedded providers. v1 ports the **provider node** concept
 (`src/lib/db/repos/nodesRepo.js`): a dynamic, user-created upstream:
@@ -236,7 +236,7 @@ OAuth flows and format specialties.
 
 
 Media providers (TTS/STT/image/video/search) are configured separately in
-`open-sse/config/mediaConfig.js` — out of RE-E v1 scope (deferred), cataloged on request.
+`open-sse/config/mediaConfig.js` — out of routy v1 scope (deferred), cataloged on request.
 
 ## 5. Custom executors (the expensive list)
 

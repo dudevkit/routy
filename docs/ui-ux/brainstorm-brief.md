@@ -1,13 +1,13 @@
 # UI/UX Brainstorm Brief (seed for the ui-ux worktree)
 
-> You are in the `ui-ux` worktree of the RE-E project. This file is your launching pad.
+> You are in the `ui-ux` worktree of the routy project. This file is your launching pad.
 > Read order: `../docs/project-log.md` (state) → this file → `../docs/backend-architecture.md`
 > §5 (the API seam) → upstream dashboard inventory (§3 here).
 
-## What RE-E is (30 seconds)
+## What routy is (30 seconds)
 
 Re-engineering of 9Router (local AI gateway) into a stable, lightweight backend + a
-separate UI. The backend (`re-e-core`) is planned; **the UI/UX half is what this worktree
+separate UI. The backend (`routy-core`) is planned; **the UI/UX half is what this worktree
 is for.** Project log: `../docs/project-log.md`. Never edit backend docs here except
 through the merge discipline below.
 
@@ -17,7 +17,7 @@ through the merge discipline below.
    (fast, ugly, working OAuth flows) vs rebuild a lean SPA (slow, ours). Not mutually
    exclusive: reuse-first-then-replace is the current default thinking. Brainstorm should
    pressure-test or kill this.
-2. **What the UI must do** (from upstream's dashboard, trimmed to RE-E scope):
+2. **What the UI must do** (from upstream's dashboard, trimmed to routy scope):
    - Connect upstreams (compatible nodes: baseUrl + key + model prefix) + API keys
    - Combos + aliases + provider node management
    - Usage: requests, tokens, cost, TTFT, per-node charts
@@ -26,7 +26,7 @@ through the merge discipline below.
    - Health/breaker status + reset
    - Proxy pools (user requirement — kept feature)
 3. **What the UI must NOT need:** anything on the inference hot path. UI crash ≠ proxy
-   crash. UI is a dev tool; the backend must be fully drivable without it (`re-e init`).
+   crash. UI is a dev tool; the backend must be fully drivable without it (`routy init`).
 
 ## The seam (what you design against)
 

@@ -1,4 +1,4 @@
-# RE-E UI — IA Proposal + v1 Strategy Verdict (brainstorm steps 2–3)
+# routy UI — IA Proposal + v1 Strategy Verdict (brainstorm steps 2–3)
 
 > 2026-09-17. Evidence base: `upstream-dashboard-inventory.md`. Scope pinned by
 > DECISIONS.md (media/mitm/pxpipe/skills/chat cut; relay deploy v2; translator v2;
@@ -45,14 +45,14 @@ The brief's default thinking was reuse-the-Next-dashboard-out-of-process, then r
 Pressure-tested — it fails on v1 scope:
 
 1. **The reuse asset doesn't apply.** Upstream's "fast, working OAuth flows" is the
-   reuse argument — but RE-E v1 has **zero embedded providers**. There are no OAuth
+   reuse argument — but routy v1 has **zero embedded providers**. There are no OAuth
    flows to reuse. The must-list is custom nodes + management API only.
 2. **The API seam diverges deliberately.** Upstream UI fetches ~100 `/api/*` routes
    (oauth/*, cli-tools/*, mitm/*, media, translator, sync, updater). §5 ships ~20 and
    drops the rest. Reuse = shim layer emulating dropped routes, or maintaining a fork
    of a 13k-LOC dashboard we don't own.
 3. **Dep weight is the reason for the split.** SAML, sql.js, embedded express,
-   i18n×10, monaco, xyflow are upstream requirements RE-E explicitly rejects.
+   i18n×10, monaco, xyflow are upstream requirements routy explicitly rejects.
 4. **Rebuild is small.** 8 screens over ~20 management endpoints ≈ 3–4k LOC.
 
 Hybrid survives as: **steal the inventoried patterns, not the code** (console-log SSE
@@ -63,5 +63,5 @@ protocol, DnD builder, quota bars, drill-down drawer, status filter).
 **Vite + React + TypeScript + Tailwind** (v4), TanStack Query for API state, recharts
 (charts), dnd-kit (combo builder). No Next.js — no SSR/SEO/route-server needs for a
 local dev tool; Next would re-import the process-weight problem. Deployment: static
-build served by `re-e-core` (`/ui/*`) with the SPA also runnable standalone for
+build served by `routy-core` (`/ui/*`) with the SPA also runnable standalone for
 development; dark-first, dense, monospace-friendly tokens per step 4.

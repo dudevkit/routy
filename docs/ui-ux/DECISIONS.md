@@ -1,4 +1,4 @@
-# RE-E UI/UX Decisions (append-only, dated)
+# routy UI/UX Decisions (append-only, dated)
 
 > Format: `## YYYY-MM-DD — Title` then decision, rationale, alternatives rejected.
 > Settled = user-ratified or derived from already-locked project decisions.
@@ -64,7 +64,7 @@ drill-down drawer, status filter). Evidence: ia-proposal.md §3.
 ## 2026-09-17 — UI stack: Vite + React + TS + Tailwind (user-ratified)
 
 No Next.js. TanStack Query (API state), recharts (charts), dnd-kit (combo builder).
-Static build served by re-e-core at /ui/*, standalone Vite dev server for development.
+Static build served by routy-core at /ui/*, standalone Vite dev server for development.
 No SSR/SEO/route-server needs; Next would re-import the process-weight problem the
 split exists to remove.
 
@@ -76,7 +76,7 @@ gray-alpha, blue/green/amber/red/purple), typography Inter + JetBrains Mono at 1
 base (dense), 4px spacing, radius family 6/10/14/pill, component tokens (buttons,
 inputs+mono, card, badges, nav, table, log-line, code-chip), elevation/motion/shapes/
 voice defined. Status semantics: green=healthy, amber=degraded, red=breaker-open,
-blue=interactive, purple=RTK. Migration note: files move to `re-e-ui/` root when the
+blue=interactive, purple=RTK. Migration note: files move to `routy-ui/` root when the
 package exists. Fonts: Inter + JetBrains Mono (bundled locally, no CDN dependency).
 
 ## 2026-09-17 — Component vocabulary v1 (settled with DESIGN.md)
@@ -88,7 +88,7 @@ special-cases, not primitives.
 
 ## 2026-09-17 — Preview slice v0.1 shipped (settled)
 
-`re-e-ui/` scaffolded per agreed repo layout (this branch; merges clean as new
+`routy-ui/` scaffolded per agreed repo layout (this branch; merges clean as new
 directory). Vite 7 + React 19 + TS strict + Tailwind v4. Screens live: NavRail (IA
 groups), Overview (endpoint strip, 5 stat cards, node health cards, failures table,
 empty state), Add Upstream modal (name/baseUrl/key/prefix + Test Connection with
@@ -99,7 +99,7 @@ Verified: full flow in headless browser (add node → 200·52ms·14 models → s
 4 nodes; Reset Breaker → breaker-open cleared). Computed-style QA matches
 DESIGN.dark.md tokens exactly (bg #0c0c0e, light-fill primary, blue-100 nav,
 green-800 badge, mono data with tabular-nums, 6/10/14px radii, 13px base, Inter +
-JetBrains Mono bundled locally). Screenshots in `re-e-ui/.preview/`.
+JetBrains Mono bundled locally). Screenshots in `routy-ui/.preview/`.
 
 Implementation note: Tailwind v4 via `@tailwindcss/postcss` — the `@tailwindcss/vite`
 plugin (4.3.3) expanded imports but compiled zero utilities on this Windows/Vite 7
@@ -111,13 +111,13 @@ variable fonts are a known quirk; computed styles confirm real loading.
 User instruction: prefer the original 9Router layout, blocking, and style over the
 authored design system. Source recon of upstream `globals.css` + `DashboardLayout` +
 `Sidebar` + `Header` + primitives (Button/Card/Badge/Modal/Input/ThemeToggle), ported
-verbatim into re-e-ui: brand coral #E56A4A scale, warm dark surfaces (#1a1a1a/#262626),
+verbatim into routy-ui: brand coral #E56A4A scale, warm dark surfaces (#1a1a1a/#262626),
 header-carried page titles + descriptions, w-72 vibrancy sidebar with traffic lights +
 gradient logo, `landing-grid` background, `p-6 lg:p-10` + `max-w-7xl` content, upstream
 Button/Card/Badge/Modal (traffic-light header)/Input classes, material-symbols icons
 (ligature + fill-1 active states), top-right toast stack, upstream scrollbars/selection.
 `DESIGN.md`/`DESIGN.dark.md` marked SUPERSEDED (kept as rejected-alternative record);
-token SSOT for code = upstream globals.css mirrored in `re-e-ui/src/index.css`.
+token SSOT for code = upstream globals.css mirrored in `routy-ui/src/index.css`.
 
 Re-verified after restyle: connect flow end-to-end (fill → Test Connection →
 200·137ms·21 models → save → node count grows; Reset Breaker → toast, breaker-open
@@ -202,7 +202,7 @@ with ISO timestamps formatted and no failure section when there are no failures.
 `/upstreams|/usage|/console|/combos|/pools|/token-saver|/settings` routed.
 
 **Verified against the running gateway** (power cut mid-session; both processes
-relaunched, `re-e-core` needs `npm install` in this worktree — deps are not shared
+relaunched, `routy-core` needs `npm install` in this worktree — deps are not shared
 between worktrees): fresh install renders zeros/empty states on every screen; created
 a node through the modal (probe surfaced the real `HTTP 404`), combo + alias through
 the UI, client key through Settings (plaintext shown once → verified absent from the
@@ -253,7 +253,7 @@ local-midnight-based with batched-write lag (§6c).
 State left: nodes `[demo]`, `dev-combo`, `smart` alias, **no API keys** (both
 verification keys deleted; the plaintext of yesterday's `re_2aca…` never existed
 outside my session, so mint your own through Settings). `Gate Test` vanished
-between two reads — main's session edits the same `~/.re-e` DB, so screens must
+between two reads — main's session edits the same `~/.routy` DB, so screens must
 tolerate config changing underneath them (they do: react-query refetch on window
 focus, no cached-write assumptions).
 
@@ -340,7 +340,7 @@ the one gap that would need a real refactor before neo could take over as the id
 **Verdict: keep Graphite Pro as the default.** Neo is the strongest of the eight for
 chrome (sidebar, modals, settings), the weakest for the two screens that matter most —
 Upstreams and Usage Details. Recommendation stands until someone wears it for a week on
-real traffic: `cd re-e-ui && npm run dev` → `/theme` → Try in the live app.
+real traffic: `cd routy-ui && npm run dev` → `/theme` → Try in the live app.
 
 ## 2026-09-19 — Neuphorism entry rebuilt against the real spec (supersedes the guess above)
 
@@ -388,7 +388,7 @@ spec's light weights. And the spec's 12/24 extrusion is scaled to 6/12 on 32px c
 loses to our 32px row density; unresolved, flagged rather than silently ignored.
 
 Catalog entry renamed **H · Neuphorism** with its texture note rewritten to describe what
-it actually does, and it now says where to judge it: Upstreams. `re-e-ui/.preview/
+it actually does, and it now says where to judge it: Upstreams. `routy-ui/.preview/
 neo-{light,dark,catalog}.png` hold the renders (no vision path in this session, so those
 are for your eyes).
 
@@ -475,4 +475,4 @@ the panel's closing div, so they hung off `html.scheme-neo` and variant C measur
 form (`.dark .scheme-neo [data-neu]`), missing the same-element case when the skin sits
 on `<html>`. Both selector shapes now exist; dark C verifies at −5.1/+4.1.
 
-`re-e-ui/.preview/raised-variants-{light,dark}.png` show all four in each mode.
+`routy-ui/.preview/raised-variants-{light,dark}.png` show all four in each mode.

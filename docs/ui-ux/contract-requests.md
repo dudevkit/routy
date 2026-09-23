@@ -1,4 +1,4 @@
-# RE-E UI → Backend Contract Requests (never edit backend docs directly)
+# routy UI → Backend Contract Requests (never edit backend docs directly)
 
 > Main session folds accepted requests into `docs/backend-architecture.md` §5 at merge.
 > Format: dated entries, each with the UI need, proposed shape, and fallback if rejected.
@@ -78,7 +78,7 @@ At `info` (the default), a healthy gateway emits **zero** request lines: the
 request-path emitters are `log.debug("ROUTE")` (unresolvable only),
 `log.debug("RTK")` (on hits), `log.debug("FETCH")` (per upstream call) and
 `log.warn("CHAT")` (on node failure). So the console's headline screen is empty
-until something goes wrong. Running with `RE_E_LOG_LEVEL=debug` proves the
+until something goes wrong. Running with `ROUTY_LOG_LEVEL=debug` proves the
 plumbing is fine — `init` then returned live `{"tag":"FETCH","msg":"demo ← 200
 ttft=19ms"}` lines. (My earlier "gateway logs nothing" note was measured against
 a process still running at the default level; corrected here.)
@@ -101,7 +101,7 @@ ring; (c) `GET /api/logs/stream?level=info`; (d) `POST /api/logs/clear`.
 ```
 
 Still reproducing on every boot (observed five distinct tokens this evening in
-`re-e-core` stdout). `REDACT_KEYS` should cover `bootstrapToken`; the boot record
+`routy-core` stdout). `REDACT_KEYS` should cover `bootstrapToken`; the boot record
 is evidently bypassing `redact()`. The management token must never reach stdout,
 the ring, or `/api/logs/stream`. The UI never displays it.
 
@@ -112,8 +112,8 @@ process whose supervising wrapper dies leaves the **node child alive holding
 8010**; every later launch then dies with a 20-line unhandled
 `Error: listen EADDRINUSE` stack and exit 1, which reads like a crash loop of the
 gateway itself. For a project whose headline is stability: catch `error` on
-`server.listen`, print one human line (`port 8010 already in use — another re-e
-gateway is running (pid …)? set RE_E_PORT`), and exit non-zero without a stack.
+`server.listen`, print one human line (`port 8010 already in use — another routy
+gateway is running (pid …)? set ROUTY_PORT`), and exit non-zero without a stack.
 Bonus: have `GET /api/health` (or the boot line) report its pid so an operator can
 tell a live server from a stale supervisor.
 
@@ -138,7 +138,7 @@ the gateway's.
 
 `dev-combo` with `models:["demo/test-model"]`: `POST /v1/… {"model":"dev-combo"}`
 → 200, but `{"model":"dev-combo/test-model"}` → 404 `unresolvable model string`.
-The UI's hint says clients call `<combo>/<model>` (from `re-e init` copy). Which is
+The UI's hint says clients call `<combo>/<model>` (from `routy init` copy). Which is
 authoritative? I will phrase the Combos screen hint to match the answer.
 
 ### 8. Question: is `GET /v1/models` intentionally unauthenticated?
@@ -166,7 +166,7 @@ post-merge gateway. Five defects, in severity order.
 
 ### R3-1. The healthy path is still silent — the new REQ line never fires
 
-Post-merge build, **default** level (no `RE_E_LOG_LEVEL`): two `POST /v1/chat/completions`
+Post-merge build, **default** level (no `ROUTY_LOG_LEVEL`): two `POST /v1/chat/completions`
 returned 200, and the ring still held exactly one line (BOOT). With `?level=debug`
 the `init` snapshot was `[]` and a stream held open across both requests received
 **zero** `line` frames. Round-2 §5 asked for visibility on success; the line exists in
@@ -214,13 +214,13 @@ repo filter are correct — nothing to correlate against. My drawer still works 
 back to ms-timestamp correlation, which is exactly the ambiguity §2 was meant to
 remove). Ask: record the usage event first, then attach its id to the detail rows.
 
-### R3-6. Two gateways, one `RE_E_HOME` — the port rule needs a DB twin
+### R3-6. Two gateways, one `ROUTY_HOME` — the port rule needs a DB twin
 
-While my session and another were both writing `~/.re-e`: a key I read as the only row
+While my session and another were both writing `~/.routy`: a key I read as the only row
 vanished from under a subsequent call, and a node I deleted reappeared. Concretely:
 **my first probe pass deleted an API key created by the other session** (I targeted
 `list[0].id` and the ordering changed between reads). Nothing is recoverable from that
-key, but it is a real consequence of a shared mutable DB. Please make one `re-e.db`
+key, but it is a real consequence of a shared mutable DB. Please make one `routy.db`
 imply one gateway: refuse to start when the file is already held (a lock row or
 `PRAGMA locking_mode=EXCLUSIVE`), and say so in a human line like the §6b port case.
 
@@ -265,7 +265,7 @@ suggestion list.
 - **R3-5 usageEventId NULL:** FIXED — usage event is now written synchronously
   (single-row insert returning the id, replacing the write-behind queue) and both
   detail rows carry it. Verified: details rows now carry `usageEventId`.
-- **R3-6 shared RE_E_HOME:** ACCEPTED as designed — gateway boot now takes a lockfile
+- **R3-6 shared ROUTY_HOME:** ACCEPTED as designed — gateway boot now takes a lockfile
   (`<home>/gateway.lock`, pid-stamped, stale-takeover if the holder is dead) and
   refuses with a human line when another live gateway holds the same home.
 - **Item 5b BOOT ring provenance:** done (log.info BOOT without token; token stays
