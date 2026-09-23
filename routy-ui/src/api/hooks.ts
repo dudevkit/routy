@@ -13,6 +13,7 @@ const ALIASES: QueryKey = ["aliases"];
 const POOLS: QueryKey = ["pools"];
 const UPDATES: QueryKey = ["updates"];
 const CLI_TOOLS: QueryKey = ["cli-tools"];
+const ROUTABLE: QueryKey = ["routable-models"];
 
 /* ── queries ───────────────────────────────────────────────────────────────── */
 export const useNodes = () => useQuery({ queryKey: NODES, queryFn: api.listNodes, refetchInterval: 20000 });
@@ -193,6 +194,19 @@ export const useCreateKey = () => useMutation({ mutationFn: api.createKey, onSuc
 export const useRemoveKey = () => useMutation({ mutationFn: api.removeKey, onSuccess: useInvalidator(KEYS, GATEWAY) });
 /** enabled=false revokes without destroying the key row */
 export const useSetKeyEnabled = () => useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.setKeyEnabled(id, enabled), onSuccess: useInvalidator(KEYS) });
+
+/** Routable model ids from /v1/models — provider models, aliases and combos. */
+export const useRoutableModels = () =>
+  useQuery({
+    queryKey: ROUTABLE,
+    queryFn: async () => {
+      const res = await fetch("/v1/models");
+      if (!res.ok) throw new Error(`model list unavailable (${res.status})`);
+      const body = (await res.json()) as { data?: { id?: string }[] };
+      return (body.data ?? []).map((m) => m.id).filter((id): id is string => typeof id === "string" && id.length > 0).sort();
+    },
+    staleTime: 60_000,
+  });
 
 export const useCliTools = () => useQuery({ queryKey: CLI_TOOLS, queryFn: api.listCliTools, staleTime: 30_000 });
 export const useConnectCliTool = () =>

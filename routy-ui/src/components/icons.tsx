@@ -19,6 +19,7 @@ import {
   Info,
   Key,
   List,
+  MagnifyingGlass,
   Moon,
   Network,
   Palette,
@@ -101,4 +102,5 @@ export {
   X,
   XCircle,
   ArrowCircleUp,
+  MagnifyingGlass,
 };
