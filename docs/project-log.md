@@ -34,7 +34,10 @@ axolotl/
 
 | Date | Decision | Rationale | Alternatives rejected |
 |---|---|---|---|
-| 2026-09-17 | Clone upstream instead of forking workflow | We're studying + remaking, not contributing yet | Fork + PR flow |
+| 2026-09-23 | **Model list is discovery-only** — routing keeps passing through `<prefix>/<any-model>`; the curated list drives `/v1/models` and the UI. No strict/gating mode | Nothing a user does in the UI can break a working client; gating would be a silent breaking change for every unlisted id | strict-by-default; per-node strict flag (deferred) |
+| 2026-09-23 | **Probes are diagnostics, not traffic** — key and model tests write results on their own row, never to `usage_events`, the budget counter, or the breakers | Testing a bad key must not mark a healthy provider down, and a 1-token ping must not move the error rate or spend budget | record probes as real traffic |
+| 2026-09-23 | **Per-provider page** with tabs (Models / API Keys / Settings) replaces the `ConnectionsDrawer` | Keys, models and node config are three different concerns with different actions; a drawer cannot carry per-key and per-model test state | keep the drawer; single scrolling page |
+| 2026-09-23 | **UI vocabulary: Providers** (API/DB keep `provider_nodes`) | Matches how the user talks about it and 9Router's vocabulary; label-only change, no migration | keep "Upstreams" |
 | 2026-09-17 | Write master reference + this log before any code | Cross-conversation continuity; every future session starts grounded | — |
 | 2026-09-17 | **Project named "RE-E"** — a *re-engineering* (not port, not rewrite) of 9Router; upstream `open-sse/` core is the preserved asset | Terminology sets scope: keep battle-tested core, rebuild packaging around it | port, remake/rewrite, refactor, fork |
 | 2026-09-17 | **Two-part split adopted (user proposal):** separate UI-UX from backend. Backend = lean gateway (`/v1/*` + management API + SQLite); UI = dashboard as its own process | Proxy currently welded into Next.js process (dashboard deps on hot path, shared process fate); management-API seam already exists (~100 `/api/*` routes) | keep monolith; full rewrite |
@@ -43,6 +46,13 @@ axolotl/
 
 
 ## Commitments
+- 2026-09-23 (user): **Per-provider page (P6.1–P6.3).** Dedicated `/upstreams/:id`
+  page instead of the drawer, with tabs Models / API Keys / Settings, per-key tests,
+  per-model tests, optional model import, and manual model ids. Decisions locked:
+  model list stays **discovery-only** (routing keeps passing through), probes are
+  **diagnostics only** (no usage/budget/breaker effect), tabs layout, and the UI
+  renames Upstreams → **Providers** (API/DB keep `provider_nodes`). Design:
+  [provider-page.md](./provider-page.md).
 - 2026-09-17 (user): **Backend-only focus.** Proceed P0 → P1 (pure backend: harness,
   core MVP gateway). ~~HOLD P2 until the ui-ux worktree agent delivers the UI/UX guide
   and rules~~ → **LIFTED 2026-09-18**: ui-ux delivered (DECISIONS/DESIGN/ia-proposal/

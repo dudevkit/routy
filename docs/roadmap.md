@@ -35,7 +35,7 @@ P0 Harness ──► P1 Core MVP ──► P2 Mgmt API + UI rewire ──► P3 
 | P3 Stability | Hardened runtime | 2-4 | 15 | **DONE 2026-09-23** — gate passed: chaos pass (upstream killed mid-stream, restart mid-request, 20-way concurrent load) with no corruption, RSS delta 0MB on an 11.4MB stream, breaker state survived restart |
 | P4 Speed | Optimized + observable | 2-3 | 18 | **DONE 2026-09-23** — overhead p50 15.6 → 1.3ms, p99 → 1.7ms (targets ≤5ms/≤15ms); metrics endpoint, latency-aware routing and budget caps shipped |
 | P5 Packaging | Shippable artifact | 1-2 | 20 | **DONE 2026-09-23** — single-file ESM bundle (1.6MB / 798KB min, 216 modules, zero runtime deps) smokes 13/13 and passes both live rigs; multi-stage Dockerfile (unbuilt here — no docker); quickstart + configuration docs |
-| P6 (optional) | Expansion | as needed | — | Per-item: first OAuth provider / lean SPA / media module |
+| P6 (optional) | Per-provider page | 2-4 | — | Gate in [provider-page.md](./provider-page.md): zero-model provider usable end to end; import merges; per-key/per-model tests isolated; probes don't touch usage/budget/breakers |
 
 **Minimum viable product = P0+P1 (~8 sessions).** Everything after is quality or scope.
 
@@ -100,9 +100,26 @@ Undici pool tuning per node (keep-alive, connections, pipelining) · direct tran
 
 esbuild → single-file ESM · Docker (multi-stage, distroless) · `re-e init` polish · optional Bun-compile binary experiment · docs: quickstart + config reference.
 
-## P6 — Expansion menu (each independently schedulable)
+## P6 — Per-provider page (planned 2026-09-23)
 
-First OAuth provider (pick from [provider-catalog.md](./provider-catalog.md) §5-7) · proxy-pool edge deployers · media module (TTS/STT/image/embeddings) · lean SPA dashboard (re-e-ui v2) · cloud sync.
+Design + locked decisions: [provider-page.md](./provider-page.md). Backend first so
+each half ships independently.
+
+| # | Task |
+|---|---|
+| 6.1 | Backend: migration v2 (`node_models` + connection test columns), `node_models` repo, `data.models` boot backfill, `core/probe.mjs` (extracted shared probe), 8 endpoints — models CRUD, import (merge/stale), per-model test, per-key test, bulk key test |
+| 6.2 | UI: nested `/upstreams/:id`, list rows become links, detail page with Models / API Keys / Settings tabs, drawer retired, UI renamed to "Providers" |
+| 6.3 | Polish: bulk-test progress, stale surfacing, docs updates |
+
+**Gate:** a provider with zero models is usable end to end (add an id by hand → test
+→ it appears in `/v1/models`); import merges without deleting manual rows; a bad key
+reports only its own error; probes leave usage, budget and breakers untouched;
+`<prefix>/<unlisted-model>` still routes.
+
+### P6 expansion menu (each independently schedulable)
+
+First OAuth provider (pick from [provider-catalog.md](./provider-catalog.md) §5-7) ·
+proxy-pool edge deployers · media module (TTS/STT/image/embeddings) · cloud sync.
 
 ---
 
