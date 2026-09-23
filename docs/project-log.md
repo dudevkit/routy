@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** P3 COMPLETE — stability pass landed and gate-verified live (69/69 tests). Remaining: P4 speed, P5 packaging.
+- **Phase:** P4 COMPLETE — speed pass landed and gate-verified live (92/92 tests). Remaining: P5 packaging.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -50,6 +50,42 @@ axolotl/
   backend-architecture §5; P2 redefined per ui-ux decisions (roadmap).
 
 ## Done
+
+- 2026-09-23 (P4 speed): the P1 residual is solved. **Root cause** — Node's built-in
+  `fetch` runs on Node's *bundled* undici, whose default dispatcher re-establishes
+  connections constantly: 15.6ms p50 per loopback request through the gateway vs
+  0.4ms with a pooled Agent, flat across p50/p90/p99 and bimodal (0.8ms when a socket
+  happened to be reused, which is why it looked like a timer artefact). A v8 Agent
+  from the npm package cannot drive the built-in fetch (`UND_ERR_INVALID_ARG` —
+  different internal handler interfaces), so the executor now dispatches through npm
+  undici's spec `fetch` with a per-origin Agent. Measured overhead: **p50 15.6 → 1.3ms,
+  p99 16.1 → 1.7ms, total p50 15.5 → 0.2ms** (targets ≤5ms p50 / ≤15ms p99). 20-way
+  concurrency unchanged at 671ms once the connection cap went 16 → 64 (a queued
+  request is added latency; a bounded pool still protects the upstream).
+  **Routing policy** — combo `strategy` was stored but never used; it now selects
+  order: `fallback` (declared), `fastest` (TTFT EWMA), `cheapest` (configured price).
+  Health always dominates. Unknown latency sorts *first* (optimistic initialisation) —
+  ranking an untried node last would keep it untried forever, so the router could
+  never discover a faster upstream; each node is probed once, then ranked on real
+  data. **Pricing + budget** — nodes carry `data.pricing`; cost lands on each usage
+  row; `settings.budgetUsdPerDay` is a hard ceiling on metered spend, enforced before
+  dispatch (402 `budget_exceeded` with `retryAfterMs` to local midnight). Unpriced
+  nodes are unmetered, so an exhausted budget automatically falls through to the free
+  or local upstream instead of failing. **Observability** — `GET /metrics` (Prometheus
+  text): requests by status/node, tokens, cost, TTFT count/sum/min/max, node and
+  breaker state, inflight, pools, uptime, process memory. Counters come from
+  `usage_events` so the hot path stays untouched; the route is guarded like `/api`.
+  **Fixed**: `nodes.update` replaced the whole `data` blob, so editing one field
+  (e.g. pricing) silently wiped the cached model list — it now merges. **Fixed**: the
+  SPA had no router basename, so `/ui/<route>` deep links fell through to the
+  catch-all screen. UI: Spend card (today's spend, daily ceiling, progress) and node
+  pricing fields. Tests: metrics (5) + routing policy (14) + budget e2e (4) → 92/92.
+- 2026-09-23 (P4 gate, live): `scratch/bench-ree.mjs` (direct vs routed),
+  `scratch/p4-verify.mjs` (14/14: strategy ordering, invalid strategy 400, metered
+  cost, 402 at the ceiling, auto-fallback to the unmetered node, all metrics
+  families), `scratch/p4-fastest.mjs` (3/3: a combo declared slow-first explored the
+  slow node once then pinned to the fast one, TTFT 426ms vs 1ms). P3's 11/11 and the
+  browser checks were re-run after the executor swap: no regressions.
 
 - 2026-09-23 (P3 stability): hardening pass landed. **Breakers** — exponential
   backoff on consecutive failures (60s → 120s → 240s … capped at 30min), driven by
@@ -230,6 +266,27 @@ axolotl/
 
 *(Append-only; one line per fact with pointer into reference doc where applicable.)*
 
+- 2026-09-23: Node's built-in `fetch` and the npm `undici` package are *different
+  copies* with incompatible internals — passing an npm v8 `Agent` as `dispatcher` to
+  the built-in fetch fails with `UND_ERR_INVALID_ARG: invalid onRequestStart method`.
+  To configure a pool you must dispatch through npm undici's own `fetch`, which is a
+  spec `Response` and therefore a drop-in replacement.
+- 2026-09-23: Undici's default dispatcher costs ~15ms per request on Windows loopback
+  while a pooled Agent costs ~0.4ms, and the distribution is bimodal rather than
+  noisy — a socket was reused (fast) or it wasn't (slow). A flat p50≈p90≈p99 delta is
+  a good signal for "connection churn", not for timer quantisation.
+- 2026-09-23: Measure before theorising about latency: the same `fetch` to the same
+  stub was 15ms inside the gateway process and 0.8ms in a bare probe, which localised
+  the problem to dispatch config rather than RE-E's own code — after two wrong
+  hypotheses (SQLite blocking, Windows timer tick) that the data ruled out.
+- 2026-09-23: Ranking unknown-latency routes last makes them permanently untried, so
+  the router can never discover a faster upstream. Optimistic initialisation (unknown
+  sorts first, so every node gets probed once) is the correct default for
+  latency-aware routing.
+- 2026-09-23: A JSON config blob needs merge-on-update semantics. `{ ...existing,
+  ...patch }` at the top level replaces `data` wholesale, so a UI that edits one field
+  silently drops the others (here: the cached model list).
+
 - 2026-09-23: A breaker that resets on response *headers* is worse than no breaker
   for streaming upstreams — every dying stream looks like a success first. Judge
   health at stream end, never at headers.
@@ -312,6 +369,8 @@ axolotl/
 
 | Date | Summary |
 |---|---|
+| 2026-09-23 | P4 speed: pooled per-origin undici dispatcher (overhead 15.6 → 1.3ms p50, 16.1 → 1.7ms p99 — the P1 residual was Node's built-in fetch connection churn), Prometheus `/metrics`, combo strategies `fastest`/`cheapest` with optimistic latency probing, node pricing + daily budget ceiling with auto-fallback to unmetered nodes, `nodes.update` data-merge fix, SPA router basename fix, UI Spend card + node pricing fields. 92/92 tests |
+| 2026-09-23 | P4 gate verified live: 14/14 routing/budget/metrics checks, 3/3 latency-aware routing (combo declared slow-first pinned to the fast node after one probe, 426ms vs 1ms), P3's 11/11 re-run clean after the executor swap, browser-verified Spend card and node pricing (edit preserved the cached model list) |
 | 2026-09-23 | P3 stability: breaker exponential backoff + 2 latent breaker bugs fixed (reset ignored `failures`; success recorded at headers so dying streams looked healthy), stream stall watchdog (stream + non-streaming body reads), mid-stream death counts as a breaker failure, graceful drain shutdown, hourly retention job, Windows service story (scheduled-task script + docs + `/api/gateway/shutdown`), fresh-`RE_E_HOME` boot crash fixed. 69/69 tests |
 | 2026-09-23 | P3 gate verified live on :8015 (started through the Windows launcher): 11/11 chaos checks, 4/4 breaker-persistence-across-restart, 5/5 graceful-drain (40/40 chunks after shutdown mid-stream, exit 0, lock released). Boot 317ms; RSS delta 0MB on an 11.4MB stream |
 | 2026-09-17 | Cloned repo; full recon; wrote reference doc + this log; brainstorm delivered; decisions deferred |

@@ -2,6 +2,8 @@
 // (the transport contract). Auth: loopback peers pass; non-loopback requires
 // the bootstrap token (Bearer) — the SPA is same-origin by design (P2.1).
 import { json, readBody } from "../lib/router.mjs";
+import { COMBO_STRATEGIES } from "../core/routing.mjs";
+import { budgetSpent } from "../core/budget.mjs";
 import { clearLogs, recentLogs, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
 
 const uuid = () => crypto.randomUUID();
@@ -45,6 +47,8 @@ function nodeView(repos, node, now = Date.now()) {
     latencyMs: lastOk ? lastOk.ttft_ms : null,
     modelCount: Number(node.data?.modelCount) || 0,
     models: Array.isArray(node.data?.models) ? node.data.models : [],
+    /** the node's config bag (pricing, pool tuning, retry overrides, cached models) */
+    data: node.data || {},
     keyMasked: maskKey(primary?.credentials?.apiKey),
     lastError: breaker?.lastError || undefined,
   };
@@ -106,6 +110,9 @@ function usageStats(repos) {
     requestsToday,
     tokens7d,
     costUsd7d: Math.round(costUsd7d * 10000) / 10000,
+    // Same counter the budget ceiling enforces against, so the UI cannot disagree
+    // with routing about how much of today's budget is gone.
+    costUsdToday: Math.round(budgetSpent() * 1_000_000) / 1_000_000,
     errorRatePct: week.length ? Math.round((errors / week.length) * 1000) / 10 : 0,
     ttftP50Ms: ttftP50,
   };
@@ -272,10 +279,16 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("GET", /^\/api\/combos$/, (req, res) => json(res, 200, repos.combos.list()));
   route("POST", /^\/api\/combos$/, async (req, res) => {
     const input = JSON.parse((await readBody(req)).toString("utf8"));
+    if (input.strategy !== undefined && !COMBO_STRATEGIES.includes(input.strategy)) {
+      return json(res, 400, { error: { message: "bad_request", detail: `strategy must be one of ${COMBO_STRATEGIES.join(", ")}` } });
+    }
     json(res, 201, repos.combos.create(input));
   });
   route("PUT", /^\/api\/combos\/(?<id>[^/]+)$/, async (req, res, p) => {
     const patch = JSON.parse((await readBody(req)).toString("utf8"));
+    if (patch.strategy !== undefined && !COMBO_STRATEGIES.includes(patch.strategy)) {
+      return json(res, 400, { error: { message: "bad_request", detail: `strategy must be one of ${COMBO_STRATEGIES.join(", ")}` } });
+    }
     json(res, 200, repos.combos.update(p.id, patch));
   });
   route("DELETE", /^\/api\/combos\/(?<id>[^/]+)$/, (req, res, p) => noContent(res, repos.combos.delete(p.id)));

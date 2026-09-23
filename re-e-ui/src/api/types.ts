@@ -20,7 +20,9 @@ export interface UpstreamNode {
   /** 0 until a Test probe runs (the probe caches modelCount on the node) */
   modelCount: number;
   models: string[];
-  /** always masked — plaintext never returns */
+  /** the node's config bag: pricing, pool tuning, retry overrides, cached models */
+  data: NodeData;
+  /** always masked - plaintext never returns */
   keyMasked: string;
   lastError?: string;
 }
@@ -31,6 +33,8 @@ export interface NewNodeInput {
   apiKey: string;
   prefix: string;
   apiType?: string;
+  /** config bag: pricing, pool tuning, stall watchdog. Merges on update. */
+  data?: NodeData;
 }
 
 /** POST /api/nodes/{id}/test and /api/nodes/test — failures return HTTP 200 + ok:false */
@@ -73,6 +77,8 @@ export interface UsageStats {
   requestsToday: number;
   tokens7d: number;
   costUsd7d: number;
+  /** metered spend since local midnight — what the budget ceiling enforces against */
+  costUsdToday: number;
   errorRatePct: number;
   /** 0 when no successful request has recorded a TTFT */
   ttftP50Ms: number;
@@ -195,6 +201,26 @@ export interface Settings {
   requireApiKey?: boolean;
   /** RTK token-saver compression */
   rtkEnabled?: boolean;
+  /** daily ceiling on metered upstream spend; 0 or absent = unlimited */
+  budgetUsdPerDay?: number;
+  [k: string]: unknown;
+}
+
+/** Per-node upstream price, used for cost tracking and the budget ceiling.
+ *  A node without this is unmetered: it records no cost and is never blocked. */
+export interface NodePricing {
+  inputPer1M?: number;
+  outputPer1M?: number;
+}
+
+/** Node-level tuning knobs carried in the node's `data` blob. */
+export interface NodeData {
+  /** null explicitly clears a price (the backend merges, it does not replace) */
+  pricing?: NodePricing | null;
+  /** stall watchdog budget in ms; 0 disables */
+  streamIdleTimeoutMs?: number;
+  /** upstream connection pool tuning */
+  pool?: { connections?: number; keepAliveTimeoutMs?: number; pipelining?: number; noDelay?: boolean };
   [k: string]: unknown;
 }
 

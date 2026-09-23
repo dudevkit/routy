@@ -3,7 +3,10 @@
 // forced-SSE→JSON conversion + body-based source detection (upstream parity).
 import { readBody, json } from "../../lib/router.mjs";
 import { log as rootLog } from "../../lib/log.mjs";
-import { resolveRoute } from "../routing.mjs";
+import { resolveRoute, orderRoutes } from "../routing.mjs";
+import { observeTtft } from "../latency.mjs";
+import { costOf, isMetered } from "../pricing.mjs";
+import { addSpend, budgetState } from "../budget.mjs";
 import { DefaultExecutor } from "../executors/default.mjs";
 import { formatSse } from "../sse/parser.mjs";
 import { pumpSse, UsageTracker, LogBuffer } from "../sse/stream.mjs";
@@ -79,12 +82,29 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
     const stream = body.stream !== false; // claude clients often omit; explicit false respected
     const clientAbort = new AbortController();
 
-    const routes = route.kind === "combo" ? orderRoutes(route.routes) : [route];
+    // Combo order follows its strategy (fallback/fastest/cheapest); then the
+    // daily budget drops metered routes once the ceiling is reached, so an
+    // exhausted budget falls through to a free/local node instead of failing.
+    const ordered = route.kind === "combo" ? orderRoutes(route.routes, { strategy: route.strategy }) : [route];
+    const budget = budgetState(settings.budgetUsdPerDay);
+    const routes = budget.over ? ordered.filter((r) => r.kind === "node" && !isMetered(r.node)) : ordered;
     res.on("close", () => clientAbort.abort());
     let lastError = null;
 
+    if (routes.length === 0 && budget.over) {
+      return json(res, 402, {
+        error: {
+          message: "budget_exceeded",
+          detail: `daily budget of $${budget.limit} spent ($${budget.spent.toFixed(4)}); no unmetered route available`,
+          spentUsd: budget.spent,
+          limitUsd: budget.limit,
+          retryAfterMs: budget.retryAfterMs,
+        },
+      });
+    }
+
     // Fail fast when every route has an open breaker — hammering a dead upstream
-    // is what the breaker exists to prevent. Half-open probing lands in P3.
+    // is what the breaker exists to prevent.
     const candidates = routes.filter((r) => r.kind === "node" && r.healthy);
     if (candidates.length === 0) {
       const expiries = routes
@@ -312,12 +332,6 @@ function pickConnection(repos, node) {
   return list[0] || null;
 }
 
-function orderRoutes(routes) {
-  const healthy = routes.filter((r) => r.healthy && r.kind === "node");
-  const rest = routes.filter((r) => !(r.healthy && r.kind === "node"));
-  return [...healthy, ...rest];
-}
-
 export function recordFailure(repos, node, err) {
   const scope = `node:${node.id}`;
   const cur = repos.breakers.record(scope, { failureDelta: 1, lastError: `${err.errorCode}: ${(err.message || "").slice(0, 200)}` });
@@ -339,6 +353,12 @@ function recordSuccess(repos, node) {
 }
 
 function recordUsage(repos, log, route, connection, clientModel, { status, usage, durationMs, apiKeyId }) {
+  // Metered nodes carry pricing config; unmetered ones record null and can never
+  // consume budget. Latency memory is fed here so routing has one write path.
+  const costUsd = costOf(route.node, { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens });
+  if (Number.isFinite(costUsd)) addSpend(costUsd);
+  if (status === "ok" && Number.isFinite(usage.ttftMs)) observeTtft(route.node.id, usage.ttftMs);
+
   const event = repos.usage.record({
     nodeId: route.node.id,
     connectionId: connection.id,
@@ -349,6 +369,7 @@ function recordUsage(repos, log, route, connection, clientModel, { status, usage
     completionTokens: usage.completionTokens,
     ttftMs: usage.ttftMs ?? null,
     durationMs,
+    costUsd: Number.isFinite(costUsd) ? costUsd : null,
   });
   // Console visibility on the healthy path (ui-ux contract round 2, item 5a)
   log.info("REQ", `${route.node.prefix} ← ${status}`, {
@@ -360,6 +381,7 @@ function recordUsage(repos, log, route, connection, clientModel, { status, usage
     durationMs,
     promptTokens: usage.promptTokens ?? null,
     completionTokens: usage.completionTokens ?? null,
+    costUsd: Number.isFinite(costUsd) ? Number(costUsd.toFixed(6)) : null,
   });
   return event.id;
 }

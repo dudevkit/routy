@@ -2,6 +2,8 @@
 // Precedence: context-marker strip → alias → combo name → node prefix.
 // Breaker-aware: routes carry a healthy flag; executors (P1.4) decide fallback.
 import { log } from "../lib/log.mjs";
+import { ttftOf } from "./latency.mjs";
+import { priceOf } from "./pricing.mjs";
 
 // Claude Code marks 1M-context requests as "<model>[1m]" (upstream parity,
 // 9router/src/sse/handlers/chat.js:51-55). Capability travels in headers, not the id.
@@ -80,6 +82,41 @@ export function resolveRoute(repos, modelStr, { depth = 0 } = {}) {
 
   if (depth === 0) log.debug("ROUTE", `unresolvable model string`, { modelStr });
   return null;
+}
+
+export const COMBO_STRATEGIES = Object.freeze(["fallback", "fastest", "cheapest"]);
+
+/**
+ * Order combo routes for dispatch. Health always dominates: an unhealthy route
+ * is never preferred just because it is fast or cheap.
+ *
+ *   fallback — declared order (default; what the user wrote is what runs)
+ *   fastest  — by recent TTFT EWMA, unknown latency last
+ *   cheapest — by configured price, unpriced (unmetered) nodes first
+ */
+export function orderRoutes(routes, { strategy = "fallback" } = {}) {
+  const healthy = routes.filter((r) => r.healthy && r.kind === "node");
+  const rest = routes.filter((r) => !(r.healthy && r.kind === "node"));
+  if (strategy === "fastest") {
+    // Unknown latency sorts FIRST (optimistic initialisation). Ranking an untried
+    // node last would keep it untried forever, so the router could never discover a
+    // faster upstream — each node gets probed once, then ranked on real data.
+    healthy.sort((a, b) => latencyRank(a.node.id) - latencyRank(b.node.id));
+  } else if (strategy === "cheapest") {
+    healthy.sort((a, b) => priceRank(a.node) - priceRank(b.node));
+  }
+  return [...healthy, ...rest];
+}
+
+function latencyRank(nodeId) {
+  const v = ttftOf(nodeId);
+  return v === null ? -1 : v;
+}
+
+function priceRank(node) {
+  const price = priceOf(node);
+  if (!price) return 0; // unmetered: cannot add cost, so it is the cheapest option
+  return price.inputPer1M + price.outputPer1M;
 }
 
 /**

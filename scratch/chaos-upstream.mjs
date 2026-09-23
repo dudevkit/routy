@@ -4,6 +4,7 @@
 import http from "http";
 
 const PORT = parseInt(process.env.STUB_PORT || "20995", 10);
+const DELAY_MS = parseInt(process.env.STUB_DELAY_MS || "0", 10); // per-request first-byte delay
 const TOKENS = Array.from({ length: 40 }, (_, i) => ` token${i}`);
 const stats = { requests: 0, modes: {} };
 
@@ -39,6 +40,16 @@ http.createServer((req, res) => {
     stats.requests++;
     stats.modes[mode] = (stats.modes[mode] || 0) + 1;
 
+    // DELAY_MS holds the response before its FIRST byte, so a "slow" instance is
+    // genuinely slow to first token — which is what latency-aware routing ranks on.
+    if (DELAY_MS > 0) {
+      const hold = setTimeout(send, DELAY_MS);
+      res.on("close", () => clearTimeout(hold));
+      return;
+    }
+    send();
+
+    function send() {
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
     res.write(chunkLine({ role: "assistant" }));
 
@@ -113,5 +124,6 @@ http.createServer((req, res) => {
       }
     }, 10);
     res.on("close", () => clearInterval(timer));
+    }
   });
 }).listen(PORT, "127.0.0.1", () => console.log(`chaos stub ready on http://127.0.0.1:${PORT}`));

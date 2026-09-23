@@ -13,4 +13,7 @@ tests/golden/.tmp-data/
 /scratch/ree-home/
 /scratch/ree-home-r3/
 /scratch/chaos-home/
+# local gateway state dirs (RE_E_HOME) used by the verification rigs
+/scratch/*-home/
+/scratch/dbg-home/
 re-e-core/node_modules/

@@ -37,6 +37,7 @@ const freshStats: UsageStats = {
   requestsToday: 0,
   tokens7d: 0,
   costUsd7d: 0,
+  costUsdToday: 0,
   errorRatePct: 0,
   ttftP50Ms: 0,
 };
@@ -80,6 +81,7 @@ export const api = {
       latencyMs: null,
       modelCount: 0,
       models: [],
+      data: input.data ?? {},
       keyMasked: maskKey(input.apiKey),
       apiKey: input.apiKey,
     };

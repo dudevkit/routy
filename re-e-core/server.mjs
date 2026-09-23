@@ -13,6 +13,8 @@ import { createRepos } from "./db/repos.mjs";
 import { listModels } from "./core/routing.mjs";
 import { createChatHandler } from "./core/handlers/chat.mjs";
 import { closePools } from "./core/executors/pool.mjs";
+import { seedBudget } from "./core/budget.mjs";
+import { seedTtft } from "./core/latency.mjs";
 import { buildApiRoutes, mgmtAuthorized } from "./http/api.mjs";
 import { createMetricsRoute } from "./http/metrics.mjs";
 
@@ -45,6 +47,19 @@ const releaseLock = () => { try { fs.rmSync(lockPath); } catch { /* already gone
 const db = openDatabase(cfg.dataDir);
 const repos = createRepos(db);
 const chatHandler = createChatHandler(repos, { streamIdleTimeoutMs: cfg.streamIdleTimeoutMs });
+
+// ── P4 routing state: seed the daily budget counter and the latency memory ──
+const seededSpend = seedBudget(repos);
+if (seededSpend > 0) log.info("BUDGET", `today's metered spend seeded: $${seededSpend.toFixed(4)}`);
+try {
+  const recent = repos.stats.ttftByNode({ since: Date.now() - 3600_000 });
+  for (const r of recent) {
+    if (r.nodeId && r.n > 0) seedTtft(r.nodeId, r.sum / r.n);
+  }
+  if (recent.length) log.info("ROUTE", `latency memory seeded for ${recent.length} node(s)`);
+} catch (err) {
+  log.warn("ROUTE", "latency seed failed", { error: err.message });
+}
 
 // ── retention: age + row caps for details and usage, run at boot and hourly ──
 const RETENTION_INTERVAL_MS = 60 * 60 * 1000;

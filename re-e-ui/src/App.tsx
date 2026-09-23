@@ -25,12 +25,19 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 5000, retry: 1, refetchOnWindowFocus: false } },
 });
 
+/**
+ * The gateway serves this bundle at both `/` and `/ui/*`, so the router has to know
+ * which mount it is under. Without this, `/ui/settings` is seen as a path the router
+ * does not know and falls through to the catch-all screen.
+ */
+const basename = window.location.pathname.startsWith("/ui") ? "/ui" : "/";
+
 export default function App() {
   const { scheme, variant, clear } = useLabScheme();
   return (
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <BrowserRouter>
+        <BrowserRouter basename={basename}>
           <div className="flex h-screen w-full overflow-hidden bg-bg">
             {/* Sidebar - desktop */}
             <div className="hidden lg:flex">

@@ -120,6 +120,7 @@ describe("management API", () => {
       requestsToday: expect.any(Number),
       tokens7d: 18,
       costUsd7d: 0,
+      costUsdToday: 0, // unmetered rows record no cost
       errorRatePct: 50,
       ttftP50Ms: expect.any(Number),
     });

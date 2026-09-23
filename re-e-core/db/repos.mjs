@@ -82,10 +82,16 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
       invalidateNodes();
       return nodes.get(node.id);
     },
+    /**
+     * `data` is a bag of independent settings (pricing, pool tuning, cached model
+     * list, retry overrides), so a patch MERGES into it instead of replacing it —
+     * editing one field must not silently drop the others.
+     */
     update(id, patch) {
       const existing = nodes.get(id);
       if (!existing) return null;
       const merged = { ...existing, ...patch, updatedAt: new Date().toISOString() };
+      if (patch.data !== undefined) merged.data = { ...(existing.data || {}), ...patch.data };
       db.prepare(`UPDATE provider_nodes SET type=?, name=?, prefix=?, api_type=?, base_url=?, data=?, enabled=?, updated_at=? WHERE id=?`)
         .run(merged.type, merged.name, merged.prefix, merged.apiType, merged.baseUrl,
              JSON.stringify(merged.data), merged.enabled ? 1 : 0, merged.updatedAt, id);
@@ -399,10 +405,13 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
                          COALESCE(SUM(cost_usd), 0) AS costUsd
                   FROM usage_events ${since ? "WHERE ts >= ?" : ""}`).get(...(since ? [since] : [])),
     ttftByNode: ({ since = 0 } = {}) =>
-      db.prepare(`SELECT COALESCE(n.prefix, 'unknown') AS node, COUNT(*) AS n, SUM(u.ttft_ms) AS sum, MIN(u.ttft_ms) AS min, MAX(u.ttft_ms) AS max
+      db.prepare(`SELECT u.node_id AS nodeId, COALESCE(n.prefix, 'unknown') AS node, COUNT(*) AS n, SUM(u.ttft_ms) AS sum, MIN(u.ttft_ms) AS min, MAX(u.ttft_ms) AS max
                   FROM usage_events u LEFT JOIN provider_nodes n ON n.id = u.node_id
                   WHERE u.ttft_ms IS NOT NULL ${since ? "AND u.ts >= ?" : ""}
                   GROUP BY n.prefix`).all(...(since ? [since] : [])),
+    /** Metered spend since a timestamp (unmetered requests store NULL cost). */
+    spendSince: (ts) =>
+      db.prepare(`SELECT COALESCE(SUM(cost_usd), 0) AS costUsd, COUNT(*) AS n FROM usage_events WHERE ts >= ? AND cost_usd IS NOT NULL`).get(ts),
   };
 
   return {

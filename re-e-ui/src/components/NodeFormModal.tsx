@@ -11,6 +11,50 @@ import { useToast } from "./ui/Toast";
 const emptyForm: NewNodeInput = { name: "", baseUrl: "", apiKey: "", prefix: "" };
 type TestState = null | "testing" | TestResult;
 
+/** "" stays distinguishable from 0 so a blank field means "unpriced", not "free". */
+const priceOrUndefined = (raw: string): number | undefined => {
+  const t = raw.trim();
+  if (t === "") return undefined;
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+};
+
+/** Pricing is optional: without it the node is unmetered and never hits the budget. */
+function PricingFields({
+  input,
+  output,
+  disabled,
+  onInput,
+  onOutput,
+}: {
+  input: string;
+  output: string;
+  disabled: boolean;
+  onInput: (v: string) => void;
+  onOutput: (v: string) => void;
+}) {
+  const field =
+    "w-full rounded-md border border-border-subtle bg-surface-2 px-3 py-2 font-mono text-sm text-text-main placeholder:text-text-main/40 focus:outline-none focus:ring-2 focus:ring-accent/40";
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-text-main">Price per 1M tokens (USD)</span>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-text-muted">Input</span>
+          <input className={field} type="number" min={0} step="0.01" placeholder="unpriced" disabled={disabled} value={input} onChange={(e) => onInput(e.target.value)} />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-text-muted">Output</span>
+          <input className={field} type="number" min={0} step="0.01" placeholder="unpriced" disabled={disabled} value={output} onChange={(e) => onOutput(e.target.value)} />
+        </label>
+      </div>
+      <p className="text-[11px] text-text-main/50">
+        Leave blank for unmetered — the node then records no cost and keeps serving after the daily budget is spent.
+      </p>
+    </div>
+  );
+}
+
 /**
  * The connect-in-under-60s flow: one modal, four fields, inline probe.
  * `prefix` is required by the backend (400 otherwise) and `modelCount` stays 0
@@ -28,6 +72,8 @@ export function NodeFormModal({
 }) {
   const toast = useToast();
   const [form, setForm] = useState<NewNodeInput>(emptyForm);
+  const [priceIn, setPriceIn] = useState("");
+  const [priceOut, setPriceOut] = useState("");
   const [test, setTest] = useState<TestState>(null);
   const testConnection = useTestConnection();
   const addNode = useAddNode();
@@ -38,11 +84,16 @@ export function NodeFormModal({
   useEffect(() => {
     if (!isOpen) return;
     setForm(node ? { name: node.name, baseUrl: node.baseUrl, apiKey: "", prefix: node.prefix } : emptyForm);
+    const pricing = node?.data?.pricing;
+    setPriceIn(pricing?.inputPer1M !== undefined ? String(pricing.inputPer1M) : "");
+    setPriceOut(pricing?.outputPer1M !== undefined ? String(pricing.outputPer1M) : "");
     setTest(null);
   }, [isOpen, node]);
 
   const close = () => {
     setForm(emptyForm);
+    setPriceIn("");
+    setPriceOut("");
     setTest(null);
     onClose();
   };
@@ -70,8 +121,13 @@ export function NodeFormModal({
   };
 
   const save = () => {
+    // pricing is omitted entirely when both fields are blank, keeping the node unmetered
+    const inUsd = priceOrUndefined(priceIn);
+    const outUsd = priceOrUndefined(priceOut);
+    const pricing = inUsd === undefined && outUsd === undefined ? undefined : { ...(inUsd !== undefined ? { inputPer1M: inUsd } : {}), ...(outUsd !== undefined ? { outputPer1M: outUsd } : {}) };
+
     if (!node) {
-      addNode.mutate(form, {
+      addNode.mutate({ ...form, data: pricing ? { pricing } : undefined }, {
         onSuccess: () => {
           toast("Upstream added");
           close();
@@ -85,6 +141,8 @@ export function NodeFormModal({
       name: form.name.trim(),
       baseUrl: form.baseUrl.trim(),
       prefix: form.prefix.trim(),
+      // merges into the node's data blob, so the cached model list survives
+      data: { pricing: pricing ?? null },
     };
     if (form.apiKey.trim()) patch.apiKey = form.apiKey.trim();
     updateNode.mutate(
@@ -153,6 +211,14 @@ export function NodeFormModal({
           value={form.prefix}
           onChange={(e) => set({ prefix: e.target.value })}
           placeholder="or/"
+        />
+
+        <PricingFields
+          input={priceIn}
+          output={priceOut}
+          disabled={addNode.isPending || updateNode.isPending}
+          onInput={setPriceIn}
+          onOutput={setPriceOut}
         />
 
         <div className="flex min-h-7 items-center gap-3">
