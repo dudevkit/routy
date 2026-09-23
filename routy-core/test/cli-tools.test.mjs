@@ -52,7 +52,8 @@ describe("adapter table", () => {
       for (const file of a.files ?? []) {
         expect(file.path, a.id).toMatch(/^~\//);
         expect(["json", "jsonc", "toml", "yaml", "env"], a.id).toContain(file.format);
-        expect(typeof file.patch, a.id).toBe("function");
+        // most adapters declare a patch; omp edits the text directly via apply()
+        expect(typeof (file.patch ?? file.apply), `${a.id}:${file.path}`).toBe("function");
       }
       // devin is detection-only: no local file to write
       if (a.id !== "devin") expect(a.files.length, a.id).toBeGreaterThan(0);

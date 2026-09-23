@@ -321,6 +321,121 @@ export const ADAPTERS = [
     ],
   },
   {
+    id: "crush",
+    name: "Crush",
+    binaries: ["crush"],
+    note: "Registers routy as a provider in Crush's config.",
+    files: [
+      {
+        path: "~/.config/crush/crush.json",
+        format: "jsonc",
+        connectedWhen: "providers.routy.base_url",
+        patch: ({ baseUrl, apiKey }) => ({
+          "providers.routy": { name: "routy", type: "openai", base_url: baseUrl, api_key: apiKey ?? "" },
+        }),
+      },
+    ],
+  },
+  {
+    id: "codewhale",
+    name: "CodeWhale",
+    binaries: ["codewhale"],
+    note: "CodeWhale reads a single [openai] provider section, so routy writes there. Disconnect restores whatever that section held before.",
+    files: [
+      {
+        path: "~/.codewhale/config.toml",
+        format: "toml",
+        connectedWhen: "openai.base_url",
+        patch: ({ baseUrl, apiKey, model }) => ({
+          "openai.base_url": baseUrl,
+          "openai.api_key": apiKey ?? "",
+          "openai.model": model ?? "",
+        }),
+      },
+    ],
+  },
+  {
+    id: "forge",
+    name: "Forge",
+    binaries: ["forge"],
+    note: "Forge reads a single [openai] provider section, so routy writes there. Disconnect restores whatever that section held before.",
+    files: [
+      {
+        path: "~/.forge/config.toml",
+        format: "toml",
+        connectedWhen: "openai.base_url",
+        patch: ({ baseUrl, apiKey, model }) => ({
+          "openai.base_url": baseUrl,
+          "openai.api_key": apiKey ?? "",
+          "openai.model": model ?? "",
+        }),
+      },
+    ],
+  },
+  {
+    id: "pi",
+    name: "pi",
+    binaries: ["pi"],
+    note: "Registers routy as a provider in pi's model list.",
+    files: [
+      {
+        path: "~/.pi/agent/models.json",
+        format: "jsonc",
+        connectedWhen: "providers.routy.baseUrl",
+        patch: ({ baseUrl, apiKey }) => ({
+          "providers.routy": { name: "routy", baseUrl, apiKey: apiKey ?? "" },
+        }),
+      },
+    ],
+  },
+  {
+    id: "smelt",
+    name: "Smelt",
+    binaries: ["smelt"],
+    note: "Writes the gateway settings at the top level of Smelt's config.",
+    files: [
+      {
+        path: "~/.smelt/config.json",
+        format: "jsonc",
+        connectedWhen: "baseUrl",
+        patch: ({ baseUrl, apiKey, model }) => ({
+          baseUrl,
+          apiKey: apiKey ?? "",
+          ...(model ? { model } : {}),
+        }),
+      },
+    ],
+  },
+  {
+    id: "omp",
+    name: "omp",
+    binaries: ["omp"],
+    note: "Writes a provider block into omp's models.yml. The rest of the file, including your other providers, is left alone.",
+    files: [
+      {
+        path: "~/.omp/agent/models.yml",
+        format: "yaml",
+        connectedCheck: ({ get }) => /^ {2}routy:/m.test(String(get(ROOT) ?? "")),
+        // Two levels deep and replaced as a block, which dotted paths cannot express,
+        // so this adapter edits the text directly. The whole file is snapshotted.
+        apply: (text, { baseUrl, apiKey }) => {
+          const block = [
+            "  routy:",
+            `    baseUrl: ${baseUrl}`,
+            `    apiKey: ${apiKey ?? ""}`,
+            "    api: openai-completions",
+            "    authHeader: true",
+            "    disableStrictTools: true",
+            "    discovery:",
+            "      type: proxy",
+          ].join("\n");
+          const withoutOurs = text.replace(/\s* {2}routy:[\s\S]*?(?=\n {2}\w+:|$)/g, "").replace(/\s+$/, "");
+          return `${withoutOurs}${withoutOurs ? "\n" : ""}${block}\n`;
+        },
+      },
+    ],
+  },
+  {
     id: "devin",
     name: "Devin",
     binaries: ["devin"],
@@ -438,18 +553,31 @@ export function connectTool(repos, id, { baseUrl, apiKey = null, model = null, h
     const original = readText(file);
     if (original == null && entry.optional) continue; // VS Code not installed
     const get = (dotted) => (original == null ? undefined : getValue(original, entry.format, dotted));
+    const previous = {};
+    let next;
+    if (entry.apply) {
+      // Escape hatch for a config the dotted-path model cannot express — omp's
+      // models.yml nests a provider block two levels deep and replaces it by regex.
+      // The whole file is snapshotted instead, so revert is still exact.
+      try {
+        next = entry.apply(original ?? "", { ...ctxBase, get });
+      } catch (err) {
+        return { ok: false, error: "patch_failed", detail: `${adapter.name}: ${err.message}` };
+      }
+      previous[ROOT] = original;
+      planned.push({ file, format: entry.format, original, next, previous, existed: original != null, whole: true });
+      continue;
+    }
     let changes;
     try {
       changes = entry.patch({ ...ctxBase, get });
     } catch (err) {
       return { ok: false, error: "patch_failed", detail: `${adapter.name}: ${err.message}` };
     }
-    const previous = {};
     for (const key of Object.keys(changes)) {
       const was = original == null ? undefined : getValue(original, entry.format, key);
       previous[key] = was === undefined ? null : was;
     }
-    let next;
     try {
       next = setValues(original, entry.format, changes);
     } catch (err) {
@@ -506,6 +634,12 @@ export function disconnectTool(repos, id) {
       continue;
     }
     if (current == null) continue; // already gone
+    // A custom apply() snapshots the whole file, so revert is a straight restore.
+    if (record.whole) {
+      fs.writeFileSync(record.file, record.previous?.[ROOT] ?? current);
+      restored.push(record.file);
+      continue;
+    }
     const restore = {};
     const remove = [];
     for (const [key, value] of Object.entries(record.previous ?? {})) {
