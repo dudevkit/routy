@@ -1,4 +1,6 @@
 import { NavLink } from "react-router-dom";
+import wordmarkOnDark from "../assets/routy-wordmark-onDark.png";
+import wordmarkOnLight from "../assets/routy-wordmark-onLight.png";
 import {
   Broadcast,
   ChartBar,
@@ -72,8 +74,11 @@ export function Sidebar() {
           <div className="flex items-center justify-center size-9 rounded-[10px] bg-gradient-to-br from-brand-500 to-brand-700 shadow-[var(--shadow-warm)]">
             <ShareNetwork size={18} weight="fill" className="text-white" />
           </div>
-          <div className="flex flex-col">
-            <span className="font-display text-lg font-semibold tracking-tight text-text-main">RE-E</span>
+          <div className="flex flex-col gap-1">
+            {/* Two twins, one per theme: the wordmark is drawn in light ink and is
+                invisible on the light theme, so it ships recoloured alongside. */}
+            <img src={wordmarkOnDark} alt="routy" className="h-6 w-auto dark:block hidden" />
+            <img src={wordmarkOnLight} alt="routy" className="h-6 w-auto dark:hidden block" />
             <span className="text-xs text-text-muted">v0.1.0 · gateway</span>
           </div>
         </NavLink>

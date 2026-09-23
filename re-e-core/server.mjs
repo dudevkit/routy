@@ -182,7 +182,7 @@ server.listen(cfg.port, cfg.host, () => {
   bootstrapToken = createBootstrapToken();
   cfg.bootstrapToken = bootstrapToken; // consulted by mgmtAuthorized for non-loopback peers
   log.info("BOOT", `gateway started (v${VERSION})`, { host: cfg.host, port: cfg.port, ui: cfg.uiDir || null }); // ring provenance — token stays out
-  log.raw("BOOT", `re-e-core ${VERSION} listening`, {
+  log.raw("BOOT", `routy ${VERSION} listening`, {
     host: cfg.host,
     port: cfg.port,
     home: cfg.home,

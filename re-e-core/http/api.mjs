@@ -350,7 +350,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
 
   // gateway info + health/version
   route("GET", /^\/api\/health$/, (req, res) => json(res, 200, { status: "ok", uptimeMs: Date.now() - (globalThis.__bootedAt || Date.now()) }));
-  route("GET", /^\/api\/version$/, (req, res) => json(res, 200, { version, name: "re-e-core" }));
+  route("GET", /^\/api\/version$/, (req, res) => json(res, 200, { version, name: "routy" }));
   route("GET", /^\/api\/gateway$/, (req, res) => json(res, 200, gatewayInfo(repos, cfg, version)));
   // Graceful stop for scripts and service managers (Windows has no SIGTERM).
   // Answer first so the caller sees a clean 202, then drain and exit.

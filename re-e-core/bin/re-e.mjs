@@ -106,7 +106,7 @@ function mergeJsonConfig(file, patch) {
 }
 
 async function writeCliConfig(baseUrl, apiKey, firstModel) {
-  console.log("\n── Point a CLI tool at RE-E ──");
+  console.log("\n── Point a CLI tool at routy ──");
   console.log("  1) Claude Code  (~/.claude/settings.json)");
   console.log("  2) skip — print connection details only");
   const choice = await ask("choice", "2");
@@ -137,9 +137,9 @@ async function cmdServe() {
 }
 
 function printHelp() {
-  console.log(`re-e — RE-E gateway CLI
+  console.log(`re-e — routy gateway CLI
 
-  re-e init    connect an upstream, issue a key, point a CLI tool at RE-E
+  re-e init    connect an upstream, issue a key, point a CLI tool at routy
   re-e serve   start the gateway (same as: node server.mjs)
   re-e key     issue a new client API key (sk-…; also copyable from the Overview page)`);
 }

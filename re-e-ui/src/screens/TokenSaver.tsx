@@ -80,7 +80,7 @@ export function TokenSaver() {
         <h3 className="text-sm font-semibold text-text-main">Not in this screen</h3>
         <ul className="flex flex-col gap-1 text-xs text-text-muted">
           <li>· Per-filter on/off and thresholds — no backend surface yet (contract request filed).</li>
-          <li>· headroom / caveman / ponytail savers — dropped from RE-E v1 scope.</li>
+          <li>· headroom / caveman / ponytail savers — dropped from routy v1 scope.</li>
           <li>· pxpipe — deferred; its screen stays out until the backend lands.</li>
         </ul>
       </Card>
