@@ -1,9 +1,11 @@
 // RE-E default executor — one per node; speaks openai chat (apiType "chat") and
 // openai-responses ("responses"). Ported from upstream executors/{base,default}.js
-// with modernizations: stringify-once, global fetch (builtin keep-alive pool),
+// with modernizations: stringify-once, a pooled per-origin undici dispatcher
+// (P4: the built-in fetch's default dispatcher cost ~15ms/request — see pool.mjs),
 // AbortSignal.any connect timeout, structured error results.
 // Retry defaults = upstream parity (runtimeConfig.js:78-84): 502→3×3s, 503→3×2s,
 // 429→no retry (caller falls back to next connection/node), Retry-After honored.
+import { getDispatcher, undiciFetch } from "./pool.mjs";
 export const DEFAULT_RETRY_CONFIG = {
   429: { attempts: 0, delayMs: 0 },
   502: { attempts: 3, delayMs: 3000 },
@@ -55,11 +57,12 @@ export class DefaultExecutor {
       const merged = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
       const t0 = Date.now();
       try {
-        const response = await fetch(url, {
+        const response = await undiciFetch(url, {
           method: "POST",
           headers: this.buildHeaders(),
           body: bodyStr,
           signal: merged,
+          dispatcher: getDispatcher(this.node),
         });
         clearTimeout(timer);
         log?.debug?.("FETCH", `${this.node.prefix} ← ${response.status} ttft=${Date.now() - t0}ms`);

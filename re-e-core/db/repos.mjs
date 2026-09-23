@@ -385,8 +385,28 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
     },
   };
 
+  // ── aggregate stats (metrics endpoint; SQL stays in the db layer) ─────────
+  const stats = {
+    /** `since` is an epoch-ms lower bound; omit for all retained history. */
+    requestsByStatus: ({ since = 0 } = {}) =>
+      db.prepare(`SELECT COALESCE(status, 'unknown') AS status, COUNT(*) AS n FROM usage_events ${since ? "WHERE ts >= ?" : ""} GROUP BY status`).all(...(since ? [since] : [])),
+    requestsByNode: ({ since = 0 } = {}) =>
+      db.prepare(`SELECT COALESCE(n.prefix, 'unknown') AS node, COALESCE(u.status, 'unknown') AS status, COUNT(*) AS n
+                  FROM usage_events u LEFT JOIN provider_nodes n ON n.id = u.node_id ${since ? "WHERE u.ts >= ?" : ""}
+                  GROUP BY n.prefix, u.status`).all(...(since ? [since] : [])),
+    totals: ({ since = 0 } = {}) =>
+      db.prepare(`SELECT COALESCE(SUM(prompt_tokens), 0) AS promptTokens, COALESCE(SUM(completion_tokens), 0) AS completionTokens,
+                         COALESCE(SUM(cost_usd), 0) AS costUsd
+                  FROM usage_events ${since ? "WHERE ts >= ?" : ""}`).get(...(since ? [since] : [])),
+    ttftByNode: ({ since = 0 } = {}) =>
+      db.prepare(`SELECT COALESCE(n.prefix, 'unknown') AS node, COUNT(*) AS n, SUM(u.ttft_ms) AS sum, MIN(u.ttft_ms) AS min, MAX(u.ttft_ms) AS max
+                  FROM usage_events u LEFT JOIN provider_nodes n ON n.id = u.node_id
+                  WHERE u.ttft_ms IS NOT NULL ${since ? "AND u.ts >= ?" : ""}
+                  GROUP BY n.prefix`).all(...(since ? [since] : [])),
+  };
+
   return {
-    settings, nodes, connections, apiKeys, combos, aliases, proxyPools, breakers, usage, requestDetails,
+    settings, nodes, connections, apiKeys, combos, aliases, proxyPools, breakers, usage, requestDetails, stats,
     close() {
       persistBreakers();
     },

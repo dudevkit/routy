@@ -12,7 +12,9 @@ import { openDatabase } from "./db/driver.mjs";
 import { createRepos } from "./db/repos.mjs";
 import { listModels } from "./core/routing.mjs";
 import { createChatHandler } from "./core/handlers/chat.mjs";
+import { closePools } from "./core/executors/pool.mjs";
 import { buildApiRoutes, mgmtAuthorized } from "./http/api.mjs";
+import { createMetricsRoute } from "./http/metrics.mjs";
 
 const cfg = resolveConfig();
 setLogLevel(cfg.logLevel);
@@ -70,6 +72,7 @@ retentionTimer.unref?.();
 
 const routes = [
   ...buildApiRoutes(repos, cfg, VERSION, { shutdown }),
+  createMetricsRoute(repos, VERSION, () => ({ inflight, startedAt: globalThis.__bootedAt })),
   // ── proxy surface (/v1) — source format detected per request (endpoint + body) ──
   {
     method: "GET", pattern: /^\/v1\/models$/,
@@ -96,7 +99,7 @@ const server = http.createServer((req, res) => {
   res.on("close", () => { inflight--; });
   const pathname = new URL(req.url, "http://localhost").pathname;
 
-  if (pathname.startsWith("/api") && !mgmtAuthorized(req, cfg)) {
+  if ((pathname.startsWith("/api") || pathname === "/metrics") && !mgmtAuthorized(req, cfg)) {
     return json(res, 401, { error: { message: "auth_error", detail: "management token required for non-loopback peers" } });
   }
   // Proxy surface: chat/messages enforce keys in-handler; /v1/models gets the
@@ -113,7 +116,7 @@ const server = http.createServer((req, res) => {
   }
 
   // /ui/* static SPA (re-e-ui dist) — same origin, so no CORS needed
-  if (!pathname.startsWith("/api") && !pathname.startsWith("/v1") && req.method === "GET" && cfg.uiDir) {
+  if (!pathname.startsWith("/api") && !pathname.startsWith("/v1") && pathname !== "/metrics" && req.method === "GET" && cfg.uiDir) {
     const uiPath = pathname.startsWith("/ui/") ? pathname.slice(3) : pathname === "/ui" ? "/" : pathname;
     if (serveStatic(res, cfg.uiDir, uiPath)) return;
   }
@@ -153,7 +156,8 @@ function shutdown(signal) {
       log.error("SHUTDOWN", "db close failed", { error: err.message });
     }
     releaseLock();
-    process.exit(0);
+    // Pools close after the drain so in-flight upstream sockets are not cut early.
+    closePools().finally(() => process.exit(0));
   };
   // close() fires its callback once every connection has ended
   server.close(finish);
