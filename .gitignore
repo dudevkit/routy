@@ -20,5 +20,9 @@ routy-core/node_modules/
 # design-phase screenshots — local reference only, not published
 routy-ui/.preview/
 
+# release signing material — never commit a private key
+*.key
+release-signing*
+
 # build output (npm run build in routy-core, npm run build in routy-ui)
 /routy-core/dist/

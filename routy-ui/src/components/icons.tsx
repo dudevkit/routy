@@ -1,6 +1,7 @@
 import type { ComponentProps } from "react";
 import {
   ArrowsClockwise,
+  ArrowCircleUp,
   ArrowDown,
   ArrowLeft,
   ArrowUp,
@@ -99,4 +100,5 @@ export {
   Wrench,
   X,
   XCircle,
+  ArrowCircleUp,
 };

@@ -17,6 +17,12 @@ read per request).
 | `ROUTY_UI_DIR` | auto | Dashboard directory. Auto-resolved: `<bundleDir>/ui` → `./routy-ui/dist` → `../routy-ui/dist` → `<home>/ui` |
 | `ROUTY_STREAM_IDLE_TIMEOUT_MS` | `120000` | Stall watchdog budget in ms; `0` disables. Overridable per node |
 
+**Update checks.** The dashboard asks GitHub for the latest release so it can offer
+it. That is the only outbound request the gateway makes that is not to a provider you
+configured, so it is a visible setting rather than a silent behaviour: `updateCheck:
+false` (or the toggle on **Settings**) means **no request is made at all** — not a
+cached answer, not a HEAD. See [releasing.md](./releasing.md).
+
 ## `config.json`
 
 ```json

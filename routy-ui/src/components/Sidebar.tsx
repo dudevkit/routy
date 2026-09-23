@@ -13,6 +13,7 @@ import {
   type IconComponent,
 } from "./icons";
 import { cn } from "../utils/cn";
+import { useGateway } from "../api/hooks";
 
 interface NavItemSpec {
   to: string;
@@ -63,6 +64,9 @@ function NavItem({ to, label, icon: Icon, end }: NavItemSpec) {
 }
 
 export function Sidebar() {
+  // The version comes from the gateway, never a literal: a hardcoded one is how the
+  // sidebar ends up advertising a version the process is not running.
+  const gateway = useGateway();
   return (
     <aside className="flex w-72 flex-col border-r border-border-subtle bg-vibrancy backdrop-blur-xl min-h-full">
       {/* Wordmark block — the rail's top anchor (traffic lights removed) */}
@@ -72,7 +76,9 @@ export function Sidebar() {
               invisible on the light theme, so it ships recoloured alongside. */}
           <img src={wordmarkOnDark} alt="routy" className="h-9 w-auto dark:block hidden" />
           <img src={wordmarkOnLight} alt="routy" className="h-9 w-auto dark:hidden block" />
-          <span className="text-xs text-text-muted">v0.1.0 · gateway</span>
+          <span className="text-xs text-text-muted">
+            {gateway.data ? `v${gateway.data.version}` : "…"} · gateway
+          </span>
         </NavLink>
       </div>
 

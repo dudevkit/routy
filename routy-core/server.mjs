@@ -16,13 +16,15 @@ import { closePools } from "./core/executors/pool.mjs";
 import { seedBudget } from "./core/budget.mjs";
 import { seedTtft } from "./core/latency.mjs";
 import { PROBE_VERSION } from "./core/probe.mjs";
+import { startUpdateChecks } from "./core/updates.mjs";
+import { VERSION } from "./lib/version.mjs";
 import { buildApiRoutes, mgmtAuthorized } from "./http/api.mjs";
 import { createMetricsRoute } from "./http/metrics.mjs";
 
 const cfg = resolveConfig();
 setLogLevel(cfg.logLevel);
 
-const VERSION = "0.1.0";
+
 let bootstrapToken = null; // printed once at boot; required for /api from non-loopback peers
 globalThis.__bootedAt = Date.now();
 
@@ -97,6 +99,9 @@ try {
 } catch (err) {
   log.warn("DB", "model backfill failed", { error: err.message });
 }
+
+// ── update checks: opt-out, cached, and never allowed to block boot ──────────
+startUpdateChecks(repos, { log });
 
 // ── P4 routing state: seed the daily budget counter and the latency memory ──
 const seededSpend = seedBudget(repos);
@@ -206,7 +211,7 @@ server.listen(cfg.port, cfg.host, () => {
 // fetch abort, so the force path also stops upstream work (no orphaned streams).
 const SHUTDOWN_GRACE_MS = 10_000;
 let shuttingDown = false;
-function shutdown(signal) {
+function shutdown(signal, exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
   log.info("SHUTDOWN", `received ${signal}, draining ${inflight} in-flight request(s)`);
@@ -222,7 +227,7 @@ function shutdown(signal) {
     }
     releaseLock();
     // Pools close after the drain so in-flight upstream sockets are not cut early.
-    closePools().finally(() => process.exit(0));
+    closePools().finally(() => process.exit(exitCode));
   };
   // close() fires its callback once every connection has ended
   server.close(finish);

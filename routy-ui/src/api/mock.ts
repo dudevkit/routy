@@ -31,6 +31,8 @@ import type {
   Settings,
   TestResult,
   UpstreamNode,
+  UpdateApplyResult,
+  UpdateState,
   UsageHistoryRow,
   UsageStats,
 } from "./types";
@@ -73,6 +75,32 @@ export const api = {
   /* logs — round-2 parity (no server ring to clear in mock) */
   async clearLogs(): Promise<{ ok: boolean }> {
     return { ok: true };
+  },
+
+  /* updates — the mock reports "up to date" so the preview never shows a banner */
+  async getUpdates(): Promise<UpdateState> {
+    return {
+      enabled: true,
+      current: "0.1.0",
+      latest: "0.1.0",
+      available: false,
+      notes: null,
+      publishedAt: null,
+      url: null,
+      checkedAt: nowIso(),
+      dismissed: null,
+      error: null,
+      assetsReady: false,
+    };
+  },
+  async checkUpdates(): Promise<UpdateState> {
+    return this.getUpdates();
+  },
+  async dismissUpdate(): Promise<UpdateState> {
+    return this.getUpdates();
+  },
+  async applyUpdate(): Promise<UpdateApplyResult> {
+    throw new Error("the mock transport cannot install updates");
   },
   /* nodes */
   async listNodes(): Promise<UpstreamNode[]> {

@@ -11,6 +11,7 @@ const GATEWAY: QueryKey = ["gateway"];
 const COMBOS: QueryKey = ["combos"];
 const ALIASES: QueryKey = ["aliases"];
 const POOLS: QueryKey = ["pools"];
+const UPDATES: QueryKey = ["updates"];
 
 /* ── queries ───────────────────────────────────────────────────────────────── */
 export const useNodes = () => useQuery({ queryKey: NODES, queryFn: api.listNodes, refetchInterval: 20000 });
@@ -191,6 +192,11 @@ export const useCreateKey = () => useMutation({ mutationFn: api.createKey, onSuc
 export const useRemoveKey = () => useMutation({ mutationFn: api.removeKey, onSuccess: useInvalidator(KEYS, GATEWAY) });
 /** enabled=false revokes without destroying the key row */
 export const useSetKeyEnabled = () => useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.setKeyEnabled(id, enabled), onSuccess: useInvalidator(KEYS) });
+
+export const useUpdates = () => useQuery({ queryKey: UPDATES, queryFn: api.getUpdates, staleTime: 60_000 });
+export const useCheckUpdates = () => useMutation({ mutationFn: api.checkUpdates, onSuccess: useInvalidator(UPDATES) });
+export const useDismissUpdate = () => useMutation({ mutationFn: api.dismissUpdate, onSuccess: useInvalidator(UPDATES) });
+export const useApplyUpdate = () => useMutation({ mutationFn: api.applyUpdate, onSuccess: useInvalidator(UPDATES, GATEWAY) });
 
 export const useCreateCombo = () => useMutation({ mutationFn: api.createCombo, onSuccess: useInvalidator(COMBOS) });
 export interface ComboPatch {

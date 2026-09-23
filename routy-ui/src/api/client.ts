@@ -9,6 +9,8 @@
  *  - DELETE answers 204
  */
 import type {
+  UpdateApplyResult,
+  UpdateState,
   BatchConnectionInput,
   BatchConnectionResult,
   AliasMap,
@@ -98,20 +100,29 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/**
+ * Every mutating request carries this header. It is not authentication — it forces a
+ * CORS preflight, which a cross-origin page cannot satisfy, so a hostile tab cannot
+ * drive the gateway by POSTing to 127.0.0.1. Endpoints that care reject its absence.
+ */
+const ACTION = { "x-routy-action": "1" };
+
 /** Explicit generics at each call site — `.then(json)` alone loses `T`. */
 const getJson = <T,>(path: string): Promise<T> => fetch(path).then((res) => json<T>(res));
 const postJson = <T,>(path: string, body?: unknown): Promise<T> =>
   fetch(path, {
     method: "POST",
-    headers: body === undefined ? {} : { "content-type": "application/json" },
+    headers: body === undefined ? { ...ACTION } : { ...ACTION, "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   }).then((res) => json<T>(res));
 const putJson = <T,>(path: string, body: unknown): Promise<T> =>
-  fetch(path, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((res) =>
-    json<T>(res),
-  );
+  fetch(path, {
+    method: "PUT",
+    headers: { ...ACTION, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }).then((res) => json<T>(res));
 const deleteJson = (path: string): Promise<void> =>
-  fetch(path, { method: "DELETE" }).then((res) => json<void>(res));
+  fetch(path, { method: "DELETE", headers: { ...ACTION } }).then((res) => json<void>(res));
 
 const qs = (params: Record<string, string | number | undefined>) => {
   const sp = new URLSearchParams();
@@ -251,6 +262,13 @@ export const api = {
     putJson<ProxyPool>(`/api/proxy-pools/${enc(id)}`, patch),
   deletePool: (id: string): Promise<void> => deleteJson(`/api/proxy-pools/${enc(id)}`),
   testPool: (id: string): Promise<PoolTestResult> => postJson<PoolTestResult>(`/api/proxy-pools/${enc(id)}/test`),
+
+  /* updates */
+  getUpdates: (): Promise<UpdateState> => getJson<UpdateState>("/api/updates"),
+  checkUpdates: (): Promise<UpdateState> => postJson<UpdateState>("/api/updates/check"),
+  dismissUpdate: (version: string | null): Promise<UpdateState> =>
+    postJson<UpdateState>("/api/updates/dismiss", { version }),
+  applyUpdate: (): Promise<UpdateApplyResult> => postJson<UpdateApplyResult>("/api/updates/apply"),
 
   /* logs */
   /** clears the server ring and notifies every open stream (`clear` event) */

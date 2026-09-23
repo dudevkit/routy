@@ -6,6 +6,8 @@ import { COMBO_STRATEGIES } from "../core/routing.mjs";
 import { budgetSpent } from "../core/budget.mjs";
 import { probeNode, probeKey, probeModel, mapLimit } from "../core/probe.mjs";
 import { clearLogs, log, recentLogs, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
+import { checkForUpdate, updateState } from "../core/updates.mjs";
+import { RESTART_FOR_UPDATE, applyUpdate } from "../core/update-apply.mjs";
 
 const uuid = () => crypto.randomUUID();
 const maskKey = (k) => (typeof k === "string" && k.length > 12 ? `${k.slice(0, 6)}…${k.slice(-4)}` : k ? "•••" : "—");
@@ -20,6 +22,35 @@ export function mgmtAuthorized(req, cfg) {
   const h = req.headers.authorization || "";
   const m = h.match(/^Bearer\s+(.+)$/i);
   return !!m && m[1].trim() === cfg.bootstrapToken;
+}
+
+/**
+ * Guard for state-changing endpoints a browser could be tricked into calling.
+ *
+ * /api trusts loopback, which is right for a local dashboard — but it also means any
+ * page the user has open can POST to 127.0.0.1:8010 without a preflight. Requiring a
+ * custom header forces one (a cross-origin page cannot satisfy it without CORS
+ * approval), and rejecting a foreign Origin covers the rest.
+ */
+function sameOriginAction(req, res) {
+  const origin = req.headers.origin;
+  if (origin && origin !== "null") {
+    let host = null;
+    try {
+      host = new URL(origin).hostname;
+    } catch {
+      host = null;
+    }
+    if (!["127.0.0.1", "localhost", "::1", "[::1]"].includes(host ?? "")) {
+      json(res, 403, { error: { message: "forbidden", detail: "cross-origin request rejected" } });
+      return false;
+    }
+  }
+  if (req.headers["x-routy-action"] !== "1") {
+    json(res, 400, { error: { message: "bad_request", detail: "x-routy-action: 1 header required" } });
+    return false;
+  }
+  return true;
 }
 
 function noContent(res, ok) {
@@ -378,6 +409,42 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       log.info("LOG", `capture level set to ${patch.logLevel}`);
     }
     json(res, 200, repos.settings.all());
+  });
+
+  // ── updates ───────────────────────────────────────────────────────────────
+  route("GET", /^\/api\/updates$/, (req, res) => json(res, 200, updateState(repos)));
+
+  route("POST", /^\/api\/updates\/check$/, async (req, res) => {
+    if (!sameOriginAction(req, res)) return;
+    json(res, 200, await checkForUpdate(repos, { force: true, log }));
+  });
+
+  route("POST", /^\/api\/updates\/dismiss$/, async (req, res) => {
+    if (!sameOriginAction(req, res)) return;
+    const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    // Dismissal is per version, so silencing 0.2.0 does not also silence 0.3.0.
+    repos.settings.update({ updateDismissed: body?.version ?? null });
+    json(res, 200, updateState(repos));
+  });
+
+  route("POST", /^\/api\/updates\/apply$/, async (req, res) => {
+    if (!sameOriginAction(req, res)) return;
+    let result;
+    try {
+      result = await applyUpdate(repos, { log });
+    } catch (err) {
+      log.warn("UPDATE", `update failed: ${err.message}`);
+      return json(res, 502, { error: { message: "update_failed", detail: err.message } });
+    }
+    if (!result.ok) {
+      return json(res, result.status ?? 400, { error: { message: result.error, detail: result.detail } });
+    }
+    // Answer first, then drain: the client must not be left holding a connection
+    // that the shutdown is about to cut.
+    json(res, 202, { ...result, restarting: true });
+    if (result.restart && hooks.shutdown) {
+      setImmediate(() => hooks.shutdown("update", RESTART_FOR_UPDATE));
+    }
   });
 
   // api keys (router client keys)

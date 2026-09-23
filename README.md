@@ -37,23 +37,28 @@ in an afternoon and deliberately loud about what it is doing:
 | **Budget** | Per-node pricing, a daily spend ceiling, and automatic fallback to unmetered nodes when a metered one would exceed it. |
 | **Token saver** | Compresses large tool results in request bodies before they reach the upstream. |
 | **Observability** | Prometheus metrics at `/metrics`, a live log console with per-level capture, and request/response capture in the dashboard. |
+| **Updates** | An installed copy notices new releases and offers them in the dashboard. Releases are signed; the gateway refuses anything that does not verify. Opt-out, and nothing installs without a click. |
 
 ## Quickstart
 
 Requires **Node 22.5+** (24 recommended — `node:sqlite` needs `--experimental-sqlite`
 on 22.5–23.3).
 
+**From a release** (once one is published) — extract it anywhere and run the
+launcher. This is the layout the in-app updater expects:
+
+```bash
+tar -xzf routy-0.2.0.tar.gz -C routy && cd routy
+node routy.mjs serve          # gateway on :8010
+```
+
+**From source** — a checkout runs the gateway directly, and does not update itself:
+
 ```bash
 git clone <your-fork> && cd routy
 cd routy-ui && npm ci && npm run build && cd ..     # build the dashboard
 cd routy-core && npm ci && npm run build            # bundle to dist/routy.mjs
-node dist/routy.mjs serve                           # gateway on :8010
-```
-
-Or run from source during development:
-
-```bash
-cd routy-core && npm ci && node server.mjs
+node server.mjs                                     # or: node dist/routy.mjs serve
 ```
 
 Then open <http://127.0.0.1:8010>, add a provider on **Providers**, and create a
@@ -90,7 +95,7 @@ routy-core/     the gateway — ESM, plain node:http, zero framework
   db/           node:sqlite driver, migrations, repositories
   http/         management API + Prometheus metrics
 routy-ui/       the dashboard — Vite + React + TypeScript + Tailwind
-docs/           architecture, configuration, database design, roadmap
+docs/           architecture, configuration, database design, releasing, roadmap
 rigs/           verification rigs: chaos upstream, benchmarks, E2E and load tests
 tests/golden/   byte-exact translator fixtures captured from real upstreams
 ```
@@ -118,6 +123,8 @@ Built and used daily, but young — treat it as beta. Known gaps, stated plainly
 - The Dockerfile is written but has not been built or run.
 - No packaged service installer; on Windows `scripts/routy-task.ps1` registers a
   scheduled task that starts at boot.
+- **No release has been published yet**, so the updater currently finds nothing to
+  offer. Cutting one is a single command — see [docs/releasing.md](./docs/releasing.md).
 
 ## Licence
 

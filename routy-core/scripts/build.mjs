@@ -22,6 +22,10 @@ const outfile = path.resolve(root, outFlag >= 0 ? argv[outFlag + 1] : "dist/rout
 
 fs.mkdirSync(path.dirname(outfile), { recursive: true });
 
+// One source for the version: package.json. Inlined because a bundle has no source
+// tree to read it from at runtime (lib/version.mjs).
+const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+
 const result = await build({
   entryPoints: [path.join(root, "bin", "routy.mjs")],
   outfile,
@@ -30,6 +34,7 @@ const result = await build({
   target: "node22",
   format: "esm",
   minify,
+  define: { __ROUTY_VERSION__: JSON.stringify(pkg.version) },
   // Readable output by default: the point is a small dependency surface, not a
   // mangled file nobody can debug. --minify is there for release builds.
   keepNames: true,

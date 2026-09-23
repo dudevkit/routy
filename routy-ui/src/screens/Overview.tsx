@@ -7,6 +7,7 @@ import { toastApiError } from "../utils/errors";
 import { fmtClock, fmtMs, fmtTokens } from "../utils/format";
 import { CopyChip } from "../components/CopyChip";
 import { KeysCard } from "../components/KeysCard";
+import { UpdateCard } from "../components/UpdateCard";
 import { NodeFormModal } from "../components/NodeFormModal";
 import { StatTile } from "../components/StatTile";
 import { ArrowsClockwise, Broadcast, List, Plus } from "../components/icons";
@@ -106,6 +107,9 @@ export function Overview() {
           <span className="ml-auto font-mono text-[10px] text-text-subtle">v{gateway.data.version}</span>
         </Card>
       )}
+
+      {/* Only renders when a newer release exists and has not been dismissed. */}
+      <UpdateCard />
 
       {/* Client keys sit next to the endpoint they authenticate against. */}
       <KeysCard />

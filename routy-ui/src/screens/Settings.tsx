@@ -1,8 +1,9 @@
-import { useGateway, useHealth, usePutSettings, useSettings, useStats } from "../api/hooks";
+import { useCheckUpdates, useGateway, useHealth, usePutSettings, useSettings, useStats, useUpdates } from "../api/hooks";
 import { toastApiError } from "../utils/errors";
-import { fmtCost } from "../utils/format";
+import { fmtAgo, fmtCost } from "../utils/format";
 import { CopyChip } from "../components/CopyChip";
 import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Skeleton } from "../components/ui/Skeleton";
 import { ThemeToggle } from "../components/ui/ThemeToggle";
@@ -90,6 +91,87 @@ function SpendCard() {
   );
 }
 
+/**
+ * Update checking is the only outbound call routy makes that is not to a provider
+ * the user configured, so it is a visible, reversible setting rather than something
+ * that happens quietly. Off means no request is made at all — not a cached answer.
+ */
+function UpdateSettingsCard() {
+  const toast = useToast();
+  const settings = useSettings();
+  const updates = useUpdates();
+  const put = usePutSettings();
+  const check = useCheckUpdates();
+
+  const enabled = settings.data?.updateCheck !== false;
+  const s = updates.data;
+
+  return (
+    <Card padding="sm" className="flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-text-main">Updates</h3>
+          <p className="text-[11px] text-text-muted">
+            Checks GitHub for a newer release so the dashboard can offer it. This is the only
+            request routy makes that is not to a provider you configured.
+          </p>
+        </div>
+        <Badge variant={s?.available ? "info" : "default"} size="sm">
+          {s?.available ? `v${s.latest} available` : `v${s?.current ?? "—"}`}
+        </Badge>
+      </div>
+
+      {settings.isLoading ? (
+        <Skeleton rows={1} />
+      ) : (
+        <>
+        <Toggle
+          label="Check for updates"
+          hint={
+            enabled
+              ? "One request every few hours. Nothing is ever installed without a click."
+              : "Off — routy makes no request to GitHub."
+          }
+          checked={enabled}
+          loading={put.isPending}
+          onChange={(next) =>
+            put.mutate(
+              { updateCheck: next },
+              {
+                onSuccess: () => toast(next ? "Update checks on" : "Update checks off"),
+                onError: (err) => toastApiError(toast, err, "Failed to save setting"),
+              },
+            )
+          }
+        />
+
+        {enabled && (
+          <div className="flex flex-wrap items-center gap-3 text-[11px] text-text-subtle">
+            <span>
+              {s?.checkedAt ? `last checked ${fmtAgo(s.checkedAt)}` : "not checked yet"}
+              {s?.error ? ` · ${s.error}` : ""}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={check.isPending}
+              onClick={() =>
+                check.mutate(undefined, {
+                  onSuccess: (r) => toast(r.available ? `v${r.latest} available` : "You are up to date"),
+                  onError: (err) => toastApiError(toast, err, "Check failed"),
+                })
+              }
+            >
+              Check now
+            </Button>
+          </div>
+        )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 export function Settings() {
   const toast = useToast();
   const gateway = useGateway();
@@ -143,6 +225,8 @@ export function Settings() {
       </Card>
 
       <SpendCard />
+
+      <UpdateSettingsCard />
 
       <Card padding="sm" className="flex items-center justify-between gap-3">
         <div>

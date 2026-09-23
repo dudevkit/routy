@@ -334,3 +334,31 @@ export interface ApiErrorBody {
     path?: string;
   };
 }
+
+/* ── updates ───────────────────────────────────────────────────────────────── */
+/** GET /api/updates — the release the gateway last saw, and whether it is newer. */
+export interface UpdateState {
+  /** false when the user has opted out; no request is made in that case */
+  enabled: boolean;
+  current: string;
+  latest: string | null;
+  available: boolean;
+  notes: string | null;
+  publishedAt: string | null;
+  url: string | null;
+  checkedAt: string | null;
+  /** a version the user dismissed, so the banner stays hidden for it */
+  dismissed: string | null;
+  error: string | null;
+  /** whether the release has the signed archive attached, i.e. is installable */
+  assetsReady: boolean;
+}
+
+export interface UpdateApplyResult {
+  ok: boolean;
+  version?: string;
+  previous?: string | null;
+  restarting?: boolean;
+  note?: string;
+  digest?: string;
+}
