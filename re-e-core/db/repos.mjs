@@ -246,6 +246,29 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
       nodeModels.invalidateCache();
       return info.changes > 0;
     },
+    /** Bulk enable/disable. Scoped by node so an id from elsewhere is a no-op. */
+    setEnabledMany(nodeId, ids, enabled) {
+      if (!ids.length) return 0;
+      let changed = 0;
+      for (const chunk of chunksOf(ids, 200)) {
+        const marks = chunk.map(() => "?").join(",");
+        changed += db.prepare(`UPDATE node_models SET enabled=?, updated_at=? WHERE node_id=? AND id IN (${marks})`)
+          .run(enabled ? 1 : 0, new Date().toISOString(), nodeId, ...chunk).changes;
+      }
+      nodeModels.invalidateCache();
+      return changed;
+    },
+    /** Bulk delete. Same node scoping. */
+    deleteMany(nodeId, ids) {
+      if (!ids.length) return 0;
+      let changed = 0;
+      for (const chunk of chunksOf(ids, 200)) {
+        const marks = chunk.map(() => "?").join(",");
+        changed += db.prepare(`DELETE FROM node_models WHERE node_id=? AND id IN (${marks})`).run(nodeId, ...chunk).changes;
+      }
+      nodeModels.invalidateCache();
+      return changed;
+    },
     /**
      * Merge an upstream model list into a node's rows.
      * Manual rows are never touched. Imported rows are upserted; previously
@@ -560,4 +583,11 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
 function safeJson(text) {
   if (text === null || text === undefined) return null;
   try { return JSON.parse(text); } catch { return null; }
+}
+
+/** Split into fixed-size groups — SQLite has a bound-parameter ceiling. */
+function chunksOf(items, size) {
+  const out = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
 }

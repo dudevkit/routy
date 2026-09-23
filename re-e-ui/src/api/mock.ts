@@ -17,6 +17,8 @@ import type {
   NewConnectionInput,
   NewNodeInput,
   KeyTestResult,
+  ModelBulkAction,
+  ModelBulkResult,
   ModelImportResult,
   NodeConnection,
   NodeModel,
@@ -176,6 +178,17 @@ export const api = {
 
   async importModels(): Promise<ModelImportResult> {
     throw new Error("The mock transport has no upstream to import from — run against a live gateway.");
+  },
+
+  async bulkModels(_id: string, input: { ids: string[]; action: ModelBulkAction }): Promise<ModelBulkResult> {
+    const rows = state.models.filter((m) => input.ids.includes(m.id));
+    if (input.action === "delete") state.models = state.models.filter((m) => !input.ids.includes(m.id));
+    else if (input.action === "hide" || input.action === "show") {
+      for (const m of rows) m.enabled = input.action === "show";
+    } else {
+      throw new Error("The mock transport cannot probe models — run against a live gateway.");
+    }
+    return { action: input.action, changed: rows.length, models: state.models };
   },
 
   async testModel(): Promise<NodeModel & { result: ProbeResult }> {

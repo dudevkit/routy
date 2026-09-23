@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { api, streamLogs, type StreamLevel } from "./transport";
-import type { ComboInput, LogRecord, ProxyPoolInput } from "./types";
+import type { ComboInput, LogRecord, ModelBulkAction, ProxyPoolInput } from "./types";
 
 /* ── query keys ────────────────────────────────────────────────────────────── */
 const NODES: QueryKey = ["nodes"];
@@ -128,6 +128,16 @@ export const useTestModel = () => {
   return useMutation({
     mutationFn: ({ nodeId, modelId, connectionId }: { nodeId: string; modelId: string; connectionId?: string }) =>
       api.testModel(nodeId, modelId, connectionId),
+    onSuccess: () => invalidate(),
+  });
+};
+
+/** Bulk hide/show/delete/test a model selection. */
+export const useBulkModels = () => {
+  const invalidate = useInvalidator(NODES);
+  return useMutation({
+    mutationFn: ({ nodeId, ids, action }: { nodeId: string; ids: string[]; action: ModelBulkAction }) =>
+      api.bulkModels(nodeId, { ids, action }),
     onSuccess: () => invalidate(),
   });
 };

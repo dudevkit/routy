@@ -92,7 +92,9 @@ Click a provider in **Providers** to open its own page, with three tabs:
   **Import from provider** (fetches its `/models` and merges — manual entries are
   kept, and ones the provider dropped are marked *stale* rather than deleted), or
   just type an id and hit **Test**. Test sends a real one-token stream, so a green
-  result means the id genuinely serves.
+  result means the id genuinely serves. Each row has a copy button for the routable
+  `<prefix>/<model>`, and **Select** turns on checkboxes with select-all plus bulk
+  **Test / Hide / Show / Delete** over the selection.
 - **API Keys** — add one key, or **Add bulk** with one per line as
   `label,key` (a bare key gets an auto label). *Test each key after adding* probes
   every new key, and **Test all keys** re-checks the lot.

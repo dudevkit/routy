@@ -19,6 +19,8 @@ import type {
   GatewayHealth,
   GatewayInfo,
   KeyTestResult,
+  ModelBulkAction,
+  ModelBulkResult,
   ModelImportResult,
   NewConnectionInput,
   NewNodeInput,
@@ -192,6 +194,9 @@ export const api = {
     postJson<ModelImportResult>(`/api/nodes/${enc(id)}/models/import`, connectionId ? { connectionId } : {}),
   testModel: (id: string, modelId: string, connectionId?: string): Promise<NodeModel & { result: ProbeResult }> =>
     postJson(`/api/nodes/${enc(id)}/models/${enc(modelId)}/test${qs({ connectionId })}`, {}),
+  /** Bulk hide/show/delete/test a selection — one round trip, bounded concurrency. */
+  bulkModels: (id: string, input: { ids: string[]; action: ModelBulkAction }): Promise<ModelBulkResult> =>
+    postJson<ModelBulkResult>(`/api/nodes/${enc(id)}/models/bulk`, input),
 
   /* api keys — per-key probe (P6) */
   testConnectionKey: (connectionId: string): Promise<KeyTestResult> =>

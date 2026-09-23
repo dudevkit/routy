@@ -116,10 +116,18 @@ POST   /api/nodes/{id}/models                    { model, enabled? } → source=
 PUT    /api/nodes/{id}/models/{modelId}          { enabled?, model? }
 DELETE /api/nodes/{id}/models/{modelId}
 POST   /api/nodes/{id}/models/import             { connectionId? } → merge
+POST   /api/nodes/{id}/models/bulk               { ids[], action } → hide|show|delete|test
 POST   /api/nodes/{id}/models/{modelId}/test     real one-token stream
 ```
 
 `{modelId}` is the row id, not the model string — model ids contain `/`.
+
+`bulk` acts on a selection in one round trip, with every id scoped to that provider
+(an id belonging to another provider is ignored, not acted on). `test` runs with
+bounded concurrency (4) so a 60-model selection does not open 60 sockets. The
+dashboard's Models tab drives all of this: a copy button on each row (copies the
+routable `<prefix>/<model>`), and a **Select** mode with select-all plus Test /
+Hide / Show / Delete over the selection.
 
 ---
 

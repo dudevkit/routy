@@ -237,6 +237,47 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     json(res, 200, { ...summary, latencyMs: result.latencyMs, listed: (result.models || []).length, models: repos.nodeModels.list(node.id) });
   });
 
+  // Bulk actions over a selection of models — one round trip, and the test action
+  // runs with bounded concurrency so 60 probes don't open 60 sockets.
+  route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/models\/bulk$/, async (req, res, p) => {
+    const node = repos.nodes.get(p.id);
+    if (!node) return json(res, 404, { error: { message: "not_found" } });
+    const input = JSON.parse((await readBody(req)).toString("utf8"));
+    const action = input?.action;
+    const ids = Array.isArray(input?.ids) ? input.ids.filter((i) => typeof i === "string" && i) : [];
+    if (!["hide", "show", "delete", "test"].includes(action)) {
+      return json(res, 400, { error: { message: "bad_request", detail: "action must be hide | show | delete | test" } });
+    }
+    if (ids.length === 0) return json(res, 400, { error: { message: "bad_request", detail: "ids array required" } });
+
+    // Scope every id to this node — an id from another provider is ignored, not acted on.
+    const rows = ids.map((id) => repos.nodeModels.get(id)).filter((r) => r && r.nodeId === node.id);
+    if (rows.length === 0) return json(res, 404, { error: { message: "not_found", detail: "no models matched" } });
+
+    if (action === "hide" || action === "show") {
+      const changed = repos.nodeModels.setEnabledMany(node.id, rows.map((r) => r.id), action === "show");
+      return json(res, 200, { action, changed, models: repos.nodeModels.list(node.id) });
+    }
+    if (action === "delete") {
+      const changed = repos.nodeModels.deleteMany(node.id, rows.map((r) => r.id));
+      return json(res, 200, { action, changed, models: repos.nodeModels.list(node.id) });
+    }
+
+    // action === "test"
+    const conns = repos.connections.list(node.id);
+    const conn = conns[0] || null;
+    if (!conn) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
+    const results = await mapLimit(rows, 4, async (row) => {
+      const r = await probeModel(node, row.model, conn);
+      repos.nodeModels.recordTest(row.id, r);
+      return { modelId: row.id, model: row.model, ok: r.ok, ttftMs: r.ttftMs, error: r.error };
+    });
+    json(res, 200, {
+      action, tested: results.length, ok: results.filter((r) => r.ok).length,
+      results, models: repos.nodeModels.list(node.id),
+    });
+  });
+
   // Prove one model id actually serves — a real (tiny) stream, recorded on the row.
   route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/models\/(?<modelId>[^/]+)\/test$/, async (req, res, p, url) => {
     const node = repos.nodes.get(p.id);

@@ -247,6 +247,19 @@ export interface ModelImportResult {
   models: NodeModel[];
 }
 
+/** Bulk selection actions available on the Models tab. */
+export type ModelBulkAction = "hide" | "show" | "delete" | "test";
+
+export interface ModelBulkResult {
+  action: ModelBulkAction;
+  changed?: number;
+  tested?: number;
+  ok?: number;
+  results?: { modelId: string; model: string; ok: boolean; ttftMs: number | null; error: string | null }[];
+  /** the refreshed list, so the table never shows a stale selection */
+  models: NodeModel[];
+}
+
 /* ── config: settings + client api keys ────────────────────────────────────── */
 export interface Settings {
   /** gate: when false the proxy accepts requests without a client key */

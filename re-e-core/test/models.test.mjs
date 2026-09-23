@@ -287,6 +287,67 @@ describe("probes are diagnostics, not traffic", () => {
   });
 });
 
+describe("bulk model actions", () => {
+  it("hides, shows and deletes a selection, scoped to the node", async () => {
+    const node = mkNode("p");
+    const other = mkNode("q");
+    repos.nodeModels.import(node.id, ["m-alpha", "m-beta", "m-gamma"]);
+    const foreign = repos.nodeModels.create({ nodeId: other.id, model: "not-yours" });
+    const ids = repos.nodeModels.list(node.id).map((m) => m.id);
+
+    const hidden = await call("POST", `/api/nodes/${node.id}/models/bulk`, { ids: [...ids, foreign.id], action: "hide" });
+    expect(hidden.status).toBe(200);
+    expect(hidden.body.changed).toBe(3); // the foreign id is ignored, not acted on
+    expect(repos.nodeModels.enabledModels(node.id)).toEqual([]);
+    expect(repos.nodeModels.get(foreign.id).enabled).toBe(true); // untouched
+
+    const shown = await call("POST", `/api/nodes/${node.id}/models/bulk`, { ids: [ids[0]], action: "show" });
+    expect(shown.body.changed).toBe(1);
+    expect(repos.nodeModels.enabledModels(node.id)).toEqual(["m-alpha"]);
+
+    const removed = await call("POST", `/api/nodes/${node.id}/models/bulk`, { ids, action: "delete" });
+    expect(removed.body.changed).toBe(3);
+    expect(repos.nodeModels.list(node.id)).toHaveLength(0);
+  });
+
+  it("tests a selection and records each result on its row", async () => {
+    const node = mkNode("p");
+    mkKey(node);
+    repos.nodeModels.import(node.id, ["m-alpha", "m-beta"]);
+    const ids = repos.nodeModels.list(node.id).map((m) => m.id);
+
+    const r = await call("POST", `/api/nodes/${node.id}/models/bulk`, { ids, action: "test" });
+    expect(r.status).toBe(200);
+    expect(r.body.tested).toBe(2);
+    expect(r.body.ok).toBe(2);
+    expect(r.body.results.map((x) => x.model).sort()).toEqual(["m-alpha", "m-beta"]);
+    expect(stubState.chatRequests).toHaveLength(2); // one real stream each
+    for (const row of repos.nodeModels.list(node.id)) expect(row.lastTestOk).toBe(true);
+
+    // still diagnostics: no usage, no budget, no breaker
+    expect(repos.usage.query({ limit: 10 })).toHaveLength(0);
+    expect(budgetState(1).spent).toBe(0);
+    expect(repos.breakers.get(`node:${node.id}`)).toBeNull();
+  });
+
+  it("rejects an unknown action and an empty selection", async () => {
+    const node = mkNode("p");
+    const m = repos.nodeModels.create({ nodeId: node.id, model: "x" });
+    expect((await call("POST", `/api/nodes/${node.id}/models/bulk`, { ids: [m.id], action: "explode" })).status).toBe(400);
+    expect((await call("POST", `/api/nodes/${node.id}/models/bulk`, { ids: [], action: "hide" })).status).toBe(400);
+    expect((await call("POST", `/api/nodes/${node.id}/models/bulk`, { ids: ["ghost"], action: "hide" })).status).toBe(404);
+  });
+
+  it("needs a key to bulk-test", async () => {
+    const node = mkNode("p");
+    repos.nodeModels.import(node.id, ["m-alpha"]);
+    const ids = repos.nodeModels.list(node.id).map((m) => m.id);
+    const r = await call("POST", `/api/nodes/${node.id}/models/bulk`, { ids, action: "test" });
+    expect(r.status).toBe(400);
+    expect(r.body.error.message).toBe("no_credentials");
+  });
+});
+
 describe("model + key endpoints", () => {
   it("adds a manual model, tests it, and it appears in /v1/models", async () => {
     const node = mkNode("p");
