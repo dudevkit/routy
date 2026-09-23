@@ -224,8 +224,10 @@ A node is taken out of rotation after 3 consecutive failures. The cooldown start
 to the base window. State is persisted and survives a restart.
 
 A stream that dies mid-flight counts as a failure (a response is only "successful"
-once it completes). Reset manually with `POST /api/nodes/{id}/reset` or
-`POST /api/breakers/{scope}/reset`.
+once it completes). **A client walking away never counts** — a client abort or
+disconnect says nothing about the provider's health, so it leaves the breaker
+untouched (otherwise your own Ctrl-C could take a healthy provider offline). Reset
+manually with `POST /api/nodes/{id}/reset` or `POST /api/breakers/{scope}/reset`.
 
 ---
 
@@ -237,7 +239,7 @@ once it completes). Reset manually with `POST /api/nodes/{id}/reset` or
 | Upstream silent on a non-streaming body | Same budget; request fails with `upstream_stalled` (502/504) |
 | Upstream connection never establishes | 60s connect budget, then `connect_timeout` — no retry, fail over to the next route |
 | Every route's breaker open | `503 all_unavailable` with `retryAfterMs` |
-| Client disconnects mid-stream | Upstream fetch aborted; the request is recorded as `aborted` |
+| Client disconnects mid-stream | Upstream fetch aborted; the request is recorded as `aborted`. **Never** counts against the breaker |
 | Shutdown (`SIGINT`/`SIGTERM`/`POST /api/gateway/shutdown`) | Stop accepting, drain in-flight streams, drop idle keep-alives, force-close after a 10s grace, then close pools and exit |
 
 ---

@@ -61,6 +61,19 @@ axolotl/
 
 ## Done
 
+- 2026-09-23 (client aborts were degrading healthy providers): the user's provider
+  showed `degraded` with `lastError: client_aborted: client aborted` and **zero usage
+  rows** — a client abort had been counted as a provider failure. Two paths did it:
+  the `!result.ok` branch called `recordFailure` for every error code including
+  `client_aborted`, and the non-streaming body read recorded a client abort as
+  `upstream_stalled` (the abort rejects `response.text()` exactly like a stall does).
+  Three aborts would have opened the breaker — your own Ctrl-C could take a healthy
+  provider offline. Client aborts and disconnects now leave the breaker completely
+  untouched, and are logged as plain info (`CHAT client aborted ts {afterMs}`) rather
+  than a warning. Verified live: abort a request mid-flight → node stays `healthy`,
+  `failures: 0`. Tests: 122/122 (abort on the streaming path, abort on the
+  non-streaming path, and a genuine upstream 404 that must still count).
+
 - 2026-09-23 (probe correctness + upstream observability): a user-reported "model
   test times out, console shows nothing" turned out to be two real defects.
   **The probe was wrong**, and 9Router's own ping (which the user pointed at) had
@@ -367,6 +380,13 @@ axolotl/
 
 *(Append-only; one line per fact with pointer into reference doc where applicable.)*
 
+- 2026-09-23: A circuit breaker must distinguish *who* failed. A client abort is not
+  upstream ill health; counting it lets a user's Ctrl-C open a healthy provider's
+  breaker. Watch for abort errors masquerading as stalls — an aborted fetch rejects
+  `response.text()` the same way a dead upstream does.
+- 2026-09-23: A "degraded" provider with zero usage rows means a failure was recorded
+  on a path that never recorded traffic — a strong hint the failure was not a real
+  upstream response.
 - 2026-09-23: A "model is slow" probe bug is usually a probe that waits for the wrong
   thing. Reasoning models emit thinking tokens first and the answer much later —
   measured live: **4s to the first thinking token, 70s to the first answer token**.

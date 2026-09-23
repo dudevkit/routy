@@ -199,3 +199,58 @@ describe("chat handler (end-to-end)", () => {
     expect(r.body).toContain("all_unavailable");
   });
 });
+
+describe("a client walking away is not upstream ill health", () => {
+  /** Fire a request, then drop the socket mid-flight. */
+  function abortMidFlight(body, afterMs = 300) {
+    return new Promise((resolve) => {
+      const payload = JSON.stringify(body);
+      const req = http.request(
+        { host: "127.0.0.1", port: handlerPort, path: "/v1/chat/completions", method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } },
+        () => resolve(),
+      );
+      req.on("error", () => resolve());
+      req.end(payload);
+      setTimeout(() => { req.destroy(); resolve(); }, afterMs);
+    });
+  }
+
+  it("does not count a client abort against the breaker (streaming)", async () => {
+    repos.settings.update({ requireApiKey: false });
+    const node = repos.nodes.list()[0];
+    // upstream sends headers then nothing, so the client's abort is the only event
+    stubState.handler = (req, res) => { res.writeHead(200, { "content-type": "text/event-stream" }); };
+
+    await abortMidFlight({ model: "a/m1", stream: true, messages: [{ role: "user", content: "x" }] });
+    await new Promise((r) => setTimeout(r, 400));
+
+    const b = repos.breakers.get(`node:${node.id}`);
+    expect(b?.failures ?? 0).toBe(0);
+    expect(b?.lastError ?? null).toBeNull();
+  }, 15_000);
+
+  it("does not record a client abort during a non-streaming body read as a stall", async () => {
+    repos.settings.update({ requireApiKey: false });
+    const node = repos.nodes.list()[0];
+    stubState.handler = (req, res) => { res.writeHead(200, { "content-type": "application/json" }); };
+
+    await abortMidFlight({ model: "a/m1", stream: false, messages: [{ role: "user", content: "x" }] });
+    await new Promise((r) => setTimeout(r, 500));
+
+    const b = repos.breakers.get(`node:${node.id}`);
+    // no failure recorded at all — so certainly nothing about a stall
+    expect(b?.lastError ?? null).toBeNull();
+    expect(b?.failures ?? 0).toBe(0);
+  }, 15_000);
+
+  it("still counts a genuine upstream failure", async () => {
+    repos.settings.update({ requireApiKey: false });
+    const node = repos.nodes.list()[0];
+    repos.nodes.update(node.id, { data: { retry: { 404: { attempts: 0 } } } });
+    stubState.handler = (req, res) => res.writeHead(404, { "content-type": "application/json" }).end('{"error":{"message":"nope"}}');
+
+    const r = await post({ model: "a/m1", stream: true, messages: [{ role: "user", content: "x" }] });
+    expect(r.status).toBe(503);
+    expect(repos.breakers.get(`node:${node.id}`).failures).toBe(1);
+  }, 15_000);
+});

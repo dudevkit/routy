@@ -160,6 +160,14 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       const result = await executor.execute({ model: r.model, body: outbound, stream, signal: clientAbort.signal, log });
 
       if (!result.ok) {
+        // A client walking away (or a client-side timeout) says nothing about the
+        // provider's health. Counting it degrades a perfectly good node and, after
+        // three, opens its breaker — so aborts never touch the breaker.
+        if (result.errorCode === "client_aborted") {
+          log.info("CHAT", `client aborted ${r.node.prefix}`, { afterMs: Date.now() - t0 });
+          lastError = result;
+          continue;
+        }
         recordFailure(repos, r.node, result);
         lastError = result;
         log.warn("CHAT", `node ${r.node.prefix} failed: ${result.errorCode} ${result.status}`);
@@ -252,6 +260,12 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       try {
         text = await withIdleTimeout(result.response.text(), idleTimeoutMs, () => result.abort?.());
       } catch (err) {
+        // Distinguish "the client left" from "the upstream stalled" — the first is
+        // not the provider's fault and must not degrade it.
+        if (clientAbort.signal.aborted) {
+          log.info("CHAT", `client aborted ${r.node.prefix} while reading the body`, { afterMs: Date.now() - t0 });
+          return;
+        }
         // Same watchdog as the stream path: a body that never arrives must not hang.
         recordFailure(repos, r.node, { errorCode: "upstream_stalled", status: 504, message: err.message });
         lastError = { status: 504, errorCode: "upstream_stalled", message: err.message };
