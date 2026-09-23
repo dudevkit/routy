@@ -125,7 +125,11 @@ function gatewayInfo(repos, cfg, version) {
   return {
     online: true,
     endpoint: `http://${cfg.host === "0.0.0.0" ? "127.0.0.1" : cfg.host}:${cfg.port}/v1`,
-    keyMasked: key ? `re_…${key.id.slice(0, 4)}` : "—",
+    // Mask the real key. This used to render a hardcoded "re_…" prefix followed by
+    // the key's *id*, so it never showed anything about the key itself — and after
+    // the rename to sk- keys it advertised a format that no longer exists.
+    // A key created before the value was kept has nothing to show, hence "—".
+    keyMasked: key?.key ? maskKey(key.key) : "—",
     version,
   };
 }

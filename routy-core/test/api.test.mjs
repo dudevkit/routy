@@ -204,3 +204,16 @@ describe("management API", () => {
     expect(mgmtAuthorized(fakeReq("10.1.2.3", "wrong"), cfg)).toBe(false);
   });
 });
+
+describe("gateway info", () => {
+  it("masks the real client key rather than inventing one from its id", async () => {
+    const created = await post("/api/keys", { name: "masked" });
+    const r = await get("/api/gateway");
+    const mask = r.body.keyMasked;
+    // a real mask of the real key: same first/last characters, no fabricated prefix
+    expect(mask.startsWith(created.body.key.slice(0, 6))).toBe(true);
+    expect(mask.endsWith(created.body.key.slice(-4))).toBe(true);
+    expect(mask).not.toContain(created.body.id.slice(0, 4));
+    expect(mask.startsWith("re_")).toBe(false);
+  });
+});
