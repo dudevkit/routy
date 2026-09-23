@@ -8,7 +8,6 @@ import {
   Gear,
   Network,
   Palette,
-  ShareNetwork,
   SquaresFour,
   Stack,
   TerminalWindow,
@@ -70,17 +69,12 @@ export function Sidebar() {
     <aside className="flex w-72 flex-col border-r border-border-subtle bg-vibrancy backdrop-blur-xl min-h-full">
       {/* Wordmark block — the rail's top anchor (traffic lights removed) */}
       <div className="px-6 pt-6 pb-3">
-        <NavLink to="/" className="flex items-center gap-3">
-          <div className="flex items-center justify-center size-9 rounded-[10px] bg-gradient-to-br from-brand-500 to-brand-700 shadow-[var(--shadow-warm)]">
-            <ShareNetwork size={18} weight="fill" className="text-white" />
-          </div>
-          <div className="flex flex-col gap-1">
-            {/* Two twins, one per theme: the wordmark is drawn in light ink and is
-                invisible on the light theme, so it ships recoloured alongside. */}
-            <img src={wordmarkOnDark} alt="routy" className="h-6 w-auto dark:block hidden" />
-            <img src={wordmarkOnLight} alt="routy" className="h-6 w-auto dark:hidden block" />
-            <span className="text-xs text-text-muted">v0.1.0 · gateway</span>
-          </div>
+        <NavLink to="/" className="flex flex-col items-start gap-1">
+          {/* Two twins, one per theme: the wordmark is drawn in light ink and is
+              invisible on the light theme, so it ships recoloured alongside. */}
+          <img src={wordmarkOnDark} alt="routy" className="h-6 w-auto dark:block hidden" />
+          <img src={wordmarkOnLight} alt="routy" className="h-6 w-auto dark:hidden block" />
+          <span className="text-xs text-text-muted">v0.1.0 · gateway</span>
         </NavLink>
       </div>
 
