@@ -1,5 +1,5 @@
 // P0.4 baseline bench — TTFT/throughput: direct-to-stub vs routed-through-9Router.
-// Usage: node scratch/bench.mjs [N]
+// Usage: node rigs/bench.mjs [N]
 import http from "http";
 
 const N = parseInt(process.argv[2] || "40", 10);

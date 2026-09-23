@@ -1,10 +1,10 @@
 // P0.4 seed — inserts bench node + connection + open settings into a fresh upstream db.
 // Run AFTER first boot of the isolated instance (schema created), BEFORE benching.
-// Usage: node --experimental-sqlite scratch/seed-bench-db.mjs
+// Usage: node --experimental-sqlite rigs/seed-bench-db.mjs
 import { DatabaseSync } from "node:sqlite";
 import path from "path";
 
-const DATA_DIR = path.resolve("scratch/bench-data");
+const DATA_DIR = path.resolve("rigs/bench-data");
 const db = new DatabaseSync(path.join(DATA_DIR, "db", "data.sqlite"));
 db.exec("PRAGMA busy_timeout = 5000");
 

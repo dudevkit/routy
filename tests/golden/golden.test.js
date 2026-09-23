@@ -1,6 +1,6 @@
 // P0.3 — golden regression tests for the translation core.
 // Level 1 (translator-level): input fixtures captured from upstream 9Router v0.5.75
-// (commit of capture: 2026-09-17, capture script scratch/capture-golden.mjs, bun).
+// (commit of capture: 2026-09-17, capture script rigs/capture-golden.mjs, bun).
 // These fixtures pin upstream behavior; the RE-E port must reproduce them exactly
 // (modulo normalized volatile fields).
 //

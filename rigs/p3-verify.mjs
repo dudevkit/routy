@@ -1,6 +1,6 @@
 // P3 live verification — drives a real gateway (started via scripts/re-e-serve.cmd)
 // against the chaos stub and reports each stability property.
-// Usage: node scratch/p3-verify.mjs <gatewayPort> <homeDir> [phase]
+// Usage: node rigs/p3-verify.mjs <gatewayPort> <homeDir> [phase]
 //   phase=main (default) → stall/die/slow/big/concurrency checks
 //   phase=drain          → start a long stream, trigger shutdown, prove it drained
 import http from "node:http";
@@ -9,7 +9,7 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 
 const GW = Number(process.argv[2] || 8015);
-const HOME = process.argv[3] || path.join(process.cwd(), "scratch", "chaos-home");
+const HOME = process.argv[3] || path.join(process.cwd(), "rigs", "chaos-home");
 const PHASE = process.argv[4] || "main";
 const results = [];
 const check = (name, ok, detail) => { results.push({ name, ok, detail }); console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`); };

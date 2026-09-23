@@ -7,8 +7,8 @@
 > nodes** (user-provided baseUrl + apiKey). This catalog is the implementation menu for
 > everything beyond v1.
 >
-> Regenerate after upstream updates: `node scratch/extract-providers.mjs` then re-run the
-> render step (or ask the assistant — raw data persists in `scratch/providers.json`).
+> Regenerate after upstream updates: `node rigs/extract-providers.mjs` then re-run the
+> render step (or ask the assistant — raw data persists in `rigs/providers.json`).
 
 ---
 

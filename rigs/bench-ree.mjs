@@ -1,6 +1,6 @@
 // P4 bench — proxy-added latency of RE-E vs hitting the upstream directly.
 // Both targets drive the same chaos stub (mode "ok"), so the delta is RE-E's cost.
-// Usage: node scratch/bench-ree.mjs [N] [gatewayPort] [stubPort]
+// Usage: node rigs/bench-ree.mjs [N] [gatewayPort] [stubPort]
 import http from "node:http";
 
 const N = parseInt(process.argv[2] || "60", 10);

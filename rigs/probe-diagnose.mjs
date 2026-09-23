@@ -1,6 +1,6 @@
 // Diagnose a model probe against a real provider: what does the upstream actually
 // send, and where does the time go? Never prints the API key.
-// Usage: node scratch/probe-diagnose.mjs [homeDir] [modelSubstring]
+// Usage: node rigs/probe-diagnose.mjs [homeDir] [modelSubstring]
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import os from "node:os";
@@ -25,7 +25,7 @@ console.log(`POST ${url}`);
 console.log(`body: ${body}\n`);
 
 const t0 = Date.now();
-const LOG = path.join(process.cwd(), "scratch", "probe-diagnose.log");
+const LOG = path.join(process.cwd(), "rigs", "probe-diagnose.log");
 import fs from "node:fs";
 fs.writeFileSync(LOG, "");
 const stage = (s) => {

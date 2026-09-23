@@ -1,5 +1,5 @@
 // P0.1/P0.2 — golden fixture capture at translator level (L1).
-// Run with bun from axolotl root: bun scratch/capture-golden.mjs
+// Run with bun from axolotl root: bun rigs/capture-golden.mjs
 // Captures: (a) request translation openai<->claude, (b) response SSE translation
 // upstream->client for openai/claude in both directions + passthrough.
 import { mkdirSync, writeFileSync, existsSync } from "fs";
@@ -9,7 +9,7 @@ const ROOT = process.cwd();
 const R9 = path.join(ROOT, "9router");
 const OUT = path.join(ROOT, "tests", "golden", "fixtures");
 mkdirSync(OUT, { recursive: true });
-process.env.DATA_DIR = path.join(ROOT, "scratch", "golden-data");
+process.env.DATA_DIR = path.join(ROOT, "rigs", "golden-data");
 
 const { FORMATS } = await import(path.join(R9, "open-sse/translator/formats.js"));
 const { translateRequest, initState } = await import(path.join(R9, "open-sse/translator/index.js"));

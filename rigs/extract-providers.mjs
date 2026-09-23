@@ -51,7 +51,7 @@ for (const f of files.sort()) {
   }
 }
 
-writeFileSync("scratch/providers.json", JSON.stringify(out, null, 2));
+writeFileSync("rigs/providers.json", JSON.stringify(out, null, 2));
 console.log(`extracted: ${out.length}, failed: ${failed.length}`);
 if (failed.length) console.log("FAILED:\n" + failed.slice(0, 10).join("\n"));
 const cats = {};

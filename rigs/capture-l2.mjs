@@ -1,7 +1,7 @@
 // P0.1b — L2 golden capture: client-facing bytes through the FULL upstream pipeline
 // (Next route → chat.js → chatCore → executor → stub → stream handler → client).
 // Requires: bench-stub (:20990) + bench-router (:20991) running and seeded.
-// Usage: bun scratch/capture-l2.mjs
+// Usage: bun rigs/capture-l2.mjs
 // Fixtures land in tests/golden/fixtures-l2/ — reference captures for RE-E's P1
 // integration tests. Same normalization rules as L1 (msg_<epoch>, created epoch).
 import { mkdirSync, writeFileSync } from "fs";

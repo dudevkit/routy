@@ -1,12 +1,12 @@
 // P0.4b — RTK-on vs RTK-off bench with a compressible tool_result (git-diff shape).
 // Toggles settings.rtkEnabled in the isolated db (upstream reads settings per request).
-// Usage: node scratch/bench-rtk.mjs [N]
+// Usage: node rigs/bench-rtk.mjs [N]
 import http from "http";
 import { DatabaseSync } from "node:sqlite";
 import path from "path";
 
 const N = parseInt(process.argv[2] || "30", 10);
-const DATA_DIR = path.resolve("scratch/bench-data");
+const DATA_DIR = path.resolve("rigs/bench-data");
 const db = new DatabaseSync(path.join(DATA_DIR, "db", "data.sqlite"));
 db.exec("PRAGMA busy_timeout = 5000");
 

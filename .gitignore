@@ -2,20 +2,23 @@
 /9router/
 
 # Session-local artifacts
-/scratch/orca-guide.json
+/rigs/orca-guide.json
 node_modules/
 *.log
 .DS_Store
-/scratch/bench-data/
-/scratch/golden-data/
+/rigs/bench-data/
+/rigs/golden-data/
 tests/golden/.tmp-data/
 /tests/golden/.tmp-data/
-/scratch/ree-home/
-/scratch/ree-home-r3/
-/scratch/chaos-home/
+/rigs/ree-home/
+/rigs/ree-home-r3/
+/rigs/chaos-home/
 # local gateway state dirs (ROUTY_HOME) used by the verification rigs
-/scratch/*-home/
-/scratch/dbg-home/
+/rigs/*-home/
+/rigs/dbg-home/
 routy-core/node_modules/
+# design-phase screenshots — local reference only, not published
+routy-ui/.preview/
+
 # build output (npm run build in routy-core, npm run build in routy-ui)
 /routy-core/dist/

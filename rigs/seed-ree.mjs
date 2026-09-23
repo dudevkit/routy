@@ -1,10 +1,10 @@
 // Seed a demo node + alias + combo + open settings into the live re-e-core db.
-// Usage: node scratch/seed-ree.mjs
+// Usage: node rigs/seed-ree.mjs
 import { openDatabase } from "../re-e-core/db/driver.mjs";
 import { createRepos } from "../re-e-core/db/repos.mjs";
 import path from "node:path";
 
-const db = openDatabase(path.resolve("scratch/ree-home/data"));
+const db = openDatabase(path.resolve("rigs/ree-home/data"));
 const repos = createRepos(db);
 
 repos.settings.update({ requireApiKey: false });

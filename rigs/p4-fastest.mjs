@@ -1,6 +1,6 @@
 // P4 live check — latency-aware routing: a combo declared slow-first must end up
 // preferring the fast upstream once the EWMA has measured both.
-// Usage: node scratch/p4-fastest.mjs [gatewayPort] [fastStubPort] [slowStubPort]
+// Usage: node rigs/p4-fastest.mjs [gatewayPort] [fastStubPort] [slowStubPort]
 import http from "node:http";
 
 const GW = Number(process.argv[2] || 8015);

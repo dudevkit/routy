@@ -74,7 +74,7 @@ axolotl/
   sidecars included. If the move fails (Windows will not rename a directory with
   open handles) the legacy location is used in place and a warning is logged, since
   starting empty would look like data loss. Verified on the live instance:
-  `adopted pre-rename state dir: C:\Users\Ravi\.re-e → C:\Users\Ravi\.routy`, all
+  `adopted pre-rename state dir: .re-e → .routy`, all
   providers/models/keys/usage intact. 11 new migration tests cover the adopt, the
   already-migrated, the stale-env-var, the move-failed and the both-databases cases.
   **Two bugs the blind rename introduced and this pass caught**: `LEGACY_HOME_NAME`
@@ -271,10 +271,10 @@ axolotl/
   SPA had no router basename, so `/ui/<route>` deep links fell through to the
   catch-all screen. UI: Spend card (today's spend, daily ceiling, progress) and node
   pricing fields. Tests: metrics (5) + routing policy (14) + budget e2e (4) → 92/92.
-- 2026-09-23 (P4 gate, live): `scratch/bench-ree.mjs` (direct vs routed),
-  `scratch/p4-verify.mjs` (14/14: strategy ordering, invalid strategy 400, metered
+- 2026-09-23 (P4 gate, live): `rigs/bench-ree.mjs` (direct vs routed),
+  `rigs/p4-verify.mjs` (14/14: strategy ordering, invalid strategy 400, metered
   cost, 402 at the ceiling, auto-fallback to the unmetered node, all metrics
-  families), `scratch/p4-fastest.mjs` (3/3: a combo declared slow-first explored the
+  families), `rigs/p4-fastest.mjs` (3/3: a combo declared slow-first explored the
   slow node once then pinned to the fast one, TTFT 426ms vs 1ms). P3's 11/11 and the
   browser checks were re-run after the executor swap: no regressions.
 
@@ -305,8 +305,8 @@ axolotl/
   that plus the NSSM path. First-run bug fixed: a non-existent `ROUTY_HOME` crashed
   boot on the lockfile write. Tests: `test/stability.test.mjs` (8) +
   `test/chaos.test.mjs` (8) — 69/69 total.
-- 2026-09-23 (P3 gate, live): rig = `scratch/chaos-upstream.mjs` (model name selects
-  ok/stall/die/big/slow/long) + `scratch/p3-verify.mjs`. Gateway booted through the
+- 2026-09-23 (P3 gate, live): rig = `rigs/chaos-upstream.mjs` (model name selects
+  ok/stall/die/big/slow/long) + `rigs/p3-verify.mjs`. Gateway booted through the
   Windows launcher on :8015 in **317ms** (< 500ms target). **11/11** main checks:
   stall aborts in 1.5s with `upstream_stalled` (bounded, not hung) and the node goes
   `degraded`; mid-stream death yields `upstream_stream_failed`; a slow-but-alive
@@ -322,8 +322,8 @@ axolotl/
   tests, packaging). Evidence tables in reference doc §13.
 - 2026-09-17: Provider catalog generated — all 122 registry entries extracted to
   `docs/provider-catalog.md` (categories, formats, baseUrls, OAuth split, custom
-  executor LOC inventory, onboarding checklist). Raw data: `scratch/providers.json`;
-  regeneration scripts in `scratch/`. Proxy pools confirmed as kept feature (user).
+  executor LOC inventory, onboarding checklist). Raw data: `rigs/providers.json`;
+  regeneration scripts in `rigs/`. Proxy pools confirmed as kept feature (user).
 - 2026-09-17: Build plan written — `docs/roadmap.md` (6 phases, session estimates, gates,
   risk register), `docs/backend-architecture.md` (module/port map, request lifecycle, SSE
   pipeline rewrite spec, API surface, error taxonomy), `docs/db-design.md` (node:sqlite
@@ -337,14 +337,14 @@ axolotl/
 - 2026-09-17 (P0 harness): vitest golden suite `tests/golden/` — **13/13 green** against
   upstream v0.5.75. Normalized volatility: `msg_<epoch>` ids, `created` epoch seconds.
 - 2026-09-17 (P0 bench): baseline measured — production build, isolated instance
-  (DATA_DIR=scratch/bench-data), stub upstream, 40 reqs/stream: direct TTFT p50 ~0-1ms;
+  (DATA_DIR=rigs/bench-data), stub upstream, 40 reqs/stream: direct TTFT p50 ~0-1ms;
   routed TTFT p50/p90/p99 = 16ms; total p50 662 vs 657ms; 40/40 ok. Results:
-  `scratch/bench-results.json`.
+  `rigs/bench-results.json`.
 - 2026-09-17 (P0 done): RTK bench variant — rtk on vs off on 8KB tool_result: TTFT p50
   16→15ms, total identical → RTK processing cost <1ms (free latency-wise). L2 end-to-end
   captures: 5 client-facing fixtures through full pipeline (openai/claude × stream/nonstream
   × tools), verified deterministic across runs after normalization
-  (`tests/golden/fixtures-l2/`, capture: `scratch/capture-l2.mjs`). Stub id made
+  (`tests/golden/fixtures-l2/`, capture: `rigs/capture-l2.mjs`). Stub id made
   deterministic; meta timing dropped from fixtures. **P0 gate passed.**
 - 2026-09-17 (P1.1): `routy-core/` skeleton landed — `server.mjs` + `lib/{router,config,log,auth}.mjs`;
   zero runtime deps (Node 22+ builtins only); boots <150ms; `/api/health`, `/api/version`,
@@ -362,7 +362,7 @@ axolotl/
   flags (open+unexpired = unhealthy; expired = half-open candidate), `listModels()` for
   /v1/models. 19/19 tests green incl. alias-loop guard and disabled-node exclusion.
   Live-verified: seeded node/alias/combo appear in /v1/models of running `ree-core`
-  (`scratch/seed-ree.mjs`; WAL allows second-process seed).
+  (`rigs/seed-ree.mjs`; WAL allows second-process seed).
 - 2026-09-17 (P1.4): default executor landed — `core/executors/default.mjs`: parity retry
   config (502 3×3s, 503 3×2s, 429 no-retry→fallback, Retry-After honored), stringify-once,
   AbortSignal.any connect timeout (60s default), structured error taxonomy
@@ -387,7 +387,7 @@ axolotl/
   path; upstream 9Router was unaffected (no content-type branch) — caught only by
   per-chunk timing test. Lesson: fixture stubs are part of the tested surface.
 - 2026-09-17 (P1.6): translator port landed — `core/translate/**` (48 files via
-  `scratch/port-translator.mjs`: verbatim translator tree + `deps/` layer: ported
+  `rigs/port-translator.mjs`: verbatim translator tree + `deps/` layer: ported
   sessionManager/claudeCloaking/streamHelpers/usageTracking/capabilities/pricing/
   thinkingLevels/visionPatterns/kiroConstants/kiroSessionReplay/mediaConfig/
   defaultThinkingSignature + synthesized runtimeConfig/appConstants/shared/uuid/
@@ -586,13 +586,13 @@ axolotl/
   (CLAUDE_SYSTEM_PROMPT) even with provider=null — fixture-pinned upstream behavior.
 - 2026-09-17: Node gotcha (harness): IncomingMessage 'close' fires when request BODY
   completes, not on socket close — use ServerResponse 'close' for stream cleanup.
-- 2026-09-17: Bench rig lives in `scratch/` (stub-upstream, seed-bench-db, bench.mjs);
+- 2026-09-17: Bench rig lives in `rigs/` (stub-upstream, seed-bench-db, bench.mjs);
   hub processes `bench-stub` (:20990) + `bench-router` (:20991) kept running for P0 follow-ups.
 - 2026-09-17: Upstream source-format detection = endpoint override THEN body heuristic
   (`detectFormat`: claude body shape counts as claude only when model has NO "/" —
   slash = provider routing). routy is endpoint-fixed today; both agree on slash-model
   nodes (verified via l2-claude-tooluse). Porting detectFormat for no-slash bodies = P1.6b.
-- 2026-09-17: `scratch/port-translator.mjs` = regeneration path for translator re-sync
+- 2026-09-17: `rigs/port-translator.mjs` = regeneration path for translator re-sync
   after upstream updates; deps shims documented inline with their sources.
 - 2026-09-18: React 19 controlled inputs in headless automation: plain `Event("input")`
   does NOT reach onChange — must dispatch `InputEvent("input", {bubbles:true})` after the

@@ -1,6 +1,6 @@
 // P4 live verification — combo strategy ordering, metered cost, daily budget,
 // and the metrics endpoint against a real gateway.
-// Usage: node scratch/p4-verify.mjs [gatewayPort] [stubPort]
+// Usage: node rigs/p4-verify.mjs [gatewayPort] [stubPort]
 import http from "node:http";
 
 const GW = Number(process.argv[2] || 8015);
