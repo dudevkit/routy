@@ -1,25 +1,19 @@
 import { useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
-  useAddConnection,
-  useBatchAddConnections,
-  useConnections,
-  useDeleteConnection,
   useNodes,
   useRemoveNode,
-  useResetBreaker,
-  useTestNode,
-  useUpdateConnection,
+  useTestAllKeys,
   useUpdateNode,
 } from "../api/hooks";
-import type { NodeConnection, NodeStatus, UpstreamNode } from "../api/types";
+import type { NodeStatus, UpstreamNode } from "../api/types";
 import { toastApiError } from "../utils/errors";
 import { fmtMs } from "../utils/format";
-import { ArrowsClockwise, Broadcast, Check, CheckCircle, PencilSimple, Plus, Prohibit, Trash, WifiHigh, XCircle } from "../components/icons";
+import { Broadcast, CaretRight, Check, CheckCircle, Plus, Prohibit, WifiHigh, XCircle } from "../components/icons";
 import { NodeFormModal } from "../components/NodeFormModal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
-import { Drawer } from "../components/ui/Drawer";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { Skeleton } from "../components/ui/Skeleton";
@@ -45,212 +39,37 @@ const filterTabs = [
   { value: "disabled", label: "Disabled" },
 ];
 
-function ConnectionsDrawer({ node, onClose }: { node: UpstreamNode | null; onClose: () => void }) {
+/**
+ * A row is for scanning and navigating; the detail page is for doing. The only
+ * inline action that still makes sense at list level is probing every key at once.
+ */
+function NodeRow({ node }: { node: UpstreamNode }) {
   const toast = useToast();
-  const [apiKey, setApiKey] = useState("");
-  const [name, setName] = useState("");
-  const [confirmId, setConfirmId] = useState<string | null>(null);
-  const connections = useConnections(node?.id ?? null);
-  const addConnection = useAddConnection();
-  const batchAdd = useBatchAddConnections();
-  const updateConnection = useUpdateConnection();
-  const deleteConnection = useDeleteConnection();
-
-  const submit = () => {
-    if (!node) return;
-    const keys = apiKey.split("\n").map((k) => k.trim()).filter(Boolean);
-    if (keys.length === 0) return;
-    if (keys.length === 1) {
-      addConnection.mutate(
-        { nodeId: node.id, name: name.trim() || undefined, apiKey: keys[0] },
-        {
-          onSuccess: () => { toast("Key added"); setApiKey(""); setName(""); },
-          onError: (err) => toastApiError(toast, err, "Failed to add key"),
-        },
-      );
-    } else {
-      batchAdd.mutate(
-        { nodeId: node.id, keys, name: name.trim() || undefined },
-        {
-          onSuccess: (r) => { toast(`${r.created} keys added`); setApiKey(""); setName(""); },
-          onError: (err) => toastApiError(toast, err, "Failed to add keys"),
-        },
-      );
-    }
-  };
-
-  return (
-    <Drawer
-      open={!!node}
-      onClose={onClose}
-      title={node ? `${node.name} · keys` : "keys"}
-    >
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          {connections.isLoading && <Skeleton rows={2} />}
-          {connections.data?.length === 0 && <p className="text-sm text-text-muted">No keys stored for this node.</p>}
-          {connections.data?.map((c: NodeConnection) => (
-            <div key={c.id} className="flex flex-col gap-2 rounded-[10px] border border-border-subtle bg-surface-2 px-3 py-2">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-text-main">{c.name || "key"}</p>
-                  <p className="font-mono text-xs text-text-muted">{c.keyMasked}</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2 text-xs text-text-muted">
-                  {c.status && (
-                    <Badge variant={c.status === "active" ? "success" : "default"} size="sm">
-                      {c.status}
-                    </Badge>
-                  )}
-                  {c.lastError && <span className="text-danger">{c.lastError}</span>}
-                  <button
-                    aria-label={`Remove key ${c.name || c.id}`}
-                    onClick={() => setConfirmId(c.id)}
-                    className="rounded-[6px] p-1 text-text-subtle transition-colors hover:text-danger"
-                  >
-                    <Trash size={13} />
-                  </button>
-                </div>
-              </div>
-              {/* priority orders credentials within a node; blank = backend default */}
-              <label className="flex items-center gap-2 text-xs text-text-muted">
-                Priority
-                <input
-                  type="number"
-                  min={0}
-                  defaultValue={c.priority ?? ""}
-                  placeholder="auto"
-                  disabled={updateConnection.isPending}
-                  onBlur={(e) => {
-                    const value = e.target.value === "" ? undefined : Number(e.target.value);
-                    if (value === undefined || Number.isNaN(value) || value === c.priority) return;
-                    updateConnection.mutate(
-                      { id: c.id, patch: { priority: value } },
-                      {
-                        onSuccess: () => toast("Priority saved"),
-                        onError: (err) => toastApiError(toast, err, "Failed to save priority"),
-                      },
-                    );
-                  }}
-                  className="w-20 rounded-[6px] border border-border-subtle bg-bg px-2 py-1 font-mono text-xs text-text-main"
-                />
-              </label>
-            </div>
-          ))}
-        </div>
-
-        {/* model list per upstream */}
-        {node && node.models.length > 0 && (
-          <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium text-text-main">
-              Models <span className="text-text-subtle">({node.models.length})</span>
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {node.models.map((m) => (
-                <span key={m} className="rounded-[6px] border border-border-subtle bg-surface-2 px-2 py-0.5 font-mono text-xs text-text-main">
-                  {m}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="h-px bg-border-subtle" />
-
-        <div className="h-px bg-border-subtle" />
-
-        <div className="flex flex-col gap-3">
-          <p className="text-sm font-medium text-text-main">Add keys</p>
-          <Input label="Label prefix" value={name} onChange={(e) => setName(e.target.value)} placeholder="primary" />
-          <div>
-            <label className="text-xs font-medium text-text-main mb-1 block">API keys — one per line, blank lines skipped</label>
-            <textarea
-              className="w-full rounded-md border border-border-subtle bg-surface-2 px-3 py-2 text-sm font-mono text-text-main placeholder:text-text-main/40 focus:outline-none focus:ring-2 focus:ring-accent/40 min-h-[120px] resize-y"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={"sk-key1\nsk-key2\nsk-key3"}
-            />
-            <p className="text-xs text-text-main/50 mt-1">
-              {apiKey.split("\n").filter((k) => k.trim()).length} key{apiKey.split("\n").filter((k) => k.trim()).length !== 1 ? "s" : ""} detected
-            </p>
-          </div>
-          <div>
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<Plus size={14} />}
-              disabled={!apiKey.trim()}
-              loading={addConnection.isPending || batchAdd.isPending}
-              onClick={submit}
-            >
-              {apiKey.split("\n").filter((k) => k.trim()).length > 1 ? "Add All Keys" : "Add Key"}
-            </Button>
-          </div>
-        </div>
-
-        <Modal
-          isOpen={!!confirmId}
-          onClose={() => setConfirmId(null)}
-          title="Remove this key?"
-          size="sm"
-          footer={
-            <>
-              <Button variant="secondary" onClick={() => setConfirmId(null)}>
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                onClick={() => {
-                  if (!confirmId) return;
-                  deleteConnection.mutate(confirmId, {
-                    onSuccess: () => {
-                      toast("Key removed");
-                      setConfirmId(null);
-                    },
-                    onError: (err) => toastApiError(toast, err, "Failed to remove key"),
-                  });
-                }}
-              >
-                Remove Key
-              </Button>
-            </>
-          }
-        >
-          <p className="text-sm text-text-muted">
-            Requests stop using this credential. The node itself stays enabled unless this was its last key.
-          </p>
-        </Modal>
-      </div>
-    </Drawer>
-  );
-}
-
-function NodeRow({ node, onKeys, onEdit }: { node: UpstreamNode; onKeys: () => void; onEdit: () => void }) {
-  const toast = useToast();
-  const testNode = useTestNode();
-  const resetBreaker = useResetBreaker();
-  const removeNode = useRemoveNode();
+  const navigate = useNavigate();
+  const testAll = useTestAllKeys();
   const updateNode = useUpdateNode();
+  const removeNode = useRemoveNode();
   const [confirmRemove, setConfirmRemove] = useState(false);
   const meta = statusMeta[node.status];
   const disabled = node.status === "disabled";
 
-  const runTest = () =>
-    testNode.mutate(node.id, {
-      onSuccess: (r) =>
-        toast(
-          r.ok ? `Test passed · ${r.latencyMs}ms · ${r.modelCount} models` : (r.error ?? "Test failed"),
-          r.ok ? "success" : "error",
-        ),
-      onError: (err) => toastApiError(toast, err, "Test failed"),
-    });
+  const open = () => navigate(`/upstreams/${node.id}`);
 
   return (
-    <tr className="border-t border-border-subtle transition-colors hover:bg-surface-2/60">
+    <tr
+      onClick={open}
+      className="cursor-pointer border-t border-border-subtle transition-colors hover:bg-surface-2/60"
+    >
       <td className="px-4 py-2.5">
         <div className="flex items-center gap-2">
           <StatusDot tone={meta.dot} />
-          <span className="text-sm font-medium text-text-main">{node.name}</span>
+          <Link
+            to={`/upstreams/${node.id}`}
+            onClick={(e) => e.stopPropagation()}
+            className="text-sm font-medium text-text-main hover:text-primary hover:underline"
+          >
+            {node.name}
+          </Link>
         </div>
       </td>
       <td className="px-4 py-2.5">
@@ -264,7 +83,7 @@ function NodeRow({ node, onKeys, onEdit }: { node: UpstreamNode; onKeys: () => v
       <td className="px-4 py-2.5 font-mono text-xs text-text-muted">{node.prefix || "—"}</td>
       <td className="px-4 py-2.5 text-right font-mono text-xs tabular">
         {node.modelCount === 0 ? (
-          <span className="text-text-subtle" title="Run Test to probe the model list">
+          <span className="text-text-subtle" title="Open the provider to import or add models">
             0
           </span>
         ) : (
@@ -275,32 +94,24 @@ function NodeRow({ node, onKeys, onEdit }: { node: UpstreamNode; onKeys: () => v
         {fmtMs(node.latencyMs)}
       </td>
       <td className="hidden px-4 py-2.5 font-mono text-xs text-text-muted xl:table-cell">{node.keyMasked}</td>
-      <td className="px-4 py-2.5">
+      <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-end gap-1">
-          <Button size="sm" variant="secondary" icon={<WifiHigh size={13} />} onClick={runTest} loading={testNode.isPending}>
-            Test
-          </Button>
-          {node.status === "down" && (
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<ArrowsClockwise size={13} />}
-              disabled={resetBreaker.isPending}
-              onClick={() =>
-                resetBreaker.mutate(node.id, {
-                  onSuccess: () => toast("Breaker reset"),
-                  onError: (err) => toastApiError(toast, err, "Reset failed"),
-                })
-              }
-            >
-              Reset
-            </Button>
-          )}
-          <Button size="sm" variant="ghost" icon={<PencilSimple size={13} />} onClick={onEdit}>
-            Edit
-          </Button>
-          <Button size="sm" variant="ghost" onClick={onKeys}>
-            Keys
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<WifiHigh size={13} />}
+            loading={testAll.isPending}
+            onClick={() =>
+              testAll.mutate(
+                { nodeId: node.id },
+                {
+                  onSuccess: (r) => toast(`${r.ok}/${r.tested} keys ok`, r.ok === r.tested ? "success" : "error"),
+                  onError: (err) => toastApiError(toast, err, "Key test failed"),
+                },
+              )
+            }
+          >
+            Test keys
           </Button>
           <Button
             size="sm"
@@ -312,7 +123,7 @@ function NodeRow({ node, onKeys, onEdit }: { node: UpstreamNode; onKeys: () => v
               updateNode.mutate(
                 { id: node.id, patch: { enabled: disabled } },
                 {
-                  onSuccess: () => toast(disabled ? "Upstream enabled" : "Upstream disabled"),
+                  onSuccess: () => toast(disabled ? "Provider enabled" : "Provider disabled"),
                   onError: (err) => toastApiError(toast, err, disabled ? "Failed to enable" : "Failed to disable"),
                 },
               )
@@ -328,6 +139,7 @@ function NodeRow({ node, onKeys, onEdit }: { node: UpstreamNode; onKeys: () => v
             icon={<XCircle size={14} />}
             onClick={() => setConfirmRemove(true)}
           />
+          <Button size="sm" variant="ghost" icon={<CaretRight size={13} />} aria-label={`Manage ${node.name}`} onClick={open} />
         </div>
       </td>
 
@@ -346,20 +158,21 @@ function NodeRow({ node, onKeys, onEdit }: { node: UpstreamNode; onKeys: () => v
               onClick={() =>
                 removeNode.mutate(node.id, {
                   onSuccess: () => {
-                    toast("Upstream removed");
+                    toast("Provider removed");
                     setConfirmRemove(false);
                   },
                   onError: (err) => toastApiError(toast, err, "Remove failed"),
                 })
               }
             >
-              Remove Upstream
+              Remove Provider
             </Button>
           </>
         }
       >
         <p className="text-sm text-text-muted">
-          Requests routing to this node will fail until a replacement is added.
+          Removes the provider, its API keys and its model list. Requests routing to
+          <span className="font-mono"> {node.prefix}/…</span> will stop resolving.
         </p>
       </Modal>
     </tr>
@@ -371,8 +184,6 @@ export function Upstreams() {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
-  const [keysNode, setKeysNode] = useState<UpstreamNode | null>(null);
-  const [editNode, setEditNode] = useState<UpstreamNode | null>(null);
 
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -414,7 +225,7 @@ export function Upstreams() {
             inputClassName="h-8 py-0 text-xs"
           />
           <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setAddOpen(true)}>
-            Add Upstream
+            Add Provider
           </Button>
         </div>
       </div>
@@ -428,11 +239,11 @@ export function Upstreams() {
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
             <Broadcast size={40} className="text-text-subtle" />
             <p className="text-sm text-text-muted">
-              {total === 0 ? "No upstreams yet. Add one to start routing." : "No nodes match this filter."}
+              {total === 0 ? "No providers yet. Add one to start routing." : "No providers match this filter."}
             </p>
             {total === 0 && (
               <Button variant="primary" icon={<Plus size={16} />} onClick={() => setAddOpen(true)}>
-                Add Upstream
+                Add Provider
               </Button>
             )}
           </div>
@@ -452,7 +263,7 @@ export function Upstreams() {
             </thead>
             <tbody>
               {visible.map((n) => (
-                <NodeRow key={n.id} node={n} onKeys={() => setKeysNode(n)} onEdit={() => setEditNode(n)} />
+                <NodeRow key={n.id} node={n} />
               ))}
             </tbody>
           </table>
@@ -461,18 +272,14 @@ export function Upstreams() {
 
       <div className="flex items-center gap-2 px-1 text-xs text-text-subtle">
         <CheckCircle size={13} className="shrink-0" />
-        Status is real breaker state: degraded = failures recorded, down = breaker open, disabled = node off.
+        Status is real breaker state: degraded = failures recorded, down = breaker open, disabled = provider off.
       </div>
 
       <NodeFormModal
-        isOpen={addOpen || !!editNode}
-        node={editNode}
-        onClose={() => {
-          setAddOpen(false);
-          setEditNode(null);
-        }}
+        isOpen={addOpen}
+        node={null}
+        onClose={() => setAddOpen(false)}
       />
-      <ConnectionsDrawer node={keysNode} onClose={() => setKeysNode(null)} />
     </div>
   );
 }

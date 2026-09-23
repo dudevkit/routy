@@ -2,6 +2,7 @@ import type { ComponentProps } from "react";
 import {
   ArrowsClockwise,
   ArrowDown,
+  ArrowLeft,
   ArrowUp,
   Broadcast,
   CaretRight,
@@ -10,6 +11,7 @@ import {
   CheckCircle,
   Coins,
   Copy,
+  DownloadSimple,
   Gauge,
   Gear,
   Info,
@@ -63,6 +65,7 @@ export interface PhosphorProps extends ComponentProps<typeof SquaresFour> {
 export {
   ArrowsClockwise,
   ArrowDown,
+  ArrowLeft,
   ArrowUp,
   Broadcast,
   CaretRight,
@@ -71,6 +74,7 @@ export {
   CheckCircle,
   Coins,
   Copy,
+  DownloadSimple,
   Gauge,
   Gear,
   Info,

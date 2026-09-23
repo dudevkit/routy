@@ -3,7 +3,7 @@
  * Vite dev proxy in development). Selected by transport.ts.
  *
  * Backend conventions verified against the running gateway:
- *  - probes (`/nodes/test`, `/nodes/{id}/test`, `/proxy-pools/{id}/test`) return
+ *  - probes (`/nodes/test`, `/connections/{id}/test`, `/proxy-pools/{id}/test`) return
  *    HTTP 200 with `ok:false` on failure — they are results, not errors
  *  - other failures are non-2xx with `{ error: { message, detail?, retryAfterMs? } }`
  *  - DELETE answers 204
@@ -18,10 +18,14 @@ import type {
   CreatedApiKey,
   GatewayHealth,
   GatewayInfo,
+  KeyTestResult,
+  ModelImportResult,
   NewConnectionInput,
   NewNodeInput,
   NodeConnection,
+  NodeModel,
   PoolTestResult,
+  ProbeResult,
   ProxyPool,
   ProxyPoolInput,
   RecentFailure,
@@ -173,11 +177,28 @@ export const api = {
     putJson<UpstreamNode>(`/api/nodes/${enc(id)}`, patch),
   removeNode: (id: string): Promise<void> => deleteJson(`/api/nodes/${enc(id)}`),
   resetBreaker: (id: string): Promise<UpstreamNode> => postJson<UpstreamNode>(`/api/nodes/${enc(id)}/reset`),
-  testNode: (id: string): Promise<TestResult> => postJson<TestResult>(`/api/nodes/${enc(id)}/test`),
   testConnection: (input: { baseUrl: string; apiKey?: string }): Promise<TestResult> =>
     postJson<TestResult>("/api/nodes/test", input),
-  getNodeModels: (id: string): Promise<{ node: string; models: string[]; count: number }> =>
+
+  /* models — discovery-only list, plus per-model probes (P6) */
+  listModels: (id: string): Promise<{ node: string; models: NodeModel[]; count: number }> =>
     getJson(`/api/nodes/${enc(id)}/models`),
+  addModel: (id: string, input: { model: string; enabled?: boolean }): Promise<NodeModel> =>
+    postJson<NodeModel>(`/api/nodes/${enc(id)}/models`, input),
+  updateModel: (id: string, modelId: string, patch: { model?: string; enabled?: boolean }): Promise<NodeModel> =>
+    putJson<NodeModel>(`/api/nodes/${enc(id)}/models/${enc(modelId)}`, patch),
+  removeModel: (id: string, modelId: string): Promise<void> => deleteJson(`/api/nodes/${enc(id)}/models/${enc(modelId)}`),
+  importModels: (id: string, connectionId?: string): Promise<ModelImportResult> =>
+    postJson<ModelImportResult>(`/api/nodes/${enc(id)}/models/import`, connectionId ? { connectionId } : {}),
+  testModel: (id: string, modelId: string, connectionId?: string): Promise<NodeModel & { result: ProbeResult }> =>
+    postJson(`/api/nodes/${enc(id)}/models/${enc(modelId)}/test${qs({ connectionId })}`, {}),
+
+  /* api keys — per-key probe (P6) */
+  testConnectionKey: (connectionId: string): Promise<KeyTestResult> =>
+    postJson<KeyTestResult>(`/api/connections/${enc(connectionId)}/test`, {}),
+  testAllKeys: (id: string): Promise<{ node: string; tested: number; ok: number; results: KeyTestResult[] }> =>
+    postJson(`/api/nodes/${enc(id)}/keys/test`, {}),
+
   listConnections: (id: string): Promise<NodeConnection[]> => getJson<NodeConnection[]>(`/api/nodes/${enc(id)}/connections`),
   addConnection: (id: string, input: NewConnectionInput): Promise<NodeConnection> =>
     postJson<NodeConnection>(`/api/nodes/${enc(id)}/connections`, input),

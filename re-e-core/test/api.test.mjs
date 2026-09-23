@@ -84,13 +84,21 @@ describe("management API", () => {
     expect(second.body.error.detail).toContain("already in use");
   });
 
-  it("batch key import creates N connections with staggered priority", async () => {
+  it("batch key import creates N connections with staggered priority and per-entry labels", async () => {
     const node = await post("/api/nodes", { name: "Batch", baseUrl: `http://127.0.0.1:${stubPort}/v1`, apiKey: "sk-first000000000000", prefix: "batch" });
-    const r = await post(`/api/nodes/${node.body.id}/connections/batch`, { keys: ["sk-aaa111222333444555", "sk-bbb111222333444555", "", "sk-ccc111222333444555"] });
+    const r = await post(`/api/nodes/${node.body.id}/connections/batch`, {
+      entries: [
+        { name: "prod", apiKey: "sk-aaa111222333444555" },
+        { apiKey: "sk-bbb111222333444555" },
+        { name: "ignored", apiKey: "   " },
+        { name: "backup", apiKey: "sk-ccc111222333444555" },
+      ],
+    });
     expect(r.status).toBe(201);
-    expect(r.body.created).toBe(3); // empty string filtered out
+    expect(r.body.created).toBe(3); // blank key filtered out
     expect(r.body.connections[0].keyMasked).toContain("sk-");
     expect(r.body.connections[0].keyMasked).not.toContain("aaa111");
+    expect(r.body.connections.map((c) => c.name)).toEqual(["prod", "Batch key 2", "backup"]);
     const conns = (await get(`/api/nodes/${node.body.id}/connections`)).body;
     expect(conns).toHaveLength(4); // 1 initial + 3 batch
     expect(conns[1].priority).toBeLessThan(conns[2].priority); // staggered

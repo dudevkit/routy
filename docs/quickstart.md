@@ -64,21 +64,43 @@ By hand, the same thing:
 # 1. point a client key at the gateway (printed once)
 re-e key
 
-# 2. add an upstream
+# 2. add a provider
 curl -s localhost:8010/api/nodes -H 'content-type: application/json' -d '{
   "name": "My provider", "prefix": "mp",
   "baseUrl": "https://api.example.com/v1", "apiKey": "sk-…"
 }' | jq .
 
-# 3. prove it
-curl -s -X POST localhost:8010/api/nodes/<id>/test | jq .
+# 3. add a model by hand and prove it serves (importing the list is optional)
+curl -s localhost:8010/api/nodes/<id>/models -H 'content-type: application/json' \
+  -d '{"model":"<model>"}' | jq .
+curl -s -X POST localhost:8010/api/nodes/<id>/models/<modelRowId>/test | jq .
 
 # 4. use it
 curl -s localhost:8010/v1/chat/completions -H 'content-type: application/json' \
   -d '{"model":"mp/<model>","stream":true,"messages":[{"role":"user","content":"hi"}]}'
 ```
 
-`GET /v1/models` lists every routable id: node-prefixed models, aliases and combos.
+`GET /v1/models` lists every routable id: provider-prefixed models, aliases and combos.
+
+---
+
+## The Providers page
+
+Click a provider in **Providers** to open its own page, with three tabs:
+
+- **Models** — the list is **discovery-only**; it never gates routing. Either
+  **Import from provider** (fetches its `/models` and merges — manual entries are
+  kept, and ones the provider dropped are marked *stale* rather than deleted), or
+  just type an id and hit **Test**. Test sends a real one-token stream, so a green
+  result means the id genuinely serves.
+- **API Keys** — add one key, or **Add bulk** with one per line as
+  `label,key` (a bare key gets an auto label). *Test each key after adding* probes
+  every new key, and **Test all keys** re-checks the lot.
+- **Settings** — the provider's config, plus reset-breaker, disable and delete.
+
+Testing is **diagnostics, not traffic**: a key or model probe never counts toward
+usage, the daily budget or the breaker state. Testing a bad key can't take a healthy
+provider offline.
 
 ---
 
@@ -99,7 +121,7 @@ OpenAI and Anthropic shapes in both directions, streaming included.
 
 ## Dashboard
 
-Open <http://127.0.0.1:8010/> (or `/ui/`). Upstreams, combos and aliases, usage,
+Open <http://127.0.0.1:8010/> (or `/ui/`). Providers, combos and aliases, usage,
 token saver, proxy pools, a live console and settings. It is a static bundle served
 by the gateway itself — no separate process, and a broken UI cannot affect the
 proxy.

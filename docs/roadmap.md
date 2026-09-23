@@ -35,7 +35,7 @@ P0 Harness ──► P1 Core MVP ──► P2 Mgmt API + UI rewire ──► P3 
 | P3 Stability | Hardened runtime | 2-4 | 15 | **DONE 2026-09-23** — gate passed: chaos pass (upstream killed mid-stream, restart mid-request, 20-way concurrent load) with no corruption, RSS delta 0MB on an 11.4MB stream, breaker state survived restart |
 | P4 Speed | Optimized + observable | 2-3 | 18 | **DONE 2026-09-23** — overhead p50 15.6 → 1.3ms, p99 → 1.7ms (targets ≤5ms/≤15ms); metrics endpoint, latency-aware routing and budget caps shipped |
 | P5 Packaging | Shippable artifact | 1-2 | 20 | **DONE 2026-09-23** — single-file ESM bundle (1.6MB / 798KB min, 216 modules, zero runtime deps) smokes 13/13 and passes both live rigs; multi-stage Dockerfile (unbuilt here — no docker); quickstart + configuration docs |
-| P6 (optional) | Per-provider page | 2-4 | — | Gate in [provider-page.md](./provider-page.md): zero-model provider usable end to end; import merges; per-key/per-model tests isolated; probes don't touch usage/budget/breakers |
+| P6 | Per-provider page | 2-4 | 24 | **DONE 2026-09-23** — gate passed: zero-model provider usable end to end (type an id → Test → it appears in /v1/models), import merges without deleting manual rows, a bad key blames only itself, probes leave usage/budget/breakers untouched, and `<prefix>/<unlisted>` still routes |
 
 **Minimum viable product = P0+P1 (~8 sessions).** Everything after is quality or scope.
 

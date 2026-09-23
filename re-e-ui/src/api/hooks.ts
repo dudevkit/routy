@@ -22,6 +22,14 @@ export const useConnections = (nodeId: string | null) =>
     enabled: !!nodeId,
   });
 
+/** Model rows for one provider (P6). The list is discovery-only. */
+export const useNodeModels = (nodeId: string | null) =>
+  useQuery({
+    queryKey: [...NODES, nodeId, "models"],
+    queryFn: () => api.listModels(nodeId as string),
+    enabled: !!nodeId,
+  });
+
 export const useStats = () =>
   useQuery({ queryKey: ["usage", "stats"], queryFn: api.getStats, refetchInterval: 10000 });
 
@@ -75,9 +83,70 @@ export const useUpdateNode = () =>
     onSuccess: useInvalidator(NODES, CONNECTIONS),
   });
 export const useResetBreaker = () => useMutation({ mutationFn: api.resetBreaker, onSuccess: useInvalidator(NODES) });
-/** a successful probe caches modelCount on the node → nodes must refresh */
-export const useTestNode = () => useMutation({ mutationFn: api.testNode, onSuccess: useInvalidator(NODES) });
 export const useTestConnection = () => useMutation({ mutationFn: api.testConnection });
+
+/* ── models + key probes (P6) ────────────────────────────────────────────────
+   Invalidating NODES also covers the model-list queries, whose keys are
+   [...NODES, nodeId, "models"] — react-query matches by key prefix. */
+export const useAddModel = () => {
+  const invalidate = useInvalidator(NODES);
+  return useMutation({
+    mutationFn: ({ nodeId, model }: { nodeId: string; model: string }) => api.addModel(nodeId, { model }),
+    onSuccess: () => invalidate(),
+  });
+};
+
+export const useUpdateModel = () => {
+  const invalidate = useInvalidator(NODES);
+  return useMutation({
+    mutationFn: ({ nodeId, modelId, patch }: { nodeId: string; modelId: string; patch: { model?: string; enabled?: boolean } }) =>
+      api.updateModel(nodeId, modelId, patch),
+    onSuccess: () => invalidate(),
+  });
+};
+
+export const useRemoveModel = () => {
+  const invalidate = useInvalidator(NODES);
+  return useMutation({
+    mutationFn: ({ nodeId, modelId }: { nodeId: string; modelId: string }) => api.removeModel(nodeId, modelId),
+    onSuccess: () => invalidate(),
+  });
+};
+
+/** Import merges the upstream list; manual rows and probe results survive. */
+export const useImportModels = () => {
+  const invalidate = useInvalidator(NODES, CONNECTIONS);
+  return useMutation({
+    mutationFn: ({ nodeId, connectionId }: { nodeId: string; connectionId?: string }) => api.importModels(nodeId, connectionId),
+    onSuccess: () => invalidate(),
+  });
+};
+
+/** A real streamed probe of one model id — records TTFT on the row. */
+export const useTestModel = () => {
+  const invalidate = useInvalidator(NODES);
+  return useMutation({
+    mutationFn: ({ nodeId, modelId, connectionId }: { nodeId: string; modelId: string; connectionId?: string }) =>
+      api.testModel(nodeId, modelId, connectionId),
+    onSuccess: () => invalidate(),
+  });
+};
+
+export const useTestKey = () => {
+  const invalidate = useInvalidator(CONNECTIONS);
+  return useMutation({
+    mutationFn: ({ connectionId }: { connectionId: string }) => api.testConnectionKey(connectionId),
+    onSuccess: () => invalidate(),
+  });
+};
+
+export const useTestAllKeys = () => {
+  const invalidate = useInvalidator(CONNECTIONS);
+  return useMutation({
+    mutationFn: ({ nodeId }: { nodeId: string }) => api.testAllKeys(nodeId),
+    onSuccess: () => invalidate(),
+  });
+};
 
 export interface AddConnectionInput {
   nodeId: string;
@@ -90,18 +159,18 @@ export const useAddConnection = () =>
     onSuccess: useInvalidator(CONNECTIONS, NODES),
   });
 export const useUpdateConnection = () =>
-  useMutation({ mutationFn: ({ id, patch }: { id: string; patch: { name?: string; priority?: number } }) => api.updateConnection(id, patch), onSuccess: useInvalidator(CONNECTIONS, NODES) });
+  useMutation({ mutationFn: ({ id, patch }: { id: string; patch: { name?: string; status?: string; priority?: number } }) => api.updateConnection(id, patch), onSuccess: useInvalidator(CONNECTIONS, NODES) });
 export const useDeleteConnection = () =>
   useMutation({ mutationFn: api.deleteConnection, onSuccess: useInvalidator(CONNECTIONS, NODES) });
 export interface BatchAddConnectionsInput {
   nodeId: string;
-  keys: string[];
+  entries: { name?: string; apiKey: string }[];
   name?: string;
   priority?: number;
 }
 export const useBatchAddConnections = () =>
   useMutation({
-    mutationFn: ({ nodeId, keys, name, priority }: BatchAddConnectionsInput) => api.batchAddConnections(nodeId, { keys, name, priority }),
+    mutationFn: ({ nodeId, entries, name, priority }: BatchAddConnectionsInput) => api.batchAddConnections(nodeId, { entries, name, priority }),
     onSuccess: useInvalidator(CONNECTIONS, NODES),
   });
 

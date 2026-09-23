@@ -129,10 +129,10 @@ export function NodeFormModal({
     if (!node) {
       addNode.mutate({ ...form, data: pricing ? { pricing } : undefined }, {
         onSuccess: () => {
-          toast("Upstream added");
+          toast("Provider added");
           close();
         },
-        onError: (err) => toastApiError(toast, err, "Failed to add upstream"),
+        onError: (err) => toastApiError(toast, err, "Failed to add provider"),
       });
       return;
     }
@@ -149,10 +149,10 @@ export function NodeFormModal({
       { id: node.id, patch },
       {
         onSuccess: () => {
-          toast("Upstream updated");
+          toast("Provider updated");
           close();
         },
-        onError: (err) => toastApiError(toast, err, "Failed to update upstream"),
+        onError: (err) => toastApiError(toast, err, "Failed to update provider"),
       },
     );
   };
@@ -161,7 +161,7 @@ export function NodeFormModal({
     <Modal
       isOpen={isOpen}
       onClose={close}
-      title={editing ? `Edit ${node?.name ?? "upstream"}` : "Add Upstream"}
+      title={editing ? `Edit ${node?.name ?? "provider"}` : "Add Provider"}
       footer={
         <>
           <Button variant="secondary" onClick={close}>
@@ -174,7 +174,7 @@ export function NodeFormModal({
             loading={addNode.isPending || updateNode.isPending}
             onClick={save}
           >
-            {editing ? "Save Changes" : "Add Upstream"}
+            {editing ? "Save Changes" : "Add Provider"}
           </Button>
         </>
       }
@@ -185,7 +185,7 @@ export function NodeFormModal({
           autoFocus
           value={form.name}
           onChange={(e) => set({ name: e.target.value })}
-          placeholder="My upstream"
+          placeholder="My provider"
         />
         <Input
           label="Base URL"

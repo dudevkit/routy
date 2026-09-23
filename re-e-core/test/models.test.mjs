@@ -234,6 +234,23 @@ describe("probes are diagnostics, not traffic", () => {
     expect(repos.usage.query({ limit: 10 })).toHaveLength(0);
   });
 
+  it("a per-key test result is visible through the connections list", async () => {
+    // Regression: the list route mapped a fixed field set and dropped the probe
+    // result, so the UI could never show a tested key.
+    const node = mkNode("a");
+    const conn = repos.connections.create({ nodeId: node.id, name: "visible", credentials: { apiKey: "k-v" } });
+
+    const tested = await call("POST", `/api/connections/${conn.id}/test`, {});
+    expect(tested.body.ok).toBe(true);
+
+    const list = await call("GET", `/api/nodes/${node.id}/connections`);
+    const row = list.body.find((c) => c.id === conn.id);
+    expect(row.lastTestOk).toBe(true);
+    expect(row.lastTestAt).toBeTruthy();
+    expect(row.lastTestTtftMs).toBeGreaterThanOrEqual(0);
+    expect(row.keyMasked).not.toContain("k-v"); // still masked
+  });
+
   it("bulk key test reports every key with bounded concurrency", async () => {
     const node = mkNode("a");
     for (let i = 0; i < 9; i++) repos.connections.create({ nodeId: node.id, name: `k${i}`, credentials: { apiKey: `k-${i}` } });

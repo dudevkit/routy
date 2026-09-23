@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useFailures, useGateway, useNodes, useResetBreaker, useStats, useTestNode } from "../api/hooks";
+import { useFailures, useGateway, useNodes, useResetBreaker, useStats, useTestAllKeys } from "../api/hooks";
 import type { UpstreamNode } from "../api/types";
 import { statusMeta } from "../utils/nodeStatus";
 import { toastApiError } from "../utils/errors";
@@ -18,7 +18,7 @@ import { useToast } from "../components/ui/Toast";
 
 function HealthCard({ node, onRemove }: { node: UpstreamNode; onRemove: (node: UpstreamNode) => void }) {
   const toast = useToast();
-  const testNode = useTestNode();
+  const testNode = useTestAllKeys();
   const resetBreaker = useResetBreaker();
   const meta = statusMeta[node.status];
 
@@ -32,15 +32,17 @@ function HealthCard({ node, onRemove }: { node: UpstreamNode; onRemove: (node: U
         </Badge>
         <button
           onClick={() =>
-            testNode.mutate(node.id, {
-              onSuccess: (r) =>
-                toast(r.ok ? `Test passed · ${r.latencyMs}ms · ${r.modelCount} models` : (r.error ?? "Test failed"), r.ok ? "success" : "error"),
-              onError: (err) => toastApiError(toast, err, "Test failed"),
-            })
+            testNode.mutate(
+              { nodeId: node.id },
+              {
+                onSuccess: (r) => toast(`${r.ok}/${r.tested} keys ok`, r.ok === r.tested ? "success" : "error"),
+                onError: (err) => toastApiError(toast, err, "Key test failed"),
+              },
+            )
           }
           className="ml-auto shrink-0 rounded-[6px] border border-border px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:border-brand-500/40 hover:text-text-main"
         >
-          {testNode.isPending ? "Testing" : "Test"}
+          {testNode.isPending ? "Testing" : "Test keys"}
         </button>
       </div>
 

@@ -75,10 +75,10 @@ on update, so editing one field never drops the others.
 | `streamIdleTimeoutMs` | Stall watchdog budget for this node; `0` disables |
 | `pool` | Upstream connection pool: `connections` (64), `pipelining` (1), `keepAliveTimeoutMs` (60000), `keepAliveMaxTimeoutMs` (600000), `noDelay` (true) |
 | `retry` | Per-status retry overrides, e.g. `{ "503": { "attempts": 0 } }`. Defaults mirror upstream 9Router: 502 → 3×3s, 503 → 3×2s, 429 → no retry (fall back instead); `Retry-After` is honoured |
-| `models`, `modelCount` | Written by the Test probe; drives `GET /v1/models` |
 
-A node is addressed as `<prefix>/<model>`. `POST /api/nodes/{id}/test` probes the
-upstream's `/models`, caching the list and latency.
+The model list used to live in this blob; it has its own table now — see **Models**.
+A provider is addressed as `<prefix>/<model>`; see **Models** and **Probes** for the
+per-model and per-key testing surface.
 
 ### Connection pooling
 
@@ -87,6 +87,61 @@ sockets. This matters more than it looks: Node's built-in `fetch` dispatcher cos
 ~15ms per loopback request in connection churn, against ~0.4ms pooled. `connections`
 is deliberately generous (64) — a queued request is added latency — but bounded so
 one origin cannot exhaust the process.
+
+---
+
+## Models
+
+Each provider keeps its own model list. It is **discovery-only**: it drives
+`GET /v1/models` and the dashboard, and routing still passes any
+`<prefix>/<model>` through untouched. Nothing you do to the list can break a
+client that is already working.
+
+| `node_models` field | Meaning |
+|---|---|
+| `model` | the id as the provider expects it |
+| `source` | `manual` (typed by you) or `imported` (came from the provider's `/models`) |
+| `enabled` | listed in discovery, or parked without deleting |
+| `stale` | was imported and the provider no longer lists it — kept and marked, never silently deleted |
+| `last_test_*` | outcome of the last probe of this model |
+
+**Import is optional.** `POST /api/nodes/{id}/models/import` fetches the provider's
+list and **merges**: manual rows are never touched, imported rows are upserted, and
+imported rows missing from the response become `stale`. A row that reappears has
+`stale` cleared. You can equally just add an id by hand and test it.
+
+```
+GET    /api/nodes/{id}/models                    all rows (incl. disabled/stale)
+POST   /api/nodes/{id}/models                    { model, enabled? } → source=manual
+PUT    /api/nodes/{id}/models/{modelId}          { enabled?, model? }
+DELETE /api/nodes/{id}/models/{modelId}
+POST   /api/nodes/{id}/models/import             { connectionId? } → merge
+POST   /api/nodes/{id}/models/{modelId}/test     real one-token stream
+```
+
+`{modelId}` is the row id, not the model string — model ids contain `/`.
+
+---
+
+## Probes (testing keys and models)
+
+Probes are **diagnostics, not traffic**. They write their result on the key or model
+row and never touch `usage_events`, the daily budget, or the breakers. Testing a
+deliberately-bad key therefore cannot mark a healthy provider as down, and a
+one-token ping cannot move your error rate or spend your budget.
+
+| Probe | Request | Proves |
+|---|---|---|
+| Key | `GET <baseUrl>/models` with **that** key | the key is valid and the host is reachable. No tokens. |
+| Model | `POST <baseUrl>/chat/completions` with `stream:true, max_tokens:1` | auth + model id + streaming, end to end. Yields a real TTFT. |
+
+```
+POST /api/connections/{id}/test      probe one key
+POST /api/nodes/{id}/keys/test       probe every active key (bounded concurrency, 4)
+```
+
+A model probe uses the provider's first active key by priority, overridable with
+`?connectionId=` so a specific key can be blamed.
 
 ---
 
@@ -142,7 +197,7 @@ once it completes). Reset manually with `POST /api/nodes/{id}/reset` or
 | `POST /v1/chat/completions` | OpenAI shape (also accepts Anthropic-shaped bodies) |
 | `POST /v1/messages` | Anthropic shape |
 | `GET /v1/models` | Routable ids: node models, aliases, combos |
-| `/api/*` | Management API (nodes, connections, combos, aliases, pools, keys, usage, settings, logs SSE, gateway) |
+| `/api/*` | Management API (providers, keys, models, combos, aliases, pools, usage, settings, logs SSE, gateway) |
 | `GET /metrics` | Prometheus text. `?windowMs=` narrows the counters |
 | `GET /ui/*`, `GET /` | Dashboard |
 

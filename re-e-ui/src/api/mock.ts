@@ -10,13 +10,18 @@ import type {
   Combo,
   ComboInput,
   BatchConnectionResult,
+  BatchConnectionInput,
   CreatedApiKey,
   GatewayHealth,
   GatewayInfo,
   NewConnectionInput,
   NewNodeInput,
+  KeyTestResult,
+  ModelImportResult,
   NodeConnection,
+  NodeModel,
   PoolTestResult,
+  ProbeResult,
   ProxyPool,
   ProxyPoolInput,
   RecentFailure,
@@ -45,6 +50,7 @@ const freshStats: UsageStats = {
 const state = {
   nodes: [] as (UpstreamNode & { apiKey?: string })[],
   connections: [] as (NodeConnection & { nodeId: string })[],
+  models: [] as NodeModel[],
   combos: [] as Combo[],
   aliases: {} as AliasMap,
   pools: [] as ProxyPool[],
@@ -126,17 +132,62 @@ export const api = {
     return view;
   },
 
-  async testNode(_id: string): Promise<TestResult> {
-    return probeUnavailable();
-  },
-
   async testConnection(_input: { baseUrl: string; apiKey?: string }): Promise<TestResult> {
     return probeUnavailable();
   },
 
-  async getNodeModels(id: string): Promise<{ node: string; models: string[]; count: number }> {
+  /* models + probes — the mock is the empty-state rig: nothing probed, nothing
+     imported, and a fresh provider starts with an empty model list (P6). */
+  async listModels(id: string): Promise<{ node: string; models: NodeModel[]; count: number }> {
     const node = state.nodes.find((n) => n.id === id);
-    return { node: node?.prefix || "", models: [], count: 0 };
+    const models = state.models.filter((m) => m.nodeId === id);
+    return { node: node?.prefix || "", models, count: models.length };
+  },
+
+  async addModel(id: string, input: { model: string }): Promise<NodeModel> {
+    const existing = state.models.find((m) => m.nodeId === id && m.model === input.model.trim());
+    if (existing) {
+      existing.enabled = true;
+      existing.stale = false;
+      return existing;
+    }
+    const row: NodeModel = {
+      id: uuid(), nodeId: id, model: input.model.trim(), source: "manual",
+      enabled: true, stale: false,
+      lastTestAt: null, lastTestOk: null, lastTestTtftMs: null, lastTestError: null,
+      createdAt: nowIso(), updatedAt: nowIso(),
+    };
+    state.models.push(row);
+    return row;
+  },
+
+  async updateModel(_id: string, modelId: string, patch: { model?: string; enabled?: boolean }): Promise<NodeModel> {
+    const row = state.models.find((m) => m.id === modelId);
+    if (!row) throw new Error("not_found");
+    if (patch.model !== undefined) row.model = patch.model.trim();
+    if (patch.enabled !== undefined) row.enabled = patch.enabled;
+    row.updatedAt = nowIso();
+    return row;
+  },
+
+  async removeModel(_id: string, modelId: string): Promise<void> {
+    state.models = state.models.filter((m) => m.id !== modelId);
+  },
+
+  async importModels(): Promise<ModelImportResult> {
+    throw new Error("The mock transport has no upstream to import from — run against a live gateway.");
+  },
+
+  async testModel(): Promise<NodeModel & { result: ProbeResult }> {
+    throw new Error("The mock transport cannot probe models — run against a live gateway.");
+  },
+
+  async testConnectionKey(): Promise<KeyTestResult> {
+    throw new Error("The mock transport cannot probe keys — run against a live gateway.");
+  },
+
+  async testAllKeys(id: string): Promise<{ node: string; tested: number; ok: number; results: KeyTestResult[] }> {
+    return { node: state.nodes.find((n) => n.id === id)?.prefix || "", tested: 0, ok: 0, results: [] };
   },
 
   async listConnections(id: string): Promise<NodeConnection[]> {
@@ -158,15 +209,15 @@ export const api = {
     return view;
   },
 
-  async batchAddConnections(id: string, input: { keys: string[] }): Promise<BatchConnectionResult> {
-    const results = input.keys.filter(Boolean).map((apiKey, i) => {
+  async batchAddConnections(id: string, input: BatchConnectionInput): Promise<BatchConnectionResult> {
+    const results = input.entries.filter((e) => e.apiKey?.trim()).map((entry, i) => {
       const conn = {
         id: uuid(),
         nodeId: id,
-        name: `batch key ${i + 1}`,
+        name: entry.name || (input.name ? `${input.name} ${i + 1}` : `batch key ${i + 1}`),
         status: "active",
         priority: 100 + i,
-        keyMasked: maskKey(apiKey),
+        keyMasked: maskKey(entry.apiKey),
         lastError: null,
       };
       state.connections.push(conn);

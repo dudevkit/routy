@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** P5 COMPLETE — packaging landed and gate-verified live (92/92 tests; bundle smokes 13/13 and passes both live rigs). Remaining: P6 expansion (optional menu).
+- **Phase:** P6 COMPLETE — per-provider page landed (113/113 tests; bundle + both live rigs green). P0–P6 done; the remaining menu is optional expansion.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -60,6 +60,43 @@ axolotl/
   backend-architecture §5; P2 redefined per ui-ux decisions (roadmap).
 
 ## Done
+
+- 2026-09-23 (P6.1 backend): models moved out of `node.data.models` (a JSON string
+  array that could not carry per-model state) into a **`node_models` table** —
+  `source` (manual|imported), `enabled`, `stale`, and the last probe's
+  ok/ttft/error; `connections` gained the same per-key probe columns. Migration v2,
+  verified against a **genuine v1 fixture** (build migration 1 only, stamp version
+  1, then reopen) rather than by corrupting a v2 database. A boot backfill lifts any
+  legacy `data.models` array into rows so nothing is lost.
+  **Import merges:** manual rows are never touched, imported rows are upserted, and
+  previously-imported rows missing upstream become `stale` — kept and visible, never
+  silently deleted; a row that reappears has `stale` cleared. **Probes** moved into
+  `core/probe.mjs`: `probeNode` (GET /models), `probeKey` (GET /models with *that*
+  key) and `probeModel` (a real `stream:true, max_tokens:1` completion that yields a
+  genuine TTFT), plus `mapLimit` for bounded-concurrency bulk key tests. They are
+  **diagnostics, not traffic** — no `usage_events`, no budget, no breaker effect
+  (asserted in tests). 8 endpoints. `nodeView`/`listModels` read the table; the list
+  stays discovery-only, so routing still passes any `<prefix>/<model>` through.
+  Two bugs found by testing rather than reading: the connections **list route mapped
+  a fixed field set and dropped the probe result** (so a tested key could never show
+  as tested — now covered by a regression test), and the batch key endpoint accepted
+  only bare `keys[]`, silently discarding the per-line labels the UI advertises (now
+  `entries: [{name?, apiKey}]`, with unlabelled keys auto-named).
+- 2026-09-23 (P6.2/P6.3 UI): the `ConnectionsDrawer` is gone. Rows in the list are
+  links into **`/upstreams/:id`** — a provider page with a header (status, prefix,
+  latency, last error) and **Models / API Keys / Settings** tabs. Models tab: an
+  optional *Import from provider*, an inline *Add model*, and per-row Test (real
+  stream) / hide / delete with source, state and last-test columns. Keys tab: single
+  and bulk add (`label,key` per line, optional label prefix, *test each key after
+  adding*), *Test all keys*, and a per-key result panel. Settings tab: the provider's
+  config plus reset-breaker / disable / delete. The UI now says **Providers**
+  throughout (nav, header, copy, empty states); API and DB keep `provider_nodes`.
+  Verified in a browser against a scratch instance: a provider with **zero** models
+  is usable end to end — type an id, Test, green (40ms real TTFT), and it appears in
+  `GET /v1/models`; importing then merged 2 models while keeping the manual row *and
+  its test result*; bulk-adding 3 keys honoured `label,key` labels, auto-named the
+  bare one and auto-tested all of them. 113/113 tests; the P3 (11/11) and P4 (14/14)
+  live rigs still pass against the P6 build.
 
 - 2026-09-23 (P5 packaging): shippable artifact. `scripts/build.mjs` esbuild-bundles
   the CLI + gateway + translator tree + undici into **one ESM file** — 1601 KB
@@ -303,6 +340,13 @@ axolotl/
 
 *(Append-only; one line per fact with pointer into reference doc where applicable.)*
 
+- 2026-09-23: A migration test that corrupts a *current* database (drop a table, reset
+  the version) does not test migration — it tests re-running DDL that already applied.
+  Build the old schema from the old migration, stamp the old version, then open.
+- 2026-09-23: A list route that maps a fixed field set will silently drop any field a
+  later feature adds. Map through one shared view helper per entity, and test that a
+  written field is *readable* through the list, not just through the write response.
+
 - 2026-09-23: esbuild ESM output breaks on bundled CJS deps that `require()` Node
   builtins (`Dynamic require of "node:assert" is not supported`) — the bundle needs a
   `createRequire(import.meta.url)` shim in its banner. Use `const`, not `var`: the
@@ -414,6 +458,7 @@ axolotl/
 
 | Date | Summary |
 |---|---|
+| 2026-09-23 | P6: per-provider page. `node_models` table + migration v2 + legacy backfill; import merges with stale marking; `core/probe.mjs` (key + real-stream model probes, bounded-concurrency bulk); 8 endpoints; drawer replaced by `/upstreams/:id` with Models/API Keys/Settings tabs; UI renamed to Providers. Fixed: connections list dropped the probe result; batch keys discarded per-line labels. 113/113 tests, P3/P4 rigs green |
 | 2026-09-23 | P5 packaging: single-file ESM bundle (1.6MB / 798KB minified, 216 modules, zero runtime deps) with a `createRequire` banner shim, `<bundleDir>/ui` asset resolution, `scripts/smoke.mjs` gate (13/13 booting from an unrelated cwd), multi-stage Dockerfile + .dockerignore (unbuilt — no docker on this machine), quickstart + configuration docs. The built artifact passes the P3 rig 11/11, the P4 rig 14/14 and the overhead bench at p50 1.4ms |
 | 2026-09-23 | P4 speed: pooled per-origin undici dispatcher (overhead 15.6 → 1.3ms p50, 16.1 → 1.7ms p99 — the P1 residual was Node's built-in fetch connection churn), Prometheus `/metrics`, combo strategies `fastest`/`cheapest` with optimistic latency probing, node pricing + daily budget ceiling with auto-fallback to unmetered nodes, `nodes.update` data-merge fix, SPA router basename fix, UI Spend card + node pricing fields. 92/92 tests |
 | 2026-09-23 | P4 gate verified live: 14/14 routing/budget/metrics checks, 3/3 latency-aware routing (combo declared slow-first pinned to the fast node after one probe, 426ms vs 1ms), P3's 11/11 re-run clean after the executor swap, browser-verified Spend card and node pricing (edit preserved the cached model list) |

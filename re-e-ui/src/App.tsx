@@ -7,6 +7,7 @@ import { Combos } from "./screens/Combos";
 import { ConsoleLog } from "./screens/ConsoleLog";
 import { Overview } from "./screens/Overview";
 import { ProxyPools } from "./screens/ProxyPools";
+import { ProviderDetail } from "./screens/ProviderDetail";
 import { Settings } from "./screens/Settings";
 import { Stub } from "./screens/Stub";
 import { ThemeSampler } from "./screens/ThemeSampler";
@@ -54,6 +55,7 @@ export default function App() {
                   <Routes>
                     <Route path="/" element={<Overview />} />
                     <Route path="/upstreams" element={<Upstreams />} />
+                    <Route path="/upstreams/:id" element={<ProviderDetail />} />
                     <Route path="/usage" element={<Usage />} />
                     <Route path="/console" element={<ConsoleLog />} />
                     <Route path="/combos" element={<Combos />} />

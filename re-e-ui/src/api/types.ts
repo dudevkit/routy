@@ -52,7 +52,9 @@ export interface NewConnectionInput {
 
 /** POST /api/nodes/{id}/connections/batch — N keys → N connections in one call */
 export interface BatchConnectionInput {
-  keys: string[];
+  /** each entry may carry its own label; unlabelled keys are auto-named */
+  entries: { name?: string; apiKey: string }[];
+  /** optional label prefix applied to entries that have none */
   name?: string;
   priority?: number;
 }
@@ -70,6 +72,10 @@ export interface NodeConnection {
   priority: number | null;
   keyMasked: string;
   lastError?: string | null;
+  /** last probe of this key alone (P6) — diagnostics, not traffic */
+  lastTestAt?: string | null;
+  lastTestOk?: boolean | null;
+  lastTestTtftMs?: number | null;
 }
 
 /* ── usage ─────────────────────────────────────────────────────────────────── */
@@ -193,6 +199,52 @@ export interface ProxyPoolInput {
 export interface PoolTestResult {
   ok: boolean;
   results: { url: string; ok: boolean; latencyMs?: number; error?: string }[];
+}
+
+/** Per-node model row (P6). `enabled`/`stale` affect discovery only — routing
+ *  passes any `<prefix>/<model>` through regardless. */
+export interface NodeModel {
+  id: string;
+  nodeId: string;
+  model: string;
+  source: "imported" | "manual";
+  enabled: boolean;
+  /** was imported, no longer listed upstream — kept, never silently deleted */
+  stale: boolean;
+  lastTestAt: string | null;
+  lastTestOk: boolean | null;
+  lastTestTtftMs: number | null;
+  lastTestError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Result of a single probe — diagnostics, never recorded as traffic. */
+export interface ProbeResult {
+  ok: boolean;
+  ttftMs: number | null;
+  latencyMs: number;
+  error: string | null;
+}
+
+/** Per-key probe outcome. */
+export interface KeyTestResult {
+  connectionId: string;
+  name?: string;
+  ok: boolean;
+  latencyMs: number;
+  modelCount: number;
+  error: string | null;
+}
+
+/** Import summary: manual rows are kept, vanished imports go stale. */
+export interface ModelImportResult {
+  imported: number;
+  kept: number;
+  stale: number;
+  listed: number;
+  latencyMs: number;
+  models: NodeModel[];
 }
 
 /* ── config: settings + client api keys ────────────────────────────────────── */

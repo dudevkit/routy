@@ -57,6 +57,18 @@ function nodeView(repos, node, now = Date.now()) {
   };
 }
 
+// ── connection view (the NodeConnection shape) — keys stay masked ───────────
+function connectionView(c) {
+  return {
+    id: c.id, name: c.name, status: c.status, priority: c.priority,
+    keyMasked: maskKey(c.credentials?.apiKey), lastError: c.lastError,
+    // per-key probe result (P6) — diagnostics, never derived from traffic
+    lastTestAt: c.lastTestAt ?? null,
+    lastTestOk: c.lastTestOk ?? null,
+    lastTestTtftMs: c.lastTestTtftMs ?? null,
+  };
+}
+
 // ── probes (diagnostics — see core/probe.mjs; they never touch usage/breakers) ──
 
 // ── usage aggregates ─────────────────────────────────────────────────────────
@@ -428,31 +440,35 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
 
   // connections (per-node key management; masked)
   route("GET", /^\/api\/nodes\/(?<id>[^/]+)\/connections$/, (req, res, p) => {
-    json(res, 200, repos.connections.list(p.id).map((c) => ({
-      id: c.id, name: c.name, status: c.status, priority: c.priority,
-      keyMasked: maskKey(c.credentials?.apiKey), lastError: c.lastError,
-    })));
+    json(res, 200, repos.connections.list(p.id).map(connectionView));
   });
   route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/connections$/, async (req, res, p) => {
     const input = JSON.parse((await readBody(req)).toString("utf8"));
     const conn = repos.connections.create({ nodeId: p.id, name: input.name || "key", credentials: { apiKey: input.apiKey } });
-    json(res, 201, { id: conn.id, name: conn.name, status: conn.status, priority: conn.priority, keyMasked: maskKey(input.apiKey) });
+    json(res, 201, connectionView(conn));
   });
-  // batch key import — one POST, N connections under the same node
+  // batch key import — one POST, N connections under the same node.
+  // Each entry may carry its own label; without one the key is auto-named.
   route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/connections\/batch$/, async (req, res, p) => {
     const input = JSON.parse((await readBody(req)).toString("utf8"));
-    const keys = (Array.isArray(input.keys) ? input.keys : []).filter((k) => typeof k === "string" && k.trim().length > 0);
-    if (keys.length === 0) return json(res, 400, { error: { message: "bad_request", detail: "keys array required (non-empty strings)" } });
+    const raw = Array.isArray(input.entries)
+      ? input.entries.map((e) => (typeof e === "string" ? { name: "", apiKey: e } : { name: e?.name, apiKey: e?.apiKey }))
+      : (Array.isArray(input.keys) ? input.keys.map((k) => ({ name: "", apiKey: k })) : []);
+    const entries = raw
+      .map((e) => ({ name: typeof e.name === "string" ? e.name.trim() : "", apiKey: typeof e.apiKey === "string" ? e.apiKey.trim() : "" }))
+      .filter((e) => e.apiKey.length > 0);
+    if (entries.length === 0) return json(res, 400, { error: { message: "bad_request", detail: "entries array required (non-empty keys)" } });
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
-    const created = keys.map((apiKey, i) => {
+
+    const created = entries.map((entry, i) => {
       const conn = repos.connections.create({
         nodeId: node.id,
-        name: input.name ? `${input.name} ${i + 1}` : `${node.name} key ${i + 1}`,
-        credentials: { apiKey: apiKey.trim() },
+        name: entry.name || (input.name ? `${input.name} ${i + 1}` : `${node.name} key ${i + 1}`),
+        credentials: { apiKey: entry.apiKey },
         priority: (input.priority ?? 100) + i,
       });
-      return { id: conn.id, name: conn.name, keyMasked: maskKey(apiKey.trim()), priority: conn.priority };
+      return { id: conn.id, name: conn.name, keyMasked: maskKey(entry.apiKey), priority: conn.priority };
     });
     json(res, 201, { created: created.length, connections: created });
   });
@@ -462,7 +478,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     for (const f of ["name", "status", "priority"]) if (input[f] !== undefined) patch[f] = input[f];
     const conn = repos.connections.update(p.id, patch);
     if (!conn) return json(res, 404, { error: { message: "not_found" } });
-    json(res, 200, { id: conn.id, name: conn.name, status: conn.status, priority: conn.priority, keyMasked: maskKey(conn.credentials?.apiKey) });
+    json(res, 200, connectionView(conn));
   });
   route("DELETE", /^\/api\/connections\/(?<id>[^/]+)$/, (req, res, p) => noContent(res, repos.connections.delete(p.id)));
 
