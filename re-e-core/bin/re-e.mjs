@@ -141,7 +141,7 @@ function printHelp() {
 
   re-e init    connect an upstream, issue a key, point a CLI tool at RE-E
   re-e serve   start the gateway (same as: node server.mjs)
-  re-e key     issue a new router API key (printed once)`);
+  re-e key     issue a new client API key (sk-…; also copyable from the Overview page)`);
 }
 
 async function cmdKey() {
