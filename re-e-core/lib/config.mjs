@@ -7,6 +7,7 @@ const DEFAULTS = Object.freeze({
   port: 8010,
   host: "127.0.0.1",
   logLevel: "info",
+  retention: { detailsDays: 7, detailsMaxRows: 50000, usageDays: 90, usageMaxRows: 500000 },
 });
 
 export function resolveConfig(env = process.env) {
@@ -28,6 +29,8 @@ export function resolveConfig(env = process.env) {
     configPath,
     dataDir: path.join(home, "data"),
   };
+  // retention is an object — merge per key so a partial override keeps the rest
+  cfg.retention = { ...DEFAULTS.retention, ...(fileCfg.retention || {}) };
   // UI dist: explicit env > repo layout (source checkout) > <home>/ui (packaged)
   cfg.uiDir = env.RE_E_UI_DIR || cfg.uiDir || "";
   if (!cfg.uiDir) {
@@ -41,5 +44,10 @@ export function resolveConfig(env = process.env) {
   if (env.RE_E_PORT) cfg.port = parseInt(env.RE_E_PORT, 10) || cfg.port;
   if (env.RE_E_HOST) cfg.host = env.RE_E_HOST;
   if (env.RE_E_LOG_LEVEL) cfg.logLevel = env.RE_E_LOG_LEVEL;
+  // Stall watchdog budget in ms; 0 disables. Undefined → handler default.
+  if (env.RE_E_STREAM_IDLE_TIMEOUT_MS) {
+    const v = Number(env.RE_E_STREAM_IDLE_TIMEOUT_MS);
+    if (Number.isFinite(v) && v >= 0) cfg.streamIdleTimeoutMs = v;
+  }
   return cfg;
 }

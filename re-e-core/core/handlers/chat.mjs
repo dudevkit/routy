@@ -16,6 +16,11 @@ import { compressMessages, formatRtkLog } from "../rtk/index.js";
 
 const FAILURE_THRESHOLD = 3;
 const OPEN_MS = 60_000;
+const MAX_OPEN_MS = 30 * 60_000;
+// Stall watchdog: abort a stream that goes this long without a chunk. Reasoning
+// models can think for a while, so the default is generous; nodes can override
+// (or disable with 0) via data.streamIdleTimeoutMs.
+const STREAM_IDLE_TIMEOUT_MS = 120_000;
 
 // Verbatim from upstream chatCore.js:50-59 — never send translator stashes upstream.
 function stripContinuityFields(body) {
@@ -35,8 +40,9 @@ function targetFormatForNode(node) {
   return FORMATS.OPENAI;
 }
 
-export function createChatHandler(repos) {
+export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
   const log = rootLog;
+  const globalIdleTimeoutMs = streamIdleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS;
 
   async function handleChatCompletions(req, res) {
     const t0 = Date.now();
@@ -129,6 +135,8 @@ export function createChatHandler(repos) {
       }
 
       const executor = new DefaultExecutor(r.node, connection);
+      // Per-node stall budget; 0 disables the watchdog.
+      const idleTimeoutMs = r.node.data?.streamIdleTimeoutMs ?? globalIdleTimeoutMs;
       const result = await executor.execute({ model: r.model, body: outbound, stream, signal: clientAbort.signal, log });
 
       if (!result.ok) {
@@ -138,7 +146,8 @@ export function createChatHandler(repos) {
         continue; // combo fallback
       }
 
-      recordSuccess(repos, r.node);
+      // NOTE: success is recorded when the response is actually known good —
+      // headers alone are not enough, since a stream can die mid-flight.
 
       // ── streaming: translate or passthrough ──
       if (stream && result.response.headers?.get?.("content-type")?.includes("text/event-stream")) {
@@ -180,10 +189,22 @@ export function createChatHandler(repos) {
           trailingDone = true;
         }
 
-        const { clientGone } = await pumpSse({
+        const { clientGone, stalled, errored } = await pumpSse({
           upstream: result.response, res, signal: clientAbort.signal, t0, usage, logBuffer,
-          transform, flushFrames, trailingDone,
+          transform, flushFrames, trailingDone, idleTimeoutMs,
         });
+        if (errored) {
+          // Upstream broke mid-stream (stall or death) — that is node health, not
+          // a client problem, so it counts against the breaker like any other failure.
+          recordFailure(repos, r.node, {
+            errorCode: stalled ? "upstream_stalled" : "upstream_stream_failed",
+            status: 504,
+            message: stalled ? `no upstream data for ${idleTimeoutMs}ms` : "upstream stream failed mid-response",
+          });
+          log.warn("CHAT", `node ${r.node.prefix} stream broke (${stalled ? "stalled" : "failed"})`);
+        } else if (!clientGone) {
+          recordSuccess(repos, r.node);
+        }
 
         let promptTokens = usage.promptTokens;
         let completionTokens = usage.completionTokens;
@@ -192,7 +213,7 @@ export function createChatHandler(repos) {
           completionTokens = translator.state.usage.completion_tokens ?? completionTokens;
         }
         const usageEventId = recordUsage(repos, log, r, connection, body.model, {
-          status: clientGone ? "aborted" : "ok",
+          status: errored ? "error" : clientGone ? "aborted" : "ok",
           usage: { promptTokens, completionTokens, ttftMs: usage.ttftMs },
           durationMs: Date.now() - t0,
           apiKeyId,
@@ -203,15 +224,28 @@ export function createChatHandler(repos) {
 
       // ── non-streaming: passthrough JSON; convert provider-forced SSE → JSON (P1.6b) ──
       const upstreamCt = result.response.headers?.get?.("content-type") || "";
-      const text = await result.response.text();
+      let text;
+      try {
+        text = await withIdleTimeout(result.response.text(), idleTimeoutMs, () => result.abort?.());
+      } catch (err) {
+        // Same watchdog as the stream path: a body that never arrives must not hang.
+        recordFailure(repos, r.node, { errorCode: "upstream_stalled", status: 504, message: err.message });
+        lastError = { status: 504, errorCode: "upstream_stalled", message: err.message };
+        log.warn("CHAT", `node ${r.node.prefix} stalled reading body`);
+        continue;
+      }
       const usage = new UsageTracker({ promptText: JSON.stringify(body.messages || "") });
       let parsed = null;
       if (upstreamCt.includes("text/event-stream")) {
         parsed = parseSSEToOpenAIResponse(text, r.model);
         if (parsed?.error) {
+          recordFailure(repos, r.node, { errorCode: "upstream_error", status: 502, message: JSON.stringify(parsed.error).slice(0, 200) });
           return json(res, 502, { error: { message: "upstream_error", detail: JSON.stringify(parsed.error).slice(0, 300) } });
         }
-        if (!parsed) return json(res, 502, { error: { message: "upstream_error", detail: "upstream sent an empty stream for a non-streaming request" } });
+        if (!parsed) {
+          recordFailure(repos, r.node, { errorCode: "upstream_error", status: 502, message: "empty stream for a non-streaming request" });
+          return json(res, 502, { error: { message: "upstream_error", detail: "upstream sent an empty stream for a non-streaming request" } });
+        }
       } else {
         try { parsed = JSON.parse(text); } catch { /* passthrough as-is */ }
       }
@@ -223,6 +257,7 @@ export function createChatHandler(repos) {
       if (clientAbort.signal.aborted) return; // client gone
       res.writeHead(result.response.status, { "content-type": "application/json" });
       res.end(JSON.stringify(parsed ?? text));
+      recordSuccess(repos, r.node);
       const usageEventId = recordUsage(repos, log, r, connection, body.model, { status: "ok", usage, durationMs: Date.now() - t0, apiKeyId });
       saveDetail(repos, { usageEventId, request: body, responseText: new LogBuffer(), truncated: false });
       return;
@@ -240,6 +275,29 @@ export function createChatHandler(repos) {
   }
 
   return handleChatCompletions;
+}
+
+/**
+ * Race a promise against an idle budget. onTimeout fires when the budget is
+ * exhausted (used to abort the upstream request), then the promise rejects.
+ */
+async function withIdleTimeout(promise, timeoutMs, onTimeout) {
+  if (!timeoutMs) return promise;
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          try { onTimeout?.(); } catch { /* best-effort abort */ }
+          reject(new Error(`no upstream data for ${timeoutMs}ms`));
+        }, timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function extractBearer(req) {
@@ -264,15 +322,20 @@ export function recordFailure(repos, node, err) {
   const scope = `node:${node.id}`;
   const cur = repos.breakers.record(scope, { failureDelta: 1, lastError: `${err.errorCode}: ${(err.message || "").slice(0, 200)}` });
   if (cur.failures >= FAILURE_THRESHOLD) {
+    // Exponential backoff on consecutive failures: the first trip opens for
+    // OPEN_MS, and each failed half-open probe doubles it up to MAX_OPEN_MS.
+    // A success resets the count, so a recovered node is back to base.
+    const exp = cur.failures - FAILURE_THRESHOLD;
+    const openMs = Math.min(OPEN_MS * 2 ** exp, MAX_OPEN_MS);
     repos.breakers.record(scope, {
       state: "open",
-      openUntil: new Date(Date.now() + OPEN_MS).toISOString(),
+      openUntil: new Date(Date.now() + openMs).toISOString(),
     });
   }
 }
 
 function recordSuccess(repos, node) {
-  repos.breakers.record(`node:${node.id}`, { state: "closed", failures: -999, lastError: null });
+  repos.breakers.record(`node:${node.id}`, { state: "closed", failures: 0, openUntil: null, lastError: null });
 }
 
 function recordUsage(repos, log, route, connection, clientModel, { status, usage, durationMs, apiKeyId }) {

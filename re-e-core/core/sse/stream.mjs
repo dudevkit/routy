@@ -76,15 +76,43 @@ export const SSE_HEADERS = {
  * - transform(event, data-frame) → string[] of wire-ready frames (or null to skip).
  * - Backpressure: awaits drain when socket buffer fills.
  * - trailingDone: emit a second [DONE] after the stream (upstream parity quirk).
- * Returns { clientGone }.
+ * - idleTimeoutMs: stall watchdog — abort + error frame when the upstream goes
+ *   silent for that long (0 disables).
+ * Returns { clientGone, stalled, errored } — errored means the upstream broke
+ * (stall or mid-stream death) and the node should count a breaker failure.
  */
-export async function pumpSse({ upstream, res, signal, t0, transform = null, flushFrames = null, usage = null, logBuffer = null, maxEmptyReads = 4, trailingDone = false }) {
+
+/** Thrown internally when the upstream goes silent past the idle budget. */
+class StallError extends Error {
+  constructor() { super("upstream stream stalled"); this.name = "StallError"; }
+}
+
+export async function pumpSse({ upstream, res, signal, t0, transform = null, flushFrames = null, usage = null, logBuffer = null, maxEmptyReads = 4, trailingDone = false, idleTimeoutMs = 0 }) {
   res.writeHead(upstream.status, SSE_HEADERS);
   const parser = new SseParser();
   const reader = upstream.body.getReader();
   let clientGone = false;
   const onClose = () => { clientGone = true; };
   res.on("close", onClose);
+
+  // Stall watchdog: an upstream that stops sending without closing the socket
+  // would hang the client forever. Bound the wait between chunks (first byte
+  // included). idleTimeoutMs = 0 disables it.
+  let stalled = false;
+  let errored = false;
+  const readWithIdle = async () => {
+    if (!idleTimeoutMs) return reader.read();
+    let timer;
+    const idle = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new StallError()), idleTimeoutMs);
+      timer.unref?.();
+    });
+    try {
+      return await Promise.race([reader.read(), idle]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 
   let emptyReads = 0;
   try {
@@ -93,7 +121,7 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
         signal?.abort?.();
         break;
       }
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithIdle();
       if (done) break;
       if (value && value.length > 0) {
         emptyReads = 0;
@@ -127,8 +155,20 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
     // the first one, so the duplicate is benign. Keep it for byte-identical output.
     if (trailingDone && !res.writableEnded && !clientGone) res.write("data: [DONE]\n\n");
   } catch (err) {
-    if (!clientGone) {
+    if (err instanceof StallError) {
+      stalled = true;
+      errored = true;
+      try { await reader.cancel(); } catch { /* already gone */ }
+      signal?.abort?.();
+      if (!clientGone && !res.writableEnded) {
+        const detail = `no upstream data for ${idleTimeoutMs}ms`;
+        if (!res.write(formatSse("error", JSON.stringify({ error: { message: "upstream_stalled", detail, retryAfterMs: null } })))) {
+          await onceDrain(res);
+        }
+      }
+    } else if (!clientGone) {
       // upstream died mid-stream: emit a terminal error frame so the client doesn't hang
+      errored = true;
       const detail = String(err?.message || err).slice(0, 200);
       if (!res.writableEnded) {
         if (!res.write(formatSse("error", JSON.stringify({ error: { message: "upstream_stream_failed", detail } })))) {
@@ -140,7 +180,7 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
     res.off("close", onClose);
     if (!res.writableEnded) res.end();
   }
-  return { clientGone };
+  return { clientGone, stalled, errored };
 }
 
 function onceDrain(res) {

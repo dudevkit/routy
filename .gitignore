@@ -11,4 +11,6 @@ node_modules/
 tests/golden/.tmp-data/
 /tests/golden/.tmp-data/
 /scratch/ree-home/
+/scratch/ree-home-r3/
+/scratch/chaos-home/
 re-e-core/node_modules/

@@ -155,6 +155,17 @@ describe("management API", () => {
     expect(r.body.failures).toBe(0);
   });
 
+  it("node reset clears the breaker failure count (not just the state)", async () => {
+    const node = repos.nodes.create({ name: "R", prefix: "r", apiType: "openai", baseUrl: "http://127.0.0.1:1/v1" });
+    repos.breakers.record(`node:${node.id}`, { state: "open", openUntil: new Date(Date.now() + 60000).toISOString(), failureDelta: 3 });
+    const r = await post(`/api/nodes/${node.id}/reset`, {});
+    expect(r.status).toBe(200);
+    const b = repos.breakers.get(`node:${node.id}`);
+    expect(b.state).toBe("closed");
+    expect(b.failures).toBe(0);
+    expect(b.openUntil).toBeNull();
+  });
+
   it("streams logs: init snapshot then live lines", async () => {
     let captured = "";
     const req = http.get({ host: "127.0.0.1", port: handlerPort, path: "/api/logs/stream" }, (res) => {

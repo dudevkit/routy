@@ -32,7 +32,7 @@ P0 Harness ──► P1 Core MVP ──► P2 Mgmt API + UI rewire ──► P3 
 | P0 Harness | Golden translator tests + baseline harness | 2-3 | 3 | Golden tests pass against upstream behavior; baseline numbers recorded |
 | P1 Core MVP | re-e-core serves `/v1/chat/completions` + `/v1/messages` via compatible node | 3-5 | 8 | Claude Code → RE-E → OpenRouter-node streaming session works end-to-end; no upstream diff at client |
 | P2 Mgmt + UI | Management API + existing dashboard running against RE-E | 2-3 | 11 | Dashboard CRUD (nodes/keys/settings/usage) works out-of-process; UI crash doesn't touch proxy |
-| P3 Stability | Hardened runtime | 2-4 | 15 | Chaos pass: kill upstream mid-stream, restart core mid-request, concurrent load — no corruption, no unbounded memory, breaker state survives restart |
+| P3 Stability | Hardened runtime | 2-4 | 15 | **DONE 2026-09-23** — gate passed: chaos pass (upstream killed mid-stream, restart mid-request, 20-way concurrent load) with no corruption, RSS delta 0MB on an 11.4MB stream, breaker state survived restart |
 | P4 Speed | Optimized + observable | 2-3 | 18 | Targets table above met on the same baseline scenario |
 | P5 Packaging | Shippable artifact | 1-2 | 20 | `npm run build` → single-file bundle + Docker image; `re-e init` configures a CLI tool without dashboard |
 | P6 (optional) | Expansion | as needed | — | Per-item: first OAuth provider / lean SPA / media module |

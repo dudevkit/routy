@@ -296,14 +296,18 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
   const breakers = {
     all: () => [...breakerRam.values()],
     get: (scope) => breakerRam.get(scope) || null,
-    record(scope, { state, openUntil = null, failureDelta = 0, lastError = null }) {
+    /**
+     * Upsert a breaker. Fields left undefined keep their current value;
+     * `failures` sets an absolute count, `failureDelta` adjusts relatively.
+     */
+    record(scope, { state, openUntil, failureDelta = 0, failures, lastError } = {}) {
       const cur = breakerRam.get(scope) || { scope, state: "closed", openUntil: null, failures: 0, lastError: null, updatedAt: "" };
       const next = {
         ...cur,
-        state: state || cur.state,
-        openUntil: openUntil ?? cur.openUntil,
-        failures: Math.max(0, cur.failures + failureDelta),
-        lastError: lastError ?? cur.lastError,
+        state: state ?? cur.state,
+        openUntil: openUntil === undefined ? cur.openUntil : openUntil,
+        failures: failures === undefined ? Math.max(0, cur.failures + failureDelta) : Math.max(0, failures),
+        lastError: lastError === undefined ? cur.lastError : lastError,
         updatedAt: new Date().toISOString(),
       };
       breakerRam.set(scope, next);
@@ -330,6 +334,16 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
     },
     flush: () => 0,
     pending: () => 0,
+    /**
+     * Retention: drop events older than maxAgeDays, then trim to the newest
+     * maxRows. Returns deleted counts so the caller can log real work only.
+     */
+    purge({ maxAgeDays = 90, maxRows = 500000 } = {}) {
+      const cutoff = Date.now() - maxAgeDays * 24 * 3600 * 1000;
+      const aged = db.prepare(`DELETE FROM usage_events WHERE ts < ?`).run(cutoff).changes;
+      const capped = db.prepare(`DELETE FROM usage_events WHERE id NOT IN (SELECT id FROM usage_events ORDER BY id DESC LIMIT ?)`).run(maxRows).changes;
+      return { aged, capped };
+    },
     query: ({ since, until, nodeId, limit = 1000 } = {}) => {
       const where = [];
       const params = [];

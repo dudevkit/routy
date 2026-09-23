@@ -64,7 +64,7 @@ export class DefaultExecutor {
         clearTimeout(timer);
         log?.debug?.("FETCH", `${this.node.prefix} ← ${response.status} ttft=${Date.now() - t0}ms`);
 
-        if (response.ok) return { ok: true, response, url };
+        if (response.ok) return { ok: true, response, url, abort: (reason) => controller.abort(reason) };
 
         const err = await this.#classify(response, log);
         if (await this.#maybeRetry(err, perUrl, log)) continue;

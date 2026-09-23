@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** P2 COMPLETE backend + UI (52/52 tests; model list per upstream, batch key import, round-3 fixes all verified live). Remaining: P3 stability, P4 speed, P5 packaging.
+- **Phase:** P3 COMPLETE — stability pass landed and gate-verified live (69/69 tests). Remaining: P4 speed, P5 packaging.
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -50,6 +50,46 @@ axolotl/
   backend-architecture §5; P2 redefined per ui-ux decisions (roadmap).
 
 ## Done
+
+- 2026-09-23 (P3 stability): hardening pass landed. **Breakers** — exponential
+  backoff on consecutive failures (60s → 120s → 240s … capped at 30min), driven by
+  the failure count so a failed half-open probe re-opens with a doubled window; a
+  clean response resets the ladder to base. Fixed two latent breaker bugs found
+  while testing: `breakers.record` silently ignored the absolute `failures` field
+  (so `POST /api/nodes/{id}/reset` reset the *state* but never the count), and
+  `recordSuccess` fired on response **headers**, so a stream that died mid-flight
+  was scored as a success — three consecutive mid-stream deaths never tripped the
+  breaker. Success is now recorded only when the response is actually known good
+  (clean stream end / body read). **Stream stall watchdog** — `pumpSse` races each
+  read against an idle budget (default 120s, `data.streamIdleTimeoutMs` per node,
+  `RE_E_STREAM_IDLE_TIMEOUT_MS` globally, 0 disables) and emits a terminal
+  `upstream_stalled` error frame instead of hanging the client forever; the same
+  budget bounds non-streaming body reads, which previously had **no** read timeout
+  at all (headers were bounded, bodies were not). Mid-stream upstream death now
+  counts against the breaker too. **Graceful shutdown** — tracks in-flight requests,
+  stops accepting, drains running streams, drops idle keep-alives immediately, and
+  force-closes after a 10s grace (socket close → clientAbort → upstream abort, so
+  the force path stops upstream work rather than orphaning it). **Retention** — boot
+  purge became an hourly job covering both `usage_events` (new `usage.purge`) and
+  `request_details`, with per-key config overrides under `retention`. **Ops** —
+  `POST /api/gateway/shutdown` (202, then drain) because Windows has no SIGTERM;
+  `scripts/re-e-task.ps1` + `scripts/re-e-serve.cmd` register the gateway as a
+  scheduled task with restart-on-failure, and `docs/windows-service.md` documents
+  that plus the NSSM path. First-run bug fixed: a non-existent `RE_E_HOME` crashed
+  boot on the lockfile write. Tests: `test/stability.test.mjs` (8) +
+  `test/chaos.test.mjs` (8) — 69/69 total.
+- 2026-09-23 (P3 gate, live): rig = `scratch/chaos-upstream.mjs` (model name selects
+  ok/stall/die/big/slow/long) + `scratch/p3-verify.mjs`. Gateway booted through the
+  Windows launcher on :8015 in **317ms** (< 500ms target). **11/11** main checks:
+  stall aborts in 1.5s with `upstream_stalled` (bounded, not hung) and the node goes
+  `degraded`; mid-stream death yields `upstream_stream_failed`; a slow-but-alive
+  stream survives the watchdog (it is a gap budget, not a deadline); an 11.4MB
+  stream is delivered in full with **RSS delta 0MB**; 20 concurrent streams all
+  complete in 671ms. **Breaker persistence 4/4**: 3 consecutive mid-stream deaths
+  trip it → `down` + 503 `all_unavailable`, survives a real process restart, manual
+  reset restores `healthy`. **Drain 5/5**: `POST /api/gateway/shutdown` returns 202
+  mid-stream, the in-flight 8s stream still delivered **40/40** chunks and its
+  `[DONE]`, the process exited 0, and the lockfile was released.
 
 - 2026-09-17: Full recon of 9Router (architecture doc, hot path, db layer, RTK, CLI,
   tests, packaging). Evidence tables in reference doc §13.
@@ -190,6 +230,24 @@ axolotl/
 
 *(Append-only; one line per fact with pointer into reference doc where applicable.)*
 
+- 2026-09-23: A breaker that resets on response *headers* is worse than no breaker
+  for streaming upstreams — every dying stream looks like a success first. Judge
+  health at stream end, never at headers.
+- 2026-09-23: Node's `fetch` bounds time-to-headers via a signal, but nothing bounds
+  the *body* read. Streaming and non-streaming paths both need an explicit idle
+  budget; `AbortSignal` alone is not a read timeout.
+- 2026-09-23: `res.writeHead()` on a Node http server does not flush — a stub that
+  writes headers and then stalls never delivers them, so the client sits in the
+  connect phase and a read-timeout test silently tests the connect timeout instead.
+  Use `res.flushHeaders()` when the test's point is a stalled body.
+- 2026-09-23: Windows PowerShell 5.1 reads BOM-less `.ps1` as the ANSI code page, so
+  a UTF-8 em dash (E2 80 94) becomes `â€”` whose 0x94 maps to a smart quote — and
+  5.1 accepts smart quotes as string delimiters, breaking the parse several lines
+  later. Keep `.ps1`/`.cmd` pure ASCII.
+- 2026-09-23: Windows has no SIGTERM for console processes — `taskkill`/`Stop-Process`
+  is a hard kill that skips any drain. A gateway-owned shutdown endpoint is the only
+  portable graceful-stop primitive; NSSM's Ctrl+C works because Node maps it to SIGINT.
+
 - 2026-09-17: Hot path = `src/sse/handlers/chat.js` → `open-sse/handlers/chatCore.js` →
   executors → `open-sse/utils/stream.js` TransformStream. Framework-agnostic below chat.js.
 - 2026-09-17: Persistence already migrated from db.json to SQLite w/ 4-driver fallback;
@@ -254,6 +312,8 @@ axolotl/
 
 | Date | Summary |
 |---|---|
+| 2026-09-23 | P3 stability: breaker exponential backoff + 2 latent breaker bugs fixed (reset ignored `failures`; success recorded at headers so dying streams looked healthy), stream stall watchdog (stream + non-streaming body reads), mid-stream death counts as a breaker failure, graceful drain shutdown, hourly retention job, Windows service story (scheduled-task script + docs + `/api/gateway/shutdown`), fresh-`RE_E_HOME` boot crash fixed. 69/69 tests |
+| 2026-09-23 | P3 gate verified live on :8015 (started through the Windows launcher): 11/11 chaos checks, 4/4 breaker-persistence-across-restart, 5/5 graceful-drain (40/40 chunks after shutdown mid-stream, exit 0, lock released). Boot 317ms; RSS delta 0MB on an 11.4MB stream |
 | 2026-09-17 | Cloned repo; full recon; wrote reference doc + this log; brainstorm delivered; decisions deferred |
 | 2026-09-17 | RE-E named; two-part UI/backend split decided; log restructured |
 | 2026-09-17 | v1 scope locked (A/B/C/E + D-with-override); provider catalog written; provider scope = compatible nodes only |

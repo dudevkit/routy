@@ -137,7 +137,7 @@ function gatewayInfo(repos, cfg, version) {
 }
 
 // ── routes ───────────────────────────────────────────────────────────────────
-export function buildApiRoutes(repos, cfg, version) {
+export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   const R = [];
   const route = (method, pattern, handler) => R.push({ method, pattern, handler });
 
@@ -183,7 +183,7 @@ export function buildApiRoutes(repos, cfg, version) {
   route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/reset$/, (req, res, p) => {
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
-    repos.breakers.record(`node:${node.id}`, { state: "closed", failures: -999, openUntil: null, lastError: null });
+    repos.breakers.record(`node:${node.id}`, { state: "closed", failures: 0, openUntil: null, lastError: null });
     json(res, 200, nodeView(repos, repos.nodes.get(node.id)));
   });
   route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/test$/, async (req, res, p) => {
@@ -238,6 +238,13 @@ export function buildApiRoutes(repos, cfg, version) {
   route("GET", /^\/api\/health$/, (req, res) => json(res, 200, { status: "ok", uptimeMs: Date.now() - (globalThis.__bootedAt || Date.now()) }));
   route("GET", /^\/api\/version$/, (req, res) => json(res, 200, { version, name: "re-e-core" }));
   route("GET", /^\/api\/gateway$/, (req, res) => json(res, 200, gatewayInfo(repos, cfg, version)));
+  // Graceful stop for scripts and service managers (Windows has no SIGTERM).
+  // Answer first so the caller sees a clean 202, then drain and exit.
+  route("POST", /^\/api\/gateway\/shutdown$/, (req, res) => {
+    if (!hooks.shutdown) return json(res, 501, { error: { message: "not_supported" } });
+    json(res, 202, { status: "shutting_down" });
+    setImmediate(() => hooks.shutdown("api"));
+  });
 
   // settings
   route("GET", /^\/api\/settings$/, (req, res) => json(res, 200, repos.settings.all()));
@@ -313,7 +320,7 @@ export function buildApiRoutes(repos, cfg, version) {
 
   // breakers
   route("POST", /^\/api\/breakers\/(?<scope>[^/]+)\/reset$/, (req, res, p) => {
-    const b = repos.breakers.record(decodeURIComponent(p.scope), { state: "closed", failureDelta: -999, openUntil: null, lastError: null });
+    const b = repos.breakers.record(decodeURIComponent(p.scope), { state: "closed", failures: 0, openUntil: null, lastError: null });
     json(res, 200, b);
   });
 
