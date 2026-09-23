@@ -287,9 +287,9 @@ export const api = {
   },
   async createKey(name?: string): Promise<CreatedApiKey> {
     const id = uuid();
-    const key = `re_${crypto.randomUUID().replace(/-/g, "")}`;
-    state.keys.push({ id, name: name ?? null, enabled: true, lastUsedAt: null, createdAt: nowIso() });
-    return { id, key, name: name ?? null, warning: "plaintext key shown once — store it now" };
+    const key = `sk-${crypto.randomUUID().replace(/-/g, "")}${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    state.keys.push({ id, name: name ?? null, enabled: true, key, lastUsedAt: null, createdAt: nowIso() });
+    return { id, key, name: name ?? null };
   },
   async removeKey(id: string): Promise<void> {
     state.keys = state.keys.filter((k) => k.id !== id);

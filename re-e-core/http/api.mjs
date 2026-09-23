@@ -381,7 +381,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("POST", /^\/api\/keys$/, async (req, res) => {
     const input = JSON.parse((await readBody(req)).toString("utf8") || "{}");
     const created = repos.apiKeys.create(input?.name || null);
-    json(res, 201, { ...created, warning: "plaintext key shown once — store it now" });
+    json(res, 201, created);
   });
   route("PUT", /^\/api\/keys\/(?<id>[^/]+)$/, async (req, res, p) => {
     const input = JSON.parse((await readBody(req)).toString("utf8"));

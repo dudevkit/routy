@@ -153,10 +153,13 @@ describe("management API", () => {
     expect((await get("/api/settings")).body.requireApiKey).toBe(true);
   });
 
-  it("issues an api key once and verifies it via repos", async () => {
+  it("issues an api key and verifies it via repos", async () => {
     const r = await post("/api/keys", { name: "test" });
     expect(r.status).toBe(201);
     expect(repos.apiKeys.verify(r.body.key)?.id).toBe(r.body.id);
+    // no show-once warning: the key stays retrievable from the dashboard
+    expect(r.body.warning).toBeUndefined();
+    expect((await get("/api/keys")).body.find((k) => k.id === r.body.id).key).toBe(r.body.key);
   });
 
   it("resets breakers by scope", async () => {

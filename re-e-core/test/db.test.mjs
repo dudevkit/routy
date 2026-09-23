@@ -6,6 +6,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
+import { MIGRATIONS } from "../db/migrations.mjs";
 
 let tmp;
 let db;
@@ -24,17 +25,16 @@ describe("driver", () => {
       expect(tables).toContain(t);
     }
     const v1 = db.prepare(`SELECT value FROM meta WHERE key='schema_version'`).get();
-    expect(v1.value).toBe("2");
+    expect(v1.value).toBe(String(MIGRATIONS.length));
     db.close();
     const db2 = openDatabase(tmp); // must not throw or re-run a migration
     const v2 = db2.prepare(`SELECT value FROM meta WHERE key='schema_version'`).get();
-    expect(v2.value).toBe("2");
+    expect(v2.value).toBe(String(MIGRATIONS.length));
     db2.close();
   });
 
-  it("migrates a v1 database in place, adding node_models and connection test columns", async () => {
+  it("migrates a v1 database in place, adding node_models, test columns and key_plain", async () => {
     // Build a genuine v1 database: only migration 1 applied, version stamped 1.
-    const { MIGRATIONS } = await import("../db/migrations.mjs");
     const fresh = fs.mkdtempSync(path.join(os.tmpdir(), "ree-v1-"));
     const raw = new DatabaseSync(path.join(fresh, "re-e.db"));
     raw.exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
@@ -45,11 +45,13 @@ describe("driver", () => {
     raw.close();
 
     const migrated = openDatabase(fresh);
-    expect(migrated.prepare(`SELECT value FROM meta WHERE key='schema_version'`).get().value).toBe("2");
+    expect(migrated.prepare(`SELECT value FROM meta WHERE key='schema_version'`).get().value).toBe(String(MIGRATIONS.length));
     const tables = migrated.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all().map((r) => r.name);
     expect(tables).toContain("node_models");
     const connCols = migrated.prepare(`PRAGMA table_info(connections)`).all().map((c) => c.name);
     expect(connCols).toEqual(expect.arrayContaining(["last_test_at", "last_test_ok", "last_test_ttft_ms"]));
+    const keyCols = migrated.prepare(`PRAGMA table_info(api_keys)`).all().map((c) => c.name);
+    expect(keyCols).toContain("key_plain");
     migrated.close();
     fs.rmSync(fresh, { recursive: true, force: true });
   }, 20_000);
@@ -90,11 +92,25 @@ describe("nodes + connections", () => {
 describe("api keys", () => {
   it("creates, verifies, disables", () => {
     const { key, id } = repos.apiKeys.create("test");
-    expect(key.startsWith("re_")).toBe(true);
+    // OpenAI-style: recognisable prefix, then 48 chars of mixed alphanumerics.
+    expect(key).toMatch(/^sk-[A-Za-z0-9]{48}$/);
     expect(repos.apiKeys.verify(key).id).toBe(id);
     repos.apiKeys.setEnabled(id, false);
     expect(repos.apiKeys.verify("bogus")).toBeNull();
     expect(repos.apiKeys.verify(key)).toBeNull();
+  });
+
+  it("hands the key back on list, so the dashboard can copy it again", () => {
+    const { key, id } = repos.apiKeys.create("kept");
+    const row = repos.apiKeys.list().find((k) => k.id === id);
+    expect(row.key).toBe(key);
+    expect(repos.apiKeys.verify(row.key).id).toBe(id);
+  });
+
+  it("issues distinct keys", () => {
+    const a = repos.apiKeys.create(null);
+    const b = repos.apiKeys.create(null);
+    expect(a.key).not.toBe(b.key);
   });
 });
 

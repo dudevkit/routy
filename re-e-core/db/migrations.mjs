@@ -136,4 +136,17 @@ export const MIGRATIONS = [
       ALTER TABLE connections ADD COLUMN last_test_ttft_ms INTEGER;
     `,
   },
+  {
+    // v3 — keep client API keys readable from the dashboard.
+    //
+    // Keys were hash-only, so the plaintext existed for exactly one render and the
+    // dashboard could never show it again. The dashboard *is* where these keys are
+    // kept, so the value is stored alongside the hash: the hash still does the
+    // lookup (verify stays an indexed equality match), the value is only ever
+    // returned to the local management API. Rows created before this stay NULL.
+    version: 3,
+    up: `
+      ALTER TABLE api_keys ADD COLUMN key_plain TEXT;
+    `,
+  },
 ];

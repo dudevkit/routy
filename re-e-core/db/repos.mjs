@@ -334,16 +334,18 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
     },
   };
 
-  // ── api keys (router client auth; stored hashed) ──────────────────────────
+  // ── api keys (router client auth) ─────────────────────────────────────────
+  // Lookup is by hash (an indexed equality match, no scan, no timing signal);
+  // the plaintext is kept only so the dashboard can hand the key back later.
   const apiKeys = {
-    list: () => db.prepare(`SELECT id, name, enabled, last_used_at AS lastUsedAt, created_at AS createdAt FROM api_keys ORDER BY created_at`).all()
+    list: () => db.prepare(`SELECT id, name, enabled, key_plain AS key, last_used_at AS lastUsedAt, created_at AS createdAt FROM api_keys ORDER BY created_at`).all()
       .map((r) => ({ ...r, enabled: !!r.enabled })),
     create(name) {
       const { key, hash } = createApiKey();
       const id = uuid();
-      db.prepare(`INSERT INTO api_keys (id, key_hash, name, enabled, created_at) VALUES (?, ?, ?, 1, ?)`)
-        .run(id, hash, name || null, new Date().toISOString());
-      return { id, key, name }; // plaintext returned ONCE
+      db.prepare(`INSERT INTO api_keys (id, key_hash, key_plain, name, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)`)
+        .run(id, hash, key, name || null, new Date().toISOString());
+      return { id, key, name };
     },
     verify(candidate) {
       if (typeof candidate !== "string" || !candidate) return null;

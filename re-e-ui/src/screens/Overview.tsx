@@ -6,6 +6,7 @@ import { statusMeta } from "../utils/nodeStatus";
 import { toastApiError } from "../utils/errors";
 import { fmtClock, fmtMs, fmtTokens } from "../utils/format";
 import { CopyChip } from "../components/CopyChip";
+import { KeysCard } from "../components/KeysCard";
 import { NodeFormModal } from "../components/NodeFormModal";
 import { StatTile } from "../components/StatTile";
 import { ArrowsClockwise, Broadcast, List, Plus } from "../components/icons";
@@ -105,6 +106,9 @@ export function Overview() {
           <span className="ml-auto font-mono text-[10px] text-text-subtle">v{gateway.data.version}</span>
         </Card>
       )}
+
+      {/* Client keys sit next to the endpoint they authenticate against. */}
+      <KeysCard />
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 sm:gap-4">

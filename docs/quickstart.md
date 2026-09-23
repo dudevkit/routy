@@ -61,7 +61,7 @@ tool (Claude Code's `settings.json`) at RE-E. Everything it writes lands in
 By hand, the same thing:
 
 ```bash
-# 1. point a client key at the gateway (printed once)
+# 1. issue a client key (sk-…; it stays copyable from the Overview page)
 re-e key
 
 # 2. add a provider
@@ -130,7 +130,7 @@ Any tool that takes an OpenAI-compatible base URL works:
 | Setting | Value |
 |---|---|
 | Base URL | `http://127.0.0.1:8010/v1` |
-| API key | a `re-e key` value (required unless `requireApiKey` is off) |
+| API key | an `sk-…` client key from the Overview page (required unless `requireApiKey` is off) |
 | Model | `<node-prefix>/<model>`, an alias, or a combo name |
 
 Claude Code additionally works against `/v1/messages` — RE-E translates between the

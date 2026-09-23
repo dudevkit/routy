@@ -281,6 +281,13 @@ manually with `POST /api/nodes/{id}/reset` or `POST /api/breakers/{scope}/reset`
 `/api` and `/metrics` are loopback-or-bootstrap-token. `/v1` is loopback-or-API-key
 while `requireApiKey` is on.
 
+Client API keys are `sk-` + 48 alphanumerics. Create them on the **Overview**
+page, which is also where they are kept: the list shows each key masked
+(`sk-abc1234…wxyz`) and copies the full value on click, so a key is never a
+one-shot you have to paste somewhere before the panel closes. The hash does the
+authentication lookup; the value is stored only so this page can hand it back,
+and is never returned by anything but the loopback management API.
+
 ---
 
 ## CLI
@@ -288,5 +295,5 @@ while `requireApiKey` is on.
 ```
 re-e init    connect an upstream, issue a key, point a CLI tool at RE-E
 re-e serve   start the gateway (same as: node server.mjs)
-re-e key     issue a new router API key (printed once)
+re-e key     issue a new client API key (sk-…; also copyable from the Overview page)
 ```

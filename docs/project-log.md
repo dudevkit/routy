@@ -61,6 +61,23 @@ axolotl/
 
 ## Done
 
+- 2026-09-23 (client keys: create on Overview, always copyable, OpenAI-shaped): the
+  user could not copy their API key — creation lived in Settings behind a show-once
+  panel that demanded confirmation ("did you store it?"), and the plaintext was
+  rendered exactly once, so the dashboard could never show it again. Moved the whole
+  keys card to the **Overview** page, beside the endpoint it authenticates against;
+  deleted the show-once panel and its `warning` field. Keys are now **`sk-` + 48
+  unbiased base62 chars** (rejection-sampled — `byte % 62` would bias the first 8
+  characters) instead of `re_<hex>`. Display stays masked (`sk-abc1234…wxyz`) but
+  clicking copies the **full** value, which is what "the dashboard is where I keep
+  my key" requires — so migration v3 stores the value next to the hash; the hash
+  still does the lookup (indexed equality, no scan), and the value is only ever
+  returned by the loopback management API. Keys created before v3 read "not kept"
+  and can be deleted/re-created. Verified live: format matches `^sk-[A-Za-z0-9]{48}$`,
+  the key still authenticates `/v1/models` (200), it is retrievable from `GET
+  /api/keys` later, and the clipboard receives the full key while the chip shows
+  the mask. Tests: 128/128, bundle rebuilt (1630 KB, 217 modules), smoke 13/13.
+
 - 2026-09-23 (a timeout that named the wrong cause): the user reported that RE-E
   said `no response within 45000ms (stage: connect)` while Token Harbor's own
   dashboard showed the request completing in 19s. Measured it end to end rather
@@ -413,6 +430,9 @@ axolotl/
 
 *(Append-only; one line per fact with pointer into reference doc where applicable.)*
 
+- 2026-09-23: A "show once, copy it now" key panel is hostile when the dashboard is
+  where the key is kept. If the product owns the credential, it must be able to
+  hand it back; a mask on screen plus a full value on copy is the useful shape.
 - 2026-09-23: "Timeout" is not a diagnosis, and naming the wrong stage is worse than
   naming none. "stage: connect" sent the user hunting a network fault while the
   socket had connected in 98ms — measure where the time actually went (socket

@@ -295,16 +295,18 @@ export interface ApiKey {
   id: string;
   name: string | null;
   enabled: boolean;
+  /** the full key, so the dashboard can copy it again. null for keys created
+   *  before the value was kept — those can only be deleted and re-created. */
+  key: string | null;
   lastUsedAt: string | null;
   createdAt: string;
 }
 
-/** POST /api/keys — the only plaintext surface; returned exactly once */
+/** POST /api/keys — same shape as a listed key. */
 export interface CreatedApiKey {
   id: string;
   key: string;
   name: string | null;
-  warning: string;
 }
 
 /* ── live logs (SSE) ───────────────────────────────────────────────────────── */
