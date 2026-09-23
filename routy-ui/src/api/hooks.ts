@@ -12,6 +12,7 @@ const COMBOS: QueryKey = ["combos"];
 const ALIASES: QueryKey = ["aliases"];
 const POOLS: QueryKey = ["pools"];
 const UPDATES: QueryKey = ["updates"];
+const CLI_TOOLS: QueryKey = ["cli-tools"];
 
 /* ── queries ───────────────────────────────────────────────────────────────── */
 export const useNodes = () => useQuery({ queryKey: NODES, queryFn: api.listNodes, refetchInterval: 20000 });
@@ -192,6 +193,14 @@ export const useCreateKey = () => useMutation({ mutationFn: api.createKey, onSuc
 export const useRemoveKey = () => useMutation({ mutationFn: api.removeKey, onSuccess: useInvalidator(KEYS, GATEWAY) });
 /** enabled=false revokes without destroying the key row */
 export const useSetKeyEnabled = () => useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.setKeyEnabled(id, enabled), onSuccess: useInvalidator(KEYS) });
+
+export const useCliTools = () => useQuery({ queryKey: CLI_TOOLS, queryFn: api.listCliTools, staleTime: 30_000 });
+export const useConnectCliTool = () =>
+  useMutation({
+    mutationFn: ({ id, input }: { id: string; input: Parameters<typeof api.connectCliTool>[1] }) => api.connectCliTool(id, input),
+    onSuccess: useInvalidator(CLI_TOOLS),
+  });
+export const useDisconnectCliTool = () => useMutation({ mutationFn: api.disconnectCliTool, onSuccess: useInvalidator(CLI_TOOLS) });
 
 export const useUpdates = () => useQuery({ queryKey: UPDATES, queryFn: api.getUpdates, staleTime: 60_000 });
 export const useCheckUpdates = () => useMutation({ mutationFn: api.checkUpdates, onSuccess: useInvalidator(UPDATES) });

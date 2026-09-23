@@ -10,6 +10,7 @@ import {
   SquaresFour,
   Stack,
   TerminalWindow,
+  Wrench,
   type IconComponent,
 } from "./icons";
 import { cn } from "../utils/cn";
@@ -35,6 +36,7 @@ const navItems: NavItemSpec[] = [
 const systemItems: NavItemSpec[] = [
   { to: "/pools", label: "Proxy Pools", icon: Network },
   { to: "/console", label: "Live Console", icon: TerminalWindow },
+  { to: "/cli-tools", label: "CLI Tools", icon: Wrench },
 ];
 
 function NavItem({ to, label, icon: Icon, end }: NavItemSpec) {

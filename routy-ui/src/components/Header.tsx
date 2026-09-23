@@ -9,6 +9,7 @@ import {
   SquaresFour,
   Stack,
   TerminalWindow,
+  Wrench,
   type IconComponent,
 } from "./icons";
 import { useGateway } from "../api/hooks";
@@ -29,6 +30,7 @@ function getPageInfo(pathname: string): PageInfo {
   if (pathname.includes("/token-saver")) return { title: "Token Saver", description: "Reduce prompt token spend (RTK)", icon: Coins };
   if (pathname.includes("/pools")) return { title: "Proxy Pools", description: "Outbound proxy pools and health", icon: Network };
   if (pathname.includes("/console")) return { title: "Live Console", description: "Streaming gateway logs", icon: TerminalWindow };
+  if (pathname.includes("/cli-tools")) return { title: "CLI Tools", description: "Point an installed AI CLI at this gateway", icon: Wrench };
   if (pathname.includes("/settings")) return { title: "Settings", description: "Appearance and gateway configuration", icon: Gear };
   return { title: "Overview", description: "Gateway health and activity", icon: SquaresFour };
 }

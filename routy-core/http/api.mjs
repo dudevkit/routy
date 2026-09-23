@@ -8,6 +8,7 @@ import { probeNode, probeKey, probeModel, mapLimit } from "../core/probe.mjs";
 import { clearLogs, log, recentLogs, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
 import { checkForUpdate, updateState } from "../core/updates.mjs";
 import { RESTART_FOR_UPDATE, applyUpdate } from "../core/update-apply.mjs";
+import { allStatuses, connectTool, disconnectTool, findAdapter, toolStatus } from "../core/cli-tools.mjs";
 
 const uuid = () => crypto.randomUUID();
 const maskKey = (k) => (typeof k === "string" && k.length > 12 ? `${k.slice(0, 6)}…${k.slice(-4)}` : k ? "•••" : "—");
@@ -445,6 +446,31 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (result.restart && hooks.shutdown) {
       setImmediate(() => hooks.shutdown("update", RESTART_FOR_UPDATE));
     }
+  });
+
+  // ── cli tools ─────────────────────────────────────────────────────────────
+  // These edit files the user owns (their Claude/Codex config), so every mutating
+  // route carries the same guard as the updater: a hostile page must not be able to
+  // rewrite a developer's CLI config by POSTing to loopback.
+  route("GET", /^\/api\/cli-tools$/, (req, res) => json(res, 200, { tools: allStatuses(repos) }));
+
+  route("POST", /^\/api\/cli-tools\/(?<id>[^/]+)\/connect$/, async (req, res, p) => {
+    if (!sameOriginAction(req, res)) return;
+    const input = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    // Default to this gateway's own endpoint, so the common case needs no argument.
+    const baseUrl = input.baseUrl || gatewayInfo(repos, cfg, version).endpoint;
+    const result = connectTool(repos, p.id, { baseUrl, apiKey: input.apiKey ?? null, model: input.model ?? null });
+    if (!result.ok) return json(res, result.error === "unknown_tool" ? 404 : 400, { error: result });
+    log.info("CLI", `connected ${p.id} → ${baseUrl}`);
+    json(res, 200, { ...result, status: toolStatus(repos, findAdapter(p.id)) });
+  });
+
+  route("POST", /^\/api\/cli-tools\/(?<id>[^/]+)\/disconnect$/, async (req, res, p) => {
+    if (!sameOriginAction(req, res)) return;
+    const result = disconnectTool(repos, p.id);
+    if (!result.ok) return json(res, result.error === "unknown_tool" ? 404 : 400, { error: result });
+    log.info("CLI", `disconnected ${p.id} (restored ${result.restored?.length ?? 0} key(s))`);
+    json(res, 200, { ...result, status: toolStatus(repos, findAdapter(p.id)) });
   });
 
   // api keys (router client keys)

@@ -30,6 +30,7 @@ import type {
   RequestDetail,
   Settings,
   TestResult,
+  CliTool,
   UpstreamNode,
   UpdateApplyResult,
   UpdateState,
@@ -75,6 +76,24 @@ export const api = {
   /* logs — round-2 parity (no server ring to clear in mock) */
   async clearLogs(): Promise<{ ok: boolean }> {
     return { ok: true };
+  },
+
+  /* cli tools — the mock shows one connected and one available */
+  async listCliTools(): Promise<{ tools: CliTool[] }> {
+    return {
+      tools: [
+        { id: "claude", name: "Claude Code", note: null, installed: true, binary: "~/bin/claude", configPath: "~/.claude/settings.json", configExists: true, format: "jsonc", connected: true, baseUrl: "http://127.0.0.1:8010/v1", managed: true },
+        { id: "codex", name: "Codex CLI", note: null, installed: true, binary: "~/bin/codex", configPath: "~/.codex/config.toml", configExists: true, format: "toml", connected: false, baseUrl: null, managed: false },
+      ],
+    };
+  },
+  async connectCliTool(id: string): Promise<{ status: CliTool }> {
+    const { tools } = await this.listCliTools();
+    return { status: { ...tools.find((t) => t.id === id)!, connected: true, managed: true } };
+  },
+  async disconnectCliTool(id: string): Promise<{ status: CliTool }> {
+    const { tools } = await this.listCliTools();
+    return { status: { ...tools.find((t) => t.id === id)!, connected: false, managed: false } };
   },
 
   /* updates — the mock reports "up to date" so the preview never shows a banner */

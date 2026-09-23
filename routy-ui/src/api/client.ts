@@ -9,6 +9,7 @@
  *  - DELETE answers 204
  */
 import type {
+  CliTool,
   UpdateApplyResult,
   UpdateState,
   BatchConnectionInput,
@@ -262,6 +263,13 @@ export const api = {
     putJson<ProxyPool>(`/api/proxy-pools/${enc(id)}`, patch),
   deletePool: (id: string): Promise<void> => deleteJson(`/api/proxy-pools/${enc(id)}`),
   testPool: (id: string): Promise<PoolTestResult> => postJson<PoolTestResult>(`/api/proxy-pools/${enc(id)}/test`),
+
+  /* cli tools */
+  listCliTools: (): Promise<{ tools: CliTool[] }> => getJson<{ tools: CliTool[] }>("/api/cli-tools"),
+  connectCliTool: (id: string, input: { baseUrl?: string; apiKey?: string | null; model?: string | null }): Promise<{ status: CliTool }> =>
+    postJson<{ status: CliTool }>(`/api/cli-tools/${enc(id)}/connect`, input),
+  disconnectCliTool: (id: string): Promise<{ status: CliTool }> =>
+    postJson<{ status: CliTool }>(`/api/cli-tools/${enc(id)}/disconnect`),
 
   /* updates */
   getUpdates: (): Promise<UpdateState> => getJson<UpdateState>("/api/updates"),

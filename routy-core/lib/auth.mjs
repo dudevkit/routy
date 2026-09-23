@@ -37,11 +37,23 @@ export function verifyKey(candidate, storedHash) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+/**
+ * The client key from a request, in either dialect.
+ *
+ * OpenAI-shaped clients send `Authorization: Bearer <key>`. Anthropic-shaped ones
+ * send `x-api-key: <key>` — which is what Claude Code does when it is configured
+ * with ANTHROPIC_API_KEY, the more common of its two settings. Reading only Bearer
+ * meant half of Claude Code's configurations got a 401 from a gateway that was
+ * otherwise perfectly able to serve them.
+ */
 export function extractBearer(req) {
-  const h = req.headers.authorization;
-  if (!h) return null;
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m ? m[1].trim() : null;
+  const auth = req.headers.authorization;
+  if (auth) {
+    const m = auth.match(/^Bearer\s+(.+)$/i);
+    if (m) return m[1].trim();
+  }
+  const apiKey = req.headers["x-api-key"];
+  return typeof apiKey === "string" && apiKey.trim() ? apiKey.trim() : null;
 }
 
 // Management bootstrap token: printed at boot when no session exists yet.

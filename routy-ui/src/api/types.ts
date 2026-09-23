@@ -362,3 +362,21 @@ export interface UpdateApplyResult {
   note?: string;
   digest?: string;
 }
+
+/* ── cli tools ─────────────────────────────────────────────────────────────── */
+/** One locally installed AI CLI that routy can point at itself. */
+export interface CliTool {
+  id: string;
+  name: string;
+  note: string | null;
+  installed: boolean;
+  binary: string | null;
+  configPath: string;
+  configExists: boolean;
+  format: string;
+  /** points at *some* gateway; baseUrl says whether it is this one */
+  connected: boolean;
+  baseUrl: string | null;
+  /** routy wrote it, so it can put it back */
+  managed: boolean;
+}

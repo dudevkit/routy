@@ -2,6 +2,7 @@
 // P1.6: openai↔claude/responses translation via the ported translator. P1.6b:
 // forced-SSE→JSON conversion + body-based source detection (upstream parity).
 import { readBody, json } from "../../lib/router.mjs";
+import { extractBearer } from "../../lib/auth.mjs";
 import { log as rootLog } from "../../lib/log.mjs";
 import { resolveRoute, orderRoutes } from "../routing.mjs";
 import { observeTtft } from "../latency.mjs";
@@ -336,13 +337,6 @@ async function withIdleTimeout(promise, timeoutMs, onTimeout) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-function extractBearer(req) {
-  const h = req.headers.authorization;
-  if (!h) return null;
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return m ? m[1].trim() : null;
 }
 
 function pickConnection(repos, node) {

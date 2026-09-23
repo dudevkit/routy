@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Header } from "./components/Header";
 import { Sidebar } from "./components/Sidebar";
 import { ToastProvider } from "./components/ui/Toast";
+import { CliTools } from "./screens/CliTools";
 import { Combos } from "./screens/Combos";
 import { ConsoleLog } from "./screens/ConsoleLog";
 import { Overview } from "./screens/Overview";
@@ -56,6 +57,7 @@ export default function App() {
                     <Route path="/console" element={<ConsoleLog />} />
                     <Route path="/combos" element={<Combos />} />
                     <Route path="/pools" element={<ProxyPools />} />
+                    <Route path="/cli-tools" element={<CliTools />} />
                     <Route path="/token-saver" element={<TokenSaver />} />
                     <Route path="/settings" element={<Settings />} />
                     <Route path="*" element={<Stub />} />

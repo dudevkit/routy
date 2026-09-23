@@ -105,6 +105,20 @@ describe("chat handler (end-to-end)", () => {
     expect(r.status).toBe(200);
   });
 
+  it("accepts the Anthropic x-api-key header", async () => {
+    // Claude Code sends this when configured with ANTHROPIC_API_KEY, which is its
+    // more common setting. A gateway that only reads Authorization rejects it.
+    const { key } = repos.apiKeys.create("k1");
+    const r = await post({ model: "a/m1", stream: true, messages: [{ role: "user", content: "x" }] }, { "x-api-key": key });
+    expect(r.status).toBe(200);
+  });
+
+  it("still rejects a wrong key sent as x-api-key", async () => {
+    repos.apiKeys.create("k1");
+    const r = await post({ model: "a/m1", messages: [] }, { "x-api-key": "sk-not-a-real-key" });
+    expect(r.status).toBe(401);
+  });
+
   it("404s unresolvable models", async () => {
     repos.settings.update({ requireApiKey: false });
     const r = await post({ model: "ghost/m1", messages: [] });
