@@ -4,6 +4,7 @@
 import { json, readBody } from "../lib/router.mjs";
 import { COMBO_STRATEGIES } from "../core/routing.mjs";
 import { budgetSpent } from "../core/budget.mjs";
+import { probeNode, probeKey, probeModel, mapLimit } from "../core/probe.mjs";
 import { clearLogs, recentLogs, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
 
 const uuid = () => crypto.randomUUID();
@@ -38,6 +39,8 @@ function nodeView(repos, node, now = Date.now()) {
   // latency: most recent ok usage event ttft for this node
   const events = repos.usage.query({ nodeId: node.id, limit: 20 });
   const lastOk = events.find((e) => e.status === "ok" && e.ttft_ms !== null);
+  // discovery list: enabled and not stale (routing passes through regardless)
+  const models = repos.nodeModels.list(node.id).filter((m) => m.enabled && !m.stale);
   return {
     id: node.id,
     name: node.name,
@@ -45,44 +48,16 @@ function nodeView(repos, node, now = Date.now()) {
     prefix: node.prefix,
     status,
     latencyMs: lastOk ? lastOk.ttft_ms : null,
-    modelCount: Number(node.data?.modelCount) || 0,
-    models: Array.isArray(node.data?.models) ? node.data.models : [],
-    /** the node's config bag (pricing, pool tuning, retry overrides, cached models) */
+    modelCount: models.length,
+    models: models.map((m) => m.model),
+    /** the node's config bag (pricing, pool tuning, retry overrides) */
     data: node.data || {},
     keyMasked: maskKey(primary?.credentials?.apiKey),
     lastError: breaker?.lastError || undefined,
   };
 }
 
-// ── probe (testNode / testConnection) ───────────────────────────────────────
-async function probe(baseUrl, apiKey = null, timeoutMs = 5000) {
-  const t0 = Date.now();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const url = `${baseUrl.replace(/\/+$/, "")}/models`;
-    const res = await fetch(url, {
-      headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
-      signal: controller.signal,
-    });
-    const latencyMs = Date.now() - t0;
-    if (!res.ok) return { ok: false, latencyMs, error: `HTTP ${res.status}` };
-    let modelCount = 0;
-    let models = [];
-    try {
-      const body = await res.json();
-      if (Array.isArray(body?.data)) {
-        modelCount = body.data.length;
-        models = body.data.map((m) => (typeof m === "string" ? m : m?.id || "")).filter(Boolean);
-      }
-    } catch { /* non-JSON models endpoint — probe still ok */ }
-    return { ok: true, latencyMs, modelCount, models };
-  } catch (err) {
-    return { ok: false, latencyMs: Date.now() - t0, error: String(err?.cause?.message || err?.message || err).slice(0, 200) };
-  } finally {
-    clearTimeout(timer);
-  }
-}
+// ── probes (diagnostics — see core/probe.mjs; they never touch usage/breakers) ──
 
 // ── usage aggregates ─────────────────────────────────────────────────────────
 function startOfToday() {
@@ -193,29 +168,108 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     repos.breakers.record(`node:${node.id}`, { state: "closed", failures: 0, openUntil: null, lastError: null });
     json(res, 200, nodeView(repos, repos.nodes.get(node.id)));
   });
-  route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/test$/, async (req, res, p) => {
-    const node = repos.nodes.get(p.id);
-    if (!node) return json(res, 404, { error: { message: "not_found" } });
-    const conn = repos.connections.list(node.id)[0];
-    const result = await probe(node.baseUrl, conn?.credentials?.apiKey || null);
-    if (result.ok && result.models?.length) {
-      repos.nodes.update(node.id, { data: { ...(node.data || {}), modelCount: result.modelCount, models: result.models } });
-    }
-    json(res, 200, result);
-  });
-  // probe an unsaved baseUrl (Add-Upstream modal "Test Connection")
-  route("POST", /^\/api\/nodes\/test$/, async (req, res) => {
-    const input = await readBody(req).then((b) => JSON.parse(b.toString("utf8")));
-    if (!input?.baseUrl) return json(res, 400, { error: { message: "bad_request", detail: "baseUrl required" } });
-    json(res, 200, await probe(input.baseUrl, input.apiKey || null));
-  });
-
-  // real model list per node (cached from last probe)
+  // ── models (P6) ───────────────────────────────────────────────────────────
+  // The list is discovery-only: it feeds /v1/models and the UI. Routing still
+  // passes any <prefix>/<model> through, so nothing here can break a client.
   route("GET", /^\/api\/nodes\/(?<id>[^/]+)\/models$/, (req, res, p) => {
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
-    const models = node.data?.models || [];
+    const models = repos.nodeModels.list(node.id);
     json(res, 200, { node: node.prefix, models, count: models.length });
+  });
+
+  route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/models$/, async (req, res, p) => {
+    const node = repos.nodes.get(p.id);
+    if (!node) return json(res, 404, { error: { message: "not_found" } });
+    const input = JSON.parse((await readBody(req)).toString("utf8"));
+    const model = typeof input?.model === "string" ? input.model.trim() : "";
+    if (!model) return json(res, 400, { error: { message: "bad_request", detail: "model required" } });
+    json(res, 201, repos.nodeModels.create({ nodeId: node.id, model, enabled: input.enabled !== false, source: "manual" }));
+  });
+
+  route("PUT", /^\/api\/nodes\/(?<id>[^/]+)\/models\/(?<modelId>[^/]+)$/, async (req, res, p) => {
+    const node = repos.nodes.get(p.id);
+    if (!node) return json(res, 404, { error: { message: "not_found" } });
+    const row = repos.nodeModels.get(p.modelId);
+    if (!row || row.nodeId !== node.id) return json(res, 404, { error: { message: "not_found" } });
+    const patch = JSON.parse((await readBody(req)).toString("utf8"));
+    const next = {};
+    if (typeof patch.model === "string" && patch.model.trim()) next.model = patch.model.trim();
+    if (patch.enabled !== undefined) next.enabled = !!patch.enabled;
+    json(res, 200, repos.nodeModels.update(p.modelId, next));
+  });
+
+  route("DELETE", /^\/api\/nodes\/(?<id>[^/]+)\/models\/(?<modelId>[^/]+)$/, (req, res, p) => {
+    const node = repos.nodes.get(p.id);
+    if (!node) return json(res, 404, { error: { message: "not_found" } });
+    const row = repos.nodeModels.get(p.modelId);
+    if (!row || row.nodeId !== node.id) return json(res, 404, { error: { message: "not_found" } });
+    noContent(res, repos.nodeModels.delete(p.modelId));
+  });
+
+  // Import the upstream model list — merges; manual rows are never touched and
+  // imported rows that vanished upstream become stale rather than disappearing.
+  route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/models\/import$/, async (req, res, p, url) => {
+    const node = repos.nodes.get(p.id);
+    if (!node) return json(res, 404, { error: { message: "not_found" } });
+    const body = await readBody(req).catch(() => Buffer.from("{}"));
+    const input = JSON.parse(body.toString("utf8") || "{}");
+    const conns = repos.connections.list(node.id);
+    const conn = (input.connectionId && conns.find((c) => c.id === input.connectionId)) || conns[0] || null;
+    if (!conn) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
+
+    const result = await probeKey(node, conn);
+    if (!result.ok) return json(res, 502, { error: { message: "upstream_error", detail: result.error, latencyMs: result.latencyMs } });
+    repos.connections.recordTest(conn.id, { ok: true, latencyMs: result.latencyMs });
+    const summary = repos.nodeModels.import(node.id, result.models || []);
+    json(res, 200, { ...summary, latencyMs: result.latencyMs, listed: (result.models || []).length, models: repos.nodeModels.list(node.id) });
+  });
+
+  // Prove one model id actually serves — a real (tiny) stream, recorded on the row.
+  route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/models\/(?<modelId>[^/]+)\/test$/, async (req, res, p, url) => {
+    const node = repos.nodes.get(p.id);
+    if (!node) return json(res, 404, { error: { message: "not_found" } });
+    const row = repos.nodeModels.get(p.modelId);
+    if (!row || row.nodeId !== node.id) return json(res, 404, { error: { message: "not_found" } });
+    const conns = repos.connections.list(node.id);
+    const conn = (url.searchParams.get("connectionId") && conns.find((c) => c.id === url.searchParams.get("connectionId"))) || conns[0] || null;
+    if (!conn) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
+
+    const result = await probeModel(node, row.model, conn);
+    json(res, 200, { ...repos.nodeModels.recordTest(row.id, result), result });
+  });
+
+  // ── API keys (P6) ─────────────────────────────────────────────────────────
+  // Probe ONE key: proves that key is valid without touching node health or the
+  // other keys, and without spending the budget (no usage event is written).
+  route("POST", /^\/api\/connections\/(?<id>[^/]+)\/test$/, async (req, res, p) => {
+    const conn = repos.connections.get(p.id);
+    if (!conn) return json(res, 404, { error: { message: "not_found" } });
+    const node = repos.nodes.get(conn.nodeId);
+    if (!node) return json(res, 404, { error: { message: "not_found" } });
+    const result = await probeKey(node, conn);
+    repos.connections.recordTest(conn.id, { ok: result.ok, latencyMs: result.latencyMs, error: result.ok ? null : result.error });
+    json(res, 200, { connectionId: conn.id, ok: result.ok, latencyMs: result.latencyMs, modelCount: result.modelCount ?? 0, error: result.error ?? null });
+  });
+
+  // Probe every active key of a node with bounded concurrency (one round trip).
+  route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/keys\/test$/, async (req, res, p) => {
+    const node = repos.nodes.get(p.id);
+    if (!node) return json(res, 404, { error: { message: "not_found" } });
+    const active = repos.connections.list(node.id).filter((c) => c.status === "active");
+    const results = await mapLimit(active, 4, async (conn) => {
+      const r = await probeKey(node, conn);
+      repos.connections.recordTest(conn.id, { ok: r.ok, latencyMs: r.latencyMs, error: r.ok ? null : r.error });
+      return { connectionId: conn.id, name: conn.name, ok: r.ok, latencyMs: r.latencyMs, modelCount: r.modelCount ?? 0, error: r.error ?? null };
+    });
+    json(res, 200, { node: node.prefix, tested: results.length, ok: results.filter((r) => r.ok).length, results });
+  });
+
+  // probe an unsaved baseUrl (Add-Provider modal "Test Connection")
+  route("POST", /^\/api\/nodes\/test$/, async (req, res) => {
+    const input = await readBody(req).then((b) => JSON.parse(b.toString("utf8")));
+    if (!input?.baseUrl) return json(res, 400, { error: { message: "bad_request", detail: "baseUrl required" } });
+    json(res, 200, await probeNode(input.baseUrl, input.apiKey || null));
   });
 
   // usage

@@ -108,4 +108,32 @@ export const MIGRATIONS = [
       CREATE INDEX idx_details_ts ON request_details(ts);
     `,
   },
+  {
+    // v2 — per-provider model list and per-key probe results.
+    // Models move out of `provider_nodes.data` (a JSON string array that could not
+    // carry per-model state) into their own rows, mirroring `connections`.
+    version: 2,
+    up: `
+      CREATE TABLE node_models (
+        id                TEXT PRIMARY KEY,
+        node_id           TEXT NOT NULL REFERENCES provider_nodes(id) ON DELETE CASCADE,
+        model             TEXT NOT NULL,
+        source            TEXT NOT NULL DEFAULT 'manual',
+        enabled           INTEGER NOT NULL DEFAULT 1,
+        stale             INTEGER NOT NULL DEFAULT 0,
+        last_test_at      TEXT,
+        last_test_ok      INTEGER,
+        last_test_ttft_ms INTEGER,
+        last_test_error   TEXT,
+        created_at        TEXT NOT NULL,
+        updated_at        TEXT NOT NULL,
+        UNIQUE(node_id, model)
+      );
+      CREATE INDEX idx_node_models_node ON node_models(node_id, enabled);
+
+      ALTER TABLE connections ADD COLUMN last_test_at TEXT;
+      ALTER TABLE connections ADD COLUMN last_test_ok INTEGER;
+      ALTER TABLE connections ADD COLUMN last_test_ttft_ms INTEGER;
+    `,
+  },
 ];

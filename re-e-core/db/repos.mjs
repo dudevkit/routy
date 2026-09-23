@@ -104,7 +104,7 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
       return info.changes > 0;
     },
   };
-  function invalidateNodes() { nodesListCache.invalidate(); nodeByIdCache.clear(); connections.invalidateCache(); }
+  function invalidateNodes() { nodesListCache.invalidate(); nodeByIdCache.clear(); connections.invalidateCache(); nodeModels.invalidateCache(); }
 
   // ── connections (credentials per node/account) ────────────────────────────
   function rowToConnection(r) {
@@ -112,6 +112,9 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
       id: r.id, nodeId: r.node_id, name: r.name,
       credentials: safeJson(r.credentials), status: r.status, lastError: r.last_error,
       priority: r.priority, createdAt: r.created_at, updatedAt: r.updated_at,
+      // probe results (P6): diagnostics only — never derived from real traffic
+      lastTestAt: r.last_test_at, lastTestOk: r.last_test_ok === null ? null : !!r.last_test_ok,
+      lastTestTtftMs: r.last_test_ttft_ms,
     };
   }
 
@@ -147,9 +150,21 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
       const existing = connections.get(id);
       if (!existing) return null;
       const merged = { ...existing, ...patch, updatedAt: new Date().toISOString() };
-      db.prepare(`UPDATE connections SET name=?, credentials=?, status=?, last_error=?, priority=?, updated_at=? WHERE id=?`)
+      db.prepare(`UPDATE connections SET name=?, credentials=?, status=?, last_error=?, priority=?,
+                    last_test_at=?, last_test_ok=?, last_test_ttft_ms=?, updated_at=? WHERE id=?`)
         .run(merged.name, merged.credentials ? JSON.stringify(merged.credentials) : null,
-             merged.status, merged.lastError, merged.priority, merged.updatedAt, id);
+             merged.status, merged.lastError, merged.priority,
+             merged.lastTestAt ?? null, merged.lastTestOk === null || merged.lastTestOk === undefined ? null : (merged.lastTestOk ? 1 : 0),
+             merged.lastTestTtftMs ?? null, merged.updatedAt, id);
+      connections.invalidateCache();
+      return connections.get(id);
+    },
+    /** Record a probe outcome on the key itself (P6). Diagnostics, not traffic. */
+    recordTest(id, { ok, latencyMs = null, ttftMs = null, error = null }) {
+      const existing = connections.get(id);
+      if (!existing) return null;
+      db.prepare(`UPDATE connections SET last_test_at=?, last_test_ok=?, last_test_ttft_ms=?, last_error=?, updated_at=? WHERE id=?`)
+        .run(new Date().toISOString(), ok ? 1 : 0, ttftMs ?? latencyMs ?? null, error, new Date().toISOString(), id);
       connections.invalidateCache();
       return connections.get(id);
     },
@@ -157,6 +172,126 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
       const info = db.prepare(`DELETE FROM connections WHERE id = ?`).run(id);
       connections.invalidateCache();
       return info.changes > 0;
+    },
+  };
+
+  // ── node models (per-provider model list; P6) ─────────────────────────────
+  // One row per model so it can carry its own state: where it came from, whether
+  // it is enabled, whether upstream still lists it, and its last probe result.
+  // `enabled` only affects discovery (`/v1/models`) — routing passes through.
+  function rowToModel(r) {
+    return {
+      id: r.id, nodeId: r.node_id, model: r.model,
+      source: r.source, enabled: !!r.enabled, stale: !!r.stale,
+      lastTestAt: r.last_test_at, lastTestOk: r.last_test_ok === null ? null : !!r.last_test_ok,
+      lastTestTtftMs: r.last_test_ttft_ms, lastTestError: r.last_test_error,
+      createdAt: r.created_at, updatedAt: r.updated_at,
+    };
+  }
+
+  const nodeModels = {
+    _cache: createMapCache(),
+    invalidateCache() { this._cache.clear(); },
+    /** All rows for a node, enabled first then alphabetical. */
+    list(nodeId) {
+      if (!this._cache.get(nodeId)) {
+        const rows = db.prepare(`SELECT * FROM node_models WHERE node_id = ? ORDER BY stale, model`).all(nodeId);
+        this._cache.set(nodeId, rows.map(rowToModel));
+      }
+      return this._cache.get(nodeId);
+    },
+    /** Enabled, non-stale model ids — what discovery exposes. */
+    enabledModels(nodeId) {
+      return nodeModels.list(nodeId).filter((m) => m.enabled && !m.stale).map((m) => m.model);
+    },
+    get(id) {
+      const row = db.prepare(`SELECT * FROM node_models WHERE id = ?`).get(id);
+      return row ? rowToModel(row) : null;
+    },
+    byModel(nodeId, model) {
+      const row = db.prepare(`SELECT * FROM node_models WHERE node_id = ? AND model = ?`).get(nodeId, model);
+      return row ? rowToModel(row) : null;
+    },
+    /** Add a model by hand. Re-adding an existing id re-enables it rather than failing. */
+    create({ nodeId, model, enabled = true, source = "manual" }) {
+      const existing = nodeModels.byModel(nodeId, model);
+      if (existing) return nodeModels.update(existing.id, { enabled, stale: false });
+      const now = new Date().toISOString();
+      const id = uuid();
+      db.prepare(`INSERT INTO node_models (id, node_id, model, source, enabled, stale, created_at, updated_at)
+                  VALUES (?, ?, ?, ?, ?, 0, ?, ?)`)
+        .run(id, nodeId, model, source, enabled ? 1 : 0, now, now);
+      nodeModels.invalidateCache();
+      return nodeModels.get(id);
+    },
+    update(id, patch) {
+      const existing = nodeModels.get(id);
+      if (!existing) return null;
+      const merged = { ...existing, ...patch };
+      db.prepare(`UPDATE node_models SET model=?, source=?, enabled=?, stale=?, updated_at=? WHERE id=?`)
+        .run(merged.model, merged.source, merged.enabled ? 1 : 0, merged.stale ? 1 : 0, new Date().toISOString(), id);
+      nodeModels.invalidateCache();
+      return nodeModels.get(id);
+    },
+    recordTest(id, { ok, ttftMs = null, error = null }) {
+      const existing = nodeModels.get(id);
+      if (!existing) return null;
+      db.prepare(`UPDATE node_models SET last_test_at=?, last_test_ok=?, last_test_ttft_ms=?, last_test_error=?, updated_at=? WHERE id=?`)
+        .run(new Date().toISOString(), ok ? 1 : 0, ttftMs, error, new Date().toISOString(), id);
+      nodeModels.invalidateCache();
+      return nodeModels.get(id);
+    },
+    delete(id) {
+      const info = db.prepare(`DELETE FROM node_models WHERE id = ?`).run(id);
+      nodeModels.invalidateCache();
+      return info.changes > 0;
+    },
+    /**
+     * Merge an upstream model list into a node's rows.
+     * Manual rows are never touched. Imported rows are upserted; previously
+     * imported rows missing from `models` become `stale` (visible, disabled) and
+     * are never deleted. Rows that reappear have `stale` cleared.
+     */
+    import(nodeId, models) {
+      const now = new Date().toISOString();
+      const incoming = new Set(models.filter((m) => typeof m === "string" && m.length > 0));
+      const before = nodeModels.list(nodeId);
+      let imported = 0, kept = 0, stale = 0;
+
+      const upsert = db.prepare(`INSERT INTO node_models (id, node_id, model, source, enabled, stale, created_at, updated_at)
+                                 VALUES (?, ?, ?, 'imported', 1, 0, ?, ?)
+                                 ON CONFLICT(node_id, model) DO UPDATE SET stale = 0, updated_at = excluded.updated_at`);
+      const markStale = db.prepare(`UPDATE node_models SET stale = 1, updated_at = ? WHERE id = ?`);
+
+      db.exec("BEGIN");
+      try {
+        for (const model of incoming) upsert.run(uuid(), nodeId, model, now, now);
+        for (const row of before) {
+          if (row.source !== "imported") { kept++; continue; }
+          if (incoming.has(row.model)) continue;
+          if (!row.stale) { markStale.run(now, row.id); stale++; }
+        }
+        db.exec("COMMIT");
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
+      }
+      imported = incoming.size;
+      nodeModels.invalidateCache();
+      return { imported, kept, stale };
+    },
+    /** One-time lift of the legacy `data.models` JSON array into rows. */
+    backfill(nodeId, models) {
+      if (!Array.isArray(models) || models.length === 0) return 0;
+      const existing = nodeModels.list(nodeId);
+      if (existing.length > 0) return 0;
+      let n = 0;
+      for (const model of models) {
+        if (typeof model !== "string" || !model) continue;
+        nodeModels.create({ nodeId, model, source: "imported", enabled: true });
+        n++;
+      }
+      return n;
     },
   };
 
@@ -415,7 +550,7 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
   };
 
   return {
-    settings, nodes, connections, apiKeys, combos, aliases, proxyPools, breakers, usage, requestDetails, stats,
+    settings, nodes, connections, apiKeys, combos, aliases, proxyPools, breakers, usage, requestDetails, nodeModels, stats,
     close() {
       persistBreakers();
     },

@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
 
@@ -19,17 +20,39 @@ beforeEach(() => {
 describe("driver", () => {
   it("creates schema and is idempotent on reopen", () => {
     const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`).all().map((r) => r.name);
-    for (const t of ["settings", "provider_nodes", "connections", "api_keys", "combos", "model_aliases", "proxy_pools", "breakers", "usage_events", "request_details"]) {
+    for (const t of ["settings", "provider_nodes", "connections", "api_keys", "combos", "model_aliases", "proxy_pools", "breakers", "usage_events", "request_details", "node_models"]) {
       expect(tables).toContain(t);
     }
     const v1 = db.prepare(`SELECT value FROM meta WHERE key='schema_version'`).get();
-    expect(v1.value).toBe("1");
+    expect(v1.value).toBe("2");
     db.close();
-    const db2 = openDatabase(tmp); // must not throw or re-run v1
+    const db2 = openDatabase(tmp); // must not throw or re-run a migration
     const v2 = db2.prepare(`SELECT value FROM meta WHERE key='schema_version'`).get();
-    expect(v2.value).toBe("1");
+    expect(v2.value).toBe("2");
     db2.close();
   });
+
+  it("migrates a v1 database in place, adding node_models and connection test columns", async () => {
+    // Build a genuine v1 database: only migration 1 applied, version stamped 1.
+    const { MIGRATIONS } = await import("../db/migrations.mjs");
+    const fresh = fs.mkdtempSync(path.join(os.tmpdir(), "ree-v1-"));
+    const raw = new DatabaseSync(path.join(fresh, "re-e.db"));
+    raw.exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+    raw.exec(MIGRATIONS[0].up);
+    raw.exec(`INSERT INTO meta (key, value) VALUES ('schema_version', '1')`);
+    const connColsBefore = raw.prepare(`PRAGMA table_info(connections)`).all().map((c) => c.name);
+    expect(connColsBefore).not.toContain("last_test_at");
+    raw.close();
+
+    const migrated = openDatabase(fresh);
+    expect(migrated.prepare(`SELECT value FROM meta WHERE key='schema_version'`).get().value).toBe("2");
+    const tables = migrated.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all().map((r) => r.name);
+    expect(tables).toContain("node_models");
+    const connCols = migrated.prepare(`PRAGMA table_info(connections)`).all().map((c) => c.name);
+    expect(connCols).toEqual(expect.arrayContaining(["last_test_at", "last_test_ok", "last_test_ttft_ms"]));
+    migrated.close();
+    fs.rmSync(fresh, { recursive: true, force: true });
+  }, 20_000);
 
   it("enables WAL journal mode", () => {
     const mode = db.prepare(`PRAGMA journal_mode`).get();

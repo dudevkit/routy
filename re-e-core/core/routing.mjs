@@ -133,13 +133,13 @@ export function listModels(repos) {
     data.push({ id: c.name, object: "model", owned_by: "re-e-combo" });
   }
   for (const n of repos.nodes.list({ enabled: true })) {
-    const models = Array.isArray(n.data?.models) ? n.data.models : [];
+    const models = repos.nodeModels.enabledModels(n.id);
     if (models.length > 0) {
       for (const m of models) {
         data.push({ id: `${n.prefix}/${m}`, object: "model", owned_by: `re-e-node:${n.prefix}` });
       }
     } else {
-      // no cached model list — expose the wildcard so the prefix is still discoverable
+      // no models configured — expose the wildcard so the prefix is still discoverable
       data.push({ id: `${n.prefix}/*`, object: "model", owned_by: `re-e-node:${n.prefix}` });
     }
   }

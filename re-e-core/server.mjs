@@ -48,6 +48,18 @@ const db = openDatabase(cfg.dataDir);
 const repos = createRepos(db);
 const chatHandler = createChatHandler(repos, { streamIdleTimeoutMs: cfg.streamIdleTimeoutMs });
 
+// ── one-time lift of legacy node.data.models into node_models rows (P6) ─────
+try {
+  let lifted = 0;
+  for (const node of repos.nodes.list()) {
+    const legacy = node.data?.models;
+    if (Array.isArray(legacy) && legacy.length > 0) lifted += repos.nodeModels.backfill(node.id, legacy);
+  }
+  if (lifted > 0) log.info("DB", `lifted ${lifted} legacy model(s) into node_models`);
+} catch (err) {
+  log.warn("DB", "model backfill failed", { error: err.message });
+}
+
 // ── P4 routing state: seed the daily budget counter and the latency memory ──
 const seededSpend = seedBudget(repos);
 if (seededSpend > 0) log.info("BUDGET", `today's metered spend seeded: $${seededSpend.toFixed(4)}`);

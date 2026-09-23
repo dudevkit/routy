@@ -102,13 +102,15 @@ describe("management API", () => {
     expect(r.body.modelCount).toBe(3);
   });
 
-  it("node test uses the stored key and persists modelCount", async () => {
+  it("import uses the stored key and fills the model list", async () => {
     const created = await post("/api/nodes", { name: "Up", baseUrl: `http://127.0.0.1:${stubPort}/v1`, apiKey: "k-abc-12345678", prefix: "u1" });
-    const r = await post(`/api/nodes/${created.body.id}/test`, {});
-    expect(r.body.ok).toBe(true);
+    const r = await post(`/api/nodes/${created.body.id}/models/import`, {});
+    expect(r.status).toBe(200);
+    expect(r.body.imported).toBe(3);
     expect(stubState.requests[0]).toBe("Bearer k-abc-12345678");
     const view = (await get("/api/nodes")).body[0];
     expect(view.modelCount).toBe(3);
+    expect(view.models).toEqual(["m1", "m2", "m3"]);
   });
 
   it("returns usage stats shape and failures", async () => {
