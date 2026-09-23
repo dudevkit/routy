@@ -37,6 +37,7 @@ in an afternoon and deliberately loud about what it is doing:
 | **Budget** | Per-node pricing, a daily spend ceiling, and automatic fallback to unmetered nodes when a metered one would exceed it. |
 | **Token saver** | Compresses large tool results in request bodies before they reach the upstream. |
 | **Observability** | Prometheus metrics at `/metrics`, a live log console with per-level capture, and request/response capture in the dashboard. |
+| **CLI tools** | Detects AI CLIs installed on this machine (Claude Code, Codex, opencode, Droid, Cline, Kilo, Copilot, Hermes, jcode, Grok Build, OpenClaw, DeepSeek TUI) and points them at routy in one click — with a disconnect that restores the config byte-for-byte. |
 | **Updates** | An installed copy notices new releases and offers them in the dashboard. Releases are signed; the gateway refuses anything that does not verify. Opt-out, and nothing installs without a click. |
 
 ## Quickstart
@@ -95,7 +96,7 @@ routy-core/     the gateway — ESM, plain node:http, zero framework
   db/           node:sqlite driver, migrations, repositories
   http/         management API + Prometheus metrics
 routy-ui/       the dashboard — Vite + React + TypeScript + Tailwind
-docs/           architecture, configuration, database design, releasing, roadmap
+docs/           architecture, configuration, database design, cli-tools, releasing, roadmap
 rigs/           verification rigs: chaos upstream, benchmarks, E2E and load tests
 tests/golden/   byte-exact translator fixtures captured from real upstreams
 ```

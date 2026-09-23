@@ -71,7 +71,11 @@ function ToolCard({ tool }: { tool: CliTool }) {
 
       {tool.installed && (
         <div className="flex flex-wrap items-center gap-2">
-          {tool.managed ? (
+          {!tool.writable ? (
+            <span className="text-[11px] text-text-muted">
+              No local config to point at routy — this tool takes its endpoint from elsewhere.
+            </span>
+          ) : tool.managed ? (
             <Button variant="secondary" size="sm" loading={disconnect.isPending} onClick={() => setConfirming(true)}>
               Disconnect
             </Button>

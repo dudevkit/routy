@@ -379,4 +379,6 @@ export interface CliTool {
   baseUrl: string | null;
   /** routy wrote it, so it can put it back */
   managed: boolean;
+  /** false for a tool with no local config to point at routy (Devin) */
+  writable: boolean;
 }

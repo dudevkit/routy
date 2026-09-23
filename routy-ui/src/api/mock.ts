@@ -82,18 +82,18 @@ export const api = {
   async listCliTools(): Promise<{ tools: CliTool[] }> {
     return {
       tools: [
-        { id: "claude", name: "Claude Code", note: null, installed: true, binary: "~/bin/claude", configPath: "~/.claude/settings.json", configExists: true, format: "jsonc", connected: true, baseUrl: "http://127.0.0.1:8010/v1", managed: true },
-        { id: "codex", name: "Codex CLI", note: null, installed: true, binary: "~/bin/codex", configPath: "~/.codex/config.toml", configExists: true, format: "toml", connected: false, baseUrl: null, managed: false },
+        { id: "claude", name: "Claude Code", note: null, installed: true, binary: "~/bin/claude", configPath: "~/.claude/settings.json", configExists: true, format: "jsonc", connected: true, baseUrl: "http://127.0.0.1:8010/v1", managed: true, writable: true },
+        { id: "codex", name: "Codex CLI", note: null, installed: true, binary: "~/bin/codex", configPath: "~/.codex/config.toml", configExists: true, format: "toml", connected: false, baseUrl: null, managed: false, writable: true },
       ],
     };
   },
   async connectCliTool(id: string): Promise<{ status: CliTool }> {
     const { tools } = await this.listCliTools();
-    return { status: { ...tools.find((t) => t.id === id)!, connected: true, managed: true } };
+    return { status: { ...tools.find((t) => t.id === id)!, connected: true, managed: true, writable: true } };
   },
   async disconnectCliTool(id: string): Promise<{ status: CliTool }> {
     const { tools } = await this.listCliTools();
-    return { status: { ...tools.find((t) => t.id === id)!, connected: false, managed: false } };
+    return { status: { ...tools.find((t) => t.id === id)!, connected: false, managed: false, writable: true } };
   },
 
   /* updates — the mock reports "up to date" so the preview never shows a banner */

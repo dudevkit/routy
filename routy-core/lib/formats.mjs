@@ -39,12 +39,24 @@ function jsonSet(root, dotted, value) {
 }
 function jsonDelete(root, dotted) {
   const keys = split(dotted);
+  const ancestors = [];
   let cur = root;
   for (const key of keys.slice(0, -1)) {
     if (cur == null || typeof cur !== "object") return;
+    ancestors.push([cur, key]);
     cur = cur[key];
   }
   if (cur && typeof cur === "object") delete cur[keys.at(-1)];
+  // Prune containers left empty by the delete. Without this, removing
+  // `env.ANTHROPIC_BASE_URL` from a file that had no `env` leaves `"env": {}` behind,
+  // and the file no longer matches what was there before we wrote to it.
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    const [parent, key] = ancestors[i];
+    const child = parent[key];
+    const empty = child && typeof child === "object" && !Array.isArray(child) && Object.keys(child).length === 0;
+    if (empty) delete parent[key];
+    else break;
+  }
 }
 
 // ── TOML (line-oriented) ────────────────────────────────────────────────────
@@ -178,7 +190,12 @@ function yamlSet(text, dotted, value) {
   const [parent, child] = keys;
   const range = yamlBlockRange(text, parent);
   const line = yamlLine(child, value);
-  if (!range) return `${text.replace(/\s*$/, "")}\n${parent}:\n${line}\n`;
+  if (!range) {
+    // no leading newline when the file is empty — otherwise the block we add is the
+    // only content but the file starts blank, and deleting it cannot restore ""
+    const base = text.replace(/\s*$/, "");
+    return `${base}${base ? "\n" : ""}${parent}:\n${line}\n`;
+  }
 
   const body = text.slice(range.start, range.end);
   const existing = body.match(new RegExp(`^[ \\t]+${child}:.*$`, "m"));
@@ -206,12 +223,48 @@ function yamlDelete(text, dotted) {
   return next;
 }
 
+// ── .env ────────────────────────────────────────────────────────────────────
+// `KEY=value` lines, comments and unrelated keys preserved. Two tools keep the
+// gateway credential here rather than in their main config.
+const envKeyLine = (key) => new RegExp(`^[ \\t]*${escapeRe(key)}[ \\t]*=`, "m");
+
+function envGet(text, key) {
+  const m = text.match(envKeyLine(key));
+  if (!m) return undefined;
+  const line = text.slice(m.index).split(/\r?\n/)[0];
+  return line.slice(line.indexOf("=") + 1).trim().replace(/^["']|["']$/g, "");
+}
+
+function envSet(text, key, value) {
+  const line = `${key}=${value ?? ""}`;
+  const m = text.match(envKeyLine(key));
+  if (m) {
+    const at = m.index;
+    const endOfLine = text.indexOf("\n", at);
+    const stop = endOfLine === -1 ? text.length : endOfLine;
+    return text.slice(0, at) + line + text.slice(stop);
+  }
+  const base = text === "" || text.endsWith("\n") ? text : `${text}\n`;
+  return `${base}${line}\n`;
+}
+
+function envDelete(text, key) {
+  return text.replace(new RegExp(`^[ \\t]*${escapeRe(key)}[ \\t]*=.*\\r?\\n?`, "m"), "");
+}
+
 // ── interface ───────────────────────────────────────────────────────────────
+/**
+ * `__root__` replaces (or reads) the whole document. Needed for configs whose top
+ * level is an array — Copilot's is — where there is no key to address.
+ */
+export const ROOT = "__root__";
+
 const FORMATS = {
   json: { parse: JSON.parse, dump: (root) => `${JSON.stringify(root, null, 2)}\n`, get: jsonGet, set: jsonSet, del: jsonDelete },
   jsonc: { parse: parseJsonc, dump: (root) => `${JSON.stringify(root, null, 2)}\n`, get: jsonGet, set: jsonSet, del: jsonDelete },
   toml: { text: true, get: tomlGet, set: tomlSet, del: tomlDelete },
   yaml: { text: true, get: yamlGet, set: yamlSet, del: yamlDelete },
+  env: { text: true, get: envGet, set: envSet, del: envDelete },
 };
 
 export const supportedFormats = () => Object.keys(FORMATS);
@@ -222,6 +275,7 @@ export function getValue(text, format, dotted) {
   const f = FORMATS[format];
   if (!f) throw new Error(`unsupported config format: ${format}`);
   try {
+    if (dotted === ROOT) return f.text ? text : f.parse(text);
     if (f.text) return f.get(text, dotted);
     return f.get(f.parse(text), dotted);
   } catch {
@@ -235,7 +289,11 @@ export function setValues(text, format, changes) {
   if (!f) throw new Error(`unsupported config format: ${format}`);
   if (f.text) {
     let out = text ?? "";
-    for (const [dotted, value] of Object.entries(changes)) out = f.set(out, dotted, value);
+    for (const [dotted, value] of Object.entries(changes)) {
+      // A tool whose config IS the gateway settings (deepseek-tui) writes the whole
+      // file. Still reversible: the original text is what gets snapshotted.
+      out = dotted === ROOT ? String(value) : f.set(out, dotted, value);
+    }
     return out;
   }
   let root;
@@ -244,8 +302,14 @@ export function setValues(text, format, changes) {
   } catch (err) {
     throw new Error(`config is not valid ${format}: ${err.message}`);
   }
-  if (root == null || typeof root !== "object") root = {};
-  for (const [dotted, value] of Object.entries(changes)) f.set(root, dotted, value);
+  for (const [dotted, value] of Object.entries(changes)) {
+    if (dotted === ROOT) {
+      root = value; // whole-document replacement, for array-shaped configs
+      continue;
+    }
+    if (root == null || typeof root !== "object") root = {};
+    f.set(root, dotted, value);
+  }
   return f.dump(root);
 }
 

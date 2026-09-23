@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ADAPTERS, allStatuses, connectTool, disconnectTool, findAdapter, findBinary, toolStatus } from "../core/cli-tools.mjs";
+import { ADAPTERS, allStatuses, connectTool, disconnectTool, findAdapter, findBinary, resolveFile, toolStatus } from "../core/cli-tools.mjs";
 
 let home, repos;
 
@@ -47,11 +47,15 @@ describe("adapter table", () => {
 
   it("declares everything the engine needs", () => {
     for (const a of ADAPTERS) {
-      expect(a.binaries?.length, a.id).toBeGreaterThan(0);
-      expect(a.config, a.id).toMatch(/^~\//);
-      expect(["json", "jsonc", "toml", "yaml"], a.id).toContain(a.format);
-      expect(typeof a.patch, a.id).toBe("function");
-      expect(a.connectedWhen, a.id).toBeTruthy();
+      // Copilot is a VS Code extension with no binary; detection is config-based.
+      expect(Array.isArray(a.binaries), a.id).toBe(true);
+      for (const file of a.files ?? []) {
+        expect(file.path, a.id).toMatch(/^~\//);
+        expect(["json", "jsonc", "toml", "yaml", "env"], a.id).toContain(file.format);
+        expect(typeof file.patch, a.id).toBe("function");
+      }
+      // devin is detection-only: no local file to write
+      if (a.id !== "devin") expect(a.files.length, a.id).toBeGreaterThan(0);
     }
   });
 
@@ -118,8 +122,9 @@ describe("claude (json)", () => {
     const r = disconnectTool(repos, "claude");
 
     expect(r.ok).toBe(true);
-    // the previous BASE_URL value comes back, it is not simply deleted
-    expect(r.restored).toContain("env.ANTHROPIC_BASE_URL");
+    // the previous BASE_URL value comes back, it is not simply deleted — proven by
+    // the byte-for-byte comparison below
+    expect(r.restored.length).toBeGreaterThan(0);
     expect(fs.readFileSync(claudePath(), "utf8")).toBe(ORIGINAL);
   });
 
@@ -191,7 +196,7 @@ describe("codex (toml)", () => {
     const r = disconnectTool(repos, "codex");
 
     expect(r.ok).toBe(true);
-    expect(r.restored).toContain("model_provider");
+    expect(r.restored.length).toBeGreaterThan(0);
     expect(fs.readFileSync(codexPath(), "utf8")).toBe(ORIGINAL);
   });
 });
@@ -220,5 +225,53 @@ describe("failure modes", () => {
     expect(toolStatus(repos, claude, { home }).managed).toBe(true);
     disconnectTool(repos, "claude");
     expect(toolStatus(repos, claude, { home }).managed).toBe(false);
+  });
+});
+
+// Every adapter gets the same treatment: a realistic empty-ish config, a connect, a
+// read-back, and a disconnect that must restore the bytes exactly. Table-driven so a
+// new adapter cannot be added without being covered.
+describe("every adapter round-trips", () => {
+  const writable = ADAPTERS.filter((a) => a.files?.length);
+
+  /** An empty config of the right shape for each format. */
+  const seed = (format) => (format === "json" || format === "jsonc" ? "{}\n" : format === "toml" ? 'name = "existing"\n' : "");
+
+  for (const adapter of writable) {
+    it(`${adapter.id}: connects, reports connected, and reverts byte-exactly`, () => {
+      // lay down the files this adapter touches
+      const before = new Map();
+      for (const entry of adapter.files) {
+        const file = resolveFile(entry, home);
+        write(file, seed(entry.format));
+        before.set(file, fs.readFileSync(file, "utf8"));
+      }
+
+      const r = connectTool(repos, adapter.id, {
+        baseUrl: "http://127.0.0.1:8010/v1",
+        apiKey: "sk-test",
+        model: "bai/model",
+        home,
+      });
+      expect(r.ok, `${adapter.id}: ${r.detail ?? ""}`).toBe(true);
+      expect(r.files.length).toBeGreaterThan(0);
+
+      // the tool now reads as connected
+      const status = toolStatus(repos, adapter, { home });
+      expect(status.connected, adapter.id).toBe(true);
+      expect(status.managed, adapter.id).toBe(true);
+
+      // and disconnecting puts every byte back
+      const back = disconnectTool(repos, adapter.id);
+      expect(back.ok, adapter.id).toBe(true);
+      for (const [file, text] of before) {
+        expect(fs.readFileSync(file, "utf8"), `${adapter.id}: ${file}`).toBe(text);
+      }
+      expect(toolStatus(repos, adapter, { home }).managed, adapter.id).toBe(false);
+    }, 20_000);
+  }
+
+  it("covers every writable adapter", () => {
+    expect(writable.length).toBe(ADAPTERS.length - 1); // devin is detection-only
   });
 });
