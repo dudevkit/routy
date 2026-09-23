@@ -10,17 +10,14 @@ import { ProxyPools } from "./screens/ProxyPools";
 import { ProviderDetail } from "./screens/ProviderDetail";
 import { Settings } from "./screens/Settings";
 import { Stub } from "./screens/Stub";
-import { ThemeSampler } from "./screens/ThemeSampler";
 import { TokenSaver } from "./screens/TokenSaver";
 import { Upstreams } from "./screens/Upstreams";
 import { Usage } from "./screens/Usage";
-import { initLabScheme, useLabScheme } from "./hooks/useSchemeLab";
 import { initTheme } from "./hooks/useTheme";
 
-/* Both before first paint: a skin or a mode applied from an effect renders one frame
-   of the wrong palette, which is how "dark text on the light canvas" gets reported. */
+/* Before first paint: a mode applied from an effect renders one frame of the wrong
+   palette, which is how "dark text on the light canvas" gets reported. */
 initTheme();
-initLabScheme();
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 5000, retry: 1, refetchOnWindowFocus: false } },
@@ -34,7 +31,6 @@ const queryClient = new QueryClient({
 const basename = window.location.pathname.startsWith("/ui") ? "/ui" : "/";
 
 export default function App() {
-  const { scheme, variant, clear } = useLabScheme();
   return (
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
@@ -62,25 +58,11 @@ export default function App() {
                     <Route path="/pools" element={<ProxyPools />} />
                     <Route path="/token-saver" element={<TokenSaver />} />
                     <Route path="/settings" element={<Settings />} />
-                    <Route path="/theme" element={<ThemeSampler />} />
                     <Route path="*" element={<Stub />} />
                   </Routes>
                 </div>
               </div>
             </main>
-
-            {/* Theme Lab escape hatch — a preview must never be a trap */}
-            {scheme && (
-              <div className="fixed bottom-4 left-4 z-[70] flex items-center gap-2 rounded-full border border-border-subtle bg-surface/95 px-3 py-1.5 shadow-[var(--shadow-elev)] backdrop-blur">
-                <span className="text-[11px] text-text-muted">
-                  Theme Lab preview · <code className="font-mono text-text-main">{scheme}</code>
-                  {variant && <code className="font-mono text-text-main">[{variant}]</code>}
-                </span>
-                <button onClick={clear} className="text-[11px] font-semibold text-primary hover:underline">
-                  Revert
-                </button>
-              </div>
-            )}
           </div>
         </BrowserRouter>
       </ToastProvider>

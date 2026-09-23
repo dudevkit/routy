@@ -7,7 +7,6 @@ import {
   Coins,
   Gear,
   Network,
-  Palette,
   SquaresFour,
   Stack,
   TerminalWindow,
@@ -35,7 +34,6 @@ const navItems: NavItemSpec[] = [
 const systemItems: NavItemSpec[] = [
   { to: "/pools", label: "Proxy Pools", icon: Network },
   { to: "/console", label: "Live Console", icon: TerminalWindow },
-  { to: "/theme", label: "Theme Catalog", icon: Palette },
 ];
 
 function NavItem({ to, label, icon: Icon, end }: NavItemSpec) {
