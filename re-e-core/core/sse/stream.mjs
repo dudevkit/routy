@@ -115,6 +115,8 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
   };
 
   let emptyReads = 0;
+  let frames = 0;
+  let bytes = 0;
   try {
     while (true) {
       if (clientGone) {
@@ -129,8 +131,9 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
         for (const frame of parser.push(value)) {
           usage?.observeChunk(frame.data);
           logBuffer?.append(frame.data + "\n");
-          const frames = transform ? transform(frame) : [formatSse(frame.event, frame.data)];
-          for (const out of frames) {
+          const outFrames = transform ? transform(frame) : [formatSse(frame.event, frame.data)];
+          for (const out of outFrames) {
+            frames++; bytes += out.length;
             if (!res.write(out)) await onceDrain(res);
           }
         }
@@ -140,8 +143,9 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
       }
     }
     for (const frame of parser.end()) {
-      const frames = transform ? transform(frame) : [formatSse(frame.event, frame.data)];
-      for (const out of frames) {
+      const outFrames = transform ? transform(frame) : [formatSse(frame.event, frame.data)];
+      for (const out of outFrames) {
+        frames++; bytes += out.length;
         if (!res.write(out)) await onceDrain(res);
       }
     }
@@ -180,7 +184,7 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
     res.off("close", onClose);
     if (!res.writableEnded) res.end();
   }
-  return { clientGone, stalled, errored };
+  return { clientGone, stalled, errored, frames, bytes, durationMs: Date.now() - t0 };
 }
 
 function onceDrain(res) {

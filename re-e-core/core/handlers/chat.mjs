@@ -209,9 +209,13 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           trailingDone = true;
         }
 
-        const { clientGone, stalled, errored } = await pumpSse({
+        const { clientGone, stalled, errored, frames, bytes, durationMs } = await pumpSse({
           upstream: result.response, res, signal: clientAbort.signal, t0, usage, logBuffer,
           transform, flushFrames, trailingDone, idleTimeoutMs,
+        });
+        log.debug("UPSTREAM", `← stream end ${r.node.prefix}`, {
+          frames, bytes, durationMs, stalled, errored, clientGone,
+          ttftMs: usage.ttftMs ?? null,
         });
         if (errored) {
           // Upstream broke mid-stream (stall or death) — that is node health, not

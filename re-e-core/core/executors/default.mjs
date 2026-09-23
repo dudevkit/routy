@@ -56,6 +56,12 @@ export class DefaultExecutor {
       const timer = setTimeout(() => controller.abort(new Error("connect timeout")), this.connectTimeoutMs);
       const merged = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
       const t0 = Date.now();
+      // Every upstream attempt is traceable: what we sent, what came back, how long
+      // it took, and whether we retried. `debug` level — flip the log level to see it.
+      const attempt = attemptPhase === 0 ? "" : ` (retry ${attemptPhase})`;
+      log?.debug?.("UPSTREAM", `→ POST ${this.node.prefix} ${url}`, {
+        model, stream, attempt: attemptPhase, bytes: bodyStr.length, timeoutMs: this.connectTimeoutMs,
+      });
       try {
         const response = await undiciFetch(url, {
           method: "POST",
@@ -65,7 +71,11 @@ export class DefaultExecutor {
           dispatcher: getDispatcher(this.node),
         });
         clearTimeout(timer);
-        log?.debug?.("FETCH", `${this.node.prefix} ← ${response.status} ttft=${Date.now() - t0}ms`);
+        log?.debug?.("UPSTREAM", `← ${response.status} ${this.node.prefix}${attempt}`, {
+          status: response.status,
+          contentType: response.headers?.get?.("content-type") ?? null,
+          ttfbMs: Date.now() - t0,
+        });
 
         if (response.ok) return { ok: true, response, url, abort: (reason) => controller.abort(reason) };
 
@@ -75,11 +85,12 @@ export class DefaultExecutor {
       } catch (error) {
         clearTimeout(timer);
         if (signal?.aborted) {
+          log?.debug?.("UPSTREAM", `✖ ${this.node.prefix} aborted by the client`, { afterMs: Date.now() - t0 });
           return { ok: false, status: 499, errorCode: "client_aborted", retryAfterMs: null, message: "client aborted" };
         }
         const isTimeout = controller.signal.aborted;
         const message = isTimeout ? "connect timeout" : String(error?.message || error);
-        log?.debug?.("FETCH", `${this.node.prefix} ✖ ${message}`);
+        log?.debug?.("UPSTREAM", `✖ ${this.node.prefix} ${message}`, { afterMs: Date.now() - t0, connectTimeout: isTimeout });
         const err = { ok: false, status: 502, errorCode: isTimeout ? "connect_timeout" : "network_error", retryAfterMs: null, message };
         // connect timeout already burned the full timeout budget — no retry, fail fast to fallback
         if (!isTimeout && (await this.#maybeRetry(err, perUrl, log))) continue;
@@ -101,7 +112,7 @@ export class DefaultExecutor {
       const text = await response.text();
       if (text) message = text.slice(0, 500);
     } catch { /* body unreadable — keep generic message */ }
-    log?.debug?.("FETCH", `${this.node.prefix} error ${status}: ${message.slice(0, 120)}`);
+    log?.debug?.("UPSTREAM", `✖ ${this.node.prefix} error ${status}`, { status, retryAfterMs, body: message.slice(0, 200) });
     const errorCode =
       status === 401 || status === 403 ? "auth_error"
       : status === 429 ? "rate_limited"
@@ -121,7 +132,7 @@ export class DefaultExecutor {
     let delayMs = cfg.delayMs ?? 0;
     if (err.status === 429 && err.retryAfterMs) delayMs = err.retryAfterMs; // honor Retry-After even though 429 default = 0 attempts
     if (delayMs > 0) await sleep(delayMs);
-    log?.debug?.("RETRY", `${this.node.prefix} status ${err.status} retry ${used + 1}/${attempts} after ${delayMs}ms`);
+    log?.debug?.("UPSTREAM", `↻ ${this.node.prefix} retry ${used + 1}/${attempts} after ${delayMs}ms`, { status: err.status, errorCode: err.errorCode, delayMs });
     return true;
   }
 }

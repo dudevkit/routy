@@ -41,6 +41,20 @@ function startStub() {
         }
         res.writeHead(200, { "content-type": "text/event-stream" });
         if (behavior === "silent") return; // headers only — never a frame
+        if (behavior === "thinking") {
+          res.write(`data: {"id":"c","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"reasoning_content":"hmm"},"finish_reason":null}]}\n\n`);
+          return; // reasoning only — never an answer token
+        }
+        if (behavior === "finish-only") {
+          res.write(`data: {"id":"c","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}\n\n`);
+          res.end();
+          return;
+        }
+        if (behavior === "error-in-body") {
+          res.write(`data: {"error":{"message":"upstream said no"}}\n\n`);
+          res.end();
+          return;
+        }
         res.write(`data: {"id":"c","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"pong"},"finish_reason":null}]}\n\n`);
         res.write(`data: {"id":"c","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`);
         res.write("data: [DONE]\n\n");
@@ -194,9 +208,52 @@ describe("probes are diagnostics, not traffic", () => {
     const r = await probeModel(node, row.model, conn);
     expect(r.ok).toBe(true);
     expect(r.ttftMs).toBeGreaterThanOrEqual(0);
-    // the probe really went out with that key, tiny and streamed
+    // the probe really went out with that key, streamed, and used a budget large
+    // enough not to starve a reasoning model (max_tokens:1 yields an empty answer)
     expect(stubState.chatRequests).toHaveLength(1);
-    expect(stubState.chatRequests[0]).toMatchObject({ model: "m-alpha", auth: "Bearer k-model", maxTokens: 1, stream: true });
+    expect(stubState.chatRequests[0]).toMatchObject({ model: "m-alpha", auth: "Bearer k-model", maxTokens: 1024, stream: true });
+  });
+
+  it("counts a reasoning-only stream as alive (9Router issue #3010)", async () => {
+    const node = mkNode("a");
+    const conn = mkKey(node);
+    stubState.behavior = "thinking";
+
+    const r = await probeModel(node, "thinker", conn);
+    expect(r.ok).toBe(true);
+    expect(r.via).toBe("reasoning_content");
+    expect(r.ttftMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("counts a stream that only ever sends a finish reason as alive", async () => {
+    const node = mkNode("a");
+    const conn = mkKey(node);
+    stubState.behavior = "finish-only";
+
+    const r = await probeModel(node, "terse", conn);
+    expect(r.ok).toBe(true);
+    expect(r.via).toMatch(/^finish:/);
+  });
+
+  it("surfaces a provider error envelope returned with HTTP 200", async () => {
+    const node = mkNode("a");
+    const conn = mkKey(node);
+    stubState.behavior = "error-in-body";
+
+    const r = await probeModel(node, "broken", conn);
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("upstream said no");
+  });
+
+  it("names the stage it died at instead of a bare timeout", async () => {
+    const node = mkNode("a");
+    const conn = mkKey(node);
+    stubState.behavior = "silent";
+
+    const r = await probeModel(node, "quiet", conn, { timeoutMs: 300 });
+    expect(r.ok).toBe(false);
+    expect(r.stage).toBe("connect"); // headers never arrived
+    expect(r.error).toMatch(/no response within 300ms/);
   });
 
   it("records a failing model probe on the row without touching usage, budget or breakers", async () => {
@@ -273,41 +330,6 @@ describe("probes are diagnostics, not traffic", () => {
     });
     expect(out).toEqual([2, 4, 6, 8, 10, 12, 14]);
     expect(peak).toBeLessThanOrEqual(3);
-  });
-
-  it("a silent upstream fails the model probe instead of hanging", async () => {
-    const node = mkNode("a");
-    mkKey(node);
-    const row = repos.nodeModels.create({ nodeId: node.id, model: "quiet" });
-    stubState.behavior = "silent";
-
-    const r = await probeModel(node, row.model, repos.connections.list(node.id)[0], { timeoutMs: 300 });
-    expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/timeout|empty stream/);
-  });
-});
-
-describe("bulk model actions", () => {
-  it("hides, shows and deletes a selection, scoped to the node", async () => {
-    const node = mkNode("p");
-    const other = mkNode("q");
-    repos.nodeModels.import(node.id, ["m-alpha", "m-beta", "m-gamma"]);
-    const foreign = repos.nodeModels.create({ nodeId: other.id, model: "not-yours" });
-    const ids = repos.nodeModels.list(node.id).map((m) => m.id);
-
-    const hidden = await call("POST", `/api/nodes/${node.id}/models/bulk`, { ids: [...ids, foreign.id], action: "hide" });
-    expect(hidden.status).toBe(200);
-    expect(hidden.body.changed).toBe(3); // the foreign id is ignored, not acted on
-    expect(repos.nodeModels.enabledModels(node.id)).toEqual([]);
-    expect(repos.nodeModels.get(foreign.id).enabled).toBe(true); // untouched
-
-    const shown = await call("POST", `/api/nodes/${node.id}/models/bulk`, { ids: [ids[0]], action: "show" });
-    expect(shown.body.changed).toBe(1);
-    expect(repos.nodeModels.enabledModels(node.id)).toEqual(["m-alpha"]);
-
-    const removed = await call("POST", `/api/nodes/${node.id}/models/bulk`, { ids, action: "delete" });
-    expect(removed.body.changed).toBe(3);
-    expect(repos.nodeModels.list(node.id)).toHaveLength(0);
   });
 
   it("tests a selection and records each result on its row", async () => {

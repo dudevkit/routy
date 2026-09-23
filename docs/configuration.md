@@ -46,6 +46,7 @@ runs at boot and hourly.
 | `requireApiKey` | `true` | `/v1` needs a client key from non-loopback peers. Loopback is trusted |
 | `rtkEnabled` | `true` | RTK token saver: compresses large `tool_result` payloads (diffs, build output, file listings) before dispatch |
 | `budgetUsdPerDay` | `0` | Hard daily ceiling on **metered** spend. `0` = unlimited |
+| `logLevel` | `info` | What the gateway records: `debug` adds every upstream dispatch/response/retry/stream-end. Applied live and persisted |
 
 ### Budget behaviour
 
@@ -73,6 +74,7 @@ on update, so editing one field never drops the others.
 |---|---|
 | `pricing` | `{ "inputPer1M": 3, "outputPer1M": 15 }` in USD. Absent/null = unmetered |
 | `streamIdleTimeoutMs` | Stall watchdog budget for this node; `0` disables |
+| `probeTimeoutMs` | Budget for a model probe; default 45000. Reasoning models on free tiers routinely need 5-30s to a first token |
 | `pool` | Upstream connection pool: `connections` (64), `pipelining` (1), `keepAliveTimeoutMs` (60000), `keepAliveMaxTimeoutMs` (600000), `noDelay` (true) |
 | `retry` | Per-status retry overrides, e.g. `{ "503": { "attempts": 0 } }`. Defaults mirror upstream 9Router: 502 → 3×3s, 503 → 3×2s, 429 → no retry (fall back instead); `Retry-After` is honoured |
 
@@ -141,7 +143,7 @@ one-token ping cannot move your error rate or spend your budget.
 | Probe | Request | Proves |
 |---|---|---|
 | Key | `GET <baseUrl>/models` with **that** key | the key is valid and the host is reachable. No tokens. |
-| Model | `POST <baseUrl>/chat/completions` with `stream:true, max_tokens:1` | auth + model id + streaming, end to end. Yields a real TTFT. |
+| Model | `POST <baseUrl>/chat/completions` with `stream:true, max_tokens:1024` | auth + model id + streaming, end to end. Yields a real TTFT. |
 
 ```
 POST /api/connections/{id}/test      probe one key
@@ -150,6 +152,48 @@ POST /api/nodes/{id}/keys/test       probe every active key (bounded concurrency
 
 A model probe uses the provider's first active key by priority, overridable with
 `?connectionId=` so a specific key can be blamed.
+
+**A model probe succeeds at the first token of *any* kind** — content, or any of the
+reasoning fields providers use (`reasoning_content`, `reasoning`, `thinking`,
+`thinking_content`, `text`, and array-shaped `content`). This matters: reasoning
+models stream thinking before they emit an answer, so a probe that waits for the
+*answer* reports a healthy model as broken. Observed live on a free-tier reasoning
+model: **4s to the first thinking token, 70s to the first answer token.**
+
+`max_tokens` is 1024 rather than 1 for the same reason — a 1-token budget is spent
+entirely on chain-of-thought, so the model returns nothing at all (9Router issue
+#3010). The probe aborts at the first token, so the larger budget costs nothing.
+
+Timeouts name the **stage** they died at, because "timeout" alone tells you nothing:
+
+| Error | Meaning |
+|---|---|
+| `no response within 45000ms (stage: connect)` | headers never arrived — network, auth, or the provider queued you |
+| `no token within 45000ms (stage: first-token)` | headers arrived, the stream opened, then silence |
+| `HTTP 402: Your balance is at $0` | the provider's own message, extracted from its JSON error body |
+| `provider error: <msg>` | HTTP 200 with an error envelope in the body |
+
+Budget: `node.data.probeTimeoutMs`, default 45s.
+
+---
+
+## Watching upstream activity
+
+Probes and upstream dispatch are logged with their own tags, so the Live Console can
+be filtered down to them:
+
+| Tag | Level | What |
+|---|---|---|
+| `PROBE` | info | `→` start (url, budget, key) · `← ok` (ttft, which field carried the token) · `✖` failure (stage, error, elapsed) |
+| `UPSTREAM` | debug | `→ POST` (url, model, stream, bytes, timeout) · `← <status>` (content-type, ttfb) · `↻ retry` · `✖` error/abort · `← stream end` (frames, bytes, duration, stalled) |
+| `REQ` | info | one line per completed request (status, ttft, tokens, cost) |
+
+**Capture level** decides what the gateway *records*; the console's level chips decide
+what you *see*. `info` (default) shows probes and completed requests. Switch to
+`debug` — live, from the console's **capture** selector or
+`PUT /api/settings {"logLevel":"debug"}` — and every upstream dispatch, response,
+retry and stream end is logged too. It persists across restarts, so
+"turn on debug → reproduce → read the console" keeps working.
 
 ---
 

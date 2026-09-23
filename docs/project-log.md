@@ -61,6 +61,33 @@ axolotl/
 
 ## Done
 
+- 2026-09-23 (probe correctness + upstream observability): a user-reported "model
+  test times out, console shows nothing" turned out to be two real defects.
+  **The probe was wrong**, and 9Router's own ping (which the user pointed at) had
+  already solved both halves: (1) it only recognised `content`/`reasoning_content`,
+  so a reasoning model streaming `reasoning`/`thinking`/`thinking_content` looked
+  dead — measured live on a free-tier model: **4s to the first thinking token, 70s to
+  the first answer token**, so a probe waiting for the *answer* reports a healthy
+  model as broken; (2) `max_tokens: 1` starves a reasoning model entirely (9Router
+  issue #3010), so the budget is now 1024 and we abort at the first token of any kind.
+  Also borrowed from 9Router: provider-in-body error envelopes, and error text
+  extracted from JSON bodies (`HTTP 402: Your balance is at $0` rather than a raw
+  blob dump). The probe budget is now `node.data.probeTimeoutMs` (default 45s) and
+  **failures name their stage** — `no response within 45000ms (stage: connect)` vs
+  `stage: first-token` — because "timeout" alone tells you nothing.
+  **The console was blind**: probes logged nothing at all, and `emit()` dropped
+  debug lines *before* the ring buffer, so the console could never show upstream
+  activity even though its level chips and `?level=` filter were ready. Now `PROBE`
+  (info) logs start / ok (ttft + which field carried the token) / failure (stage,
+  error, elapsed), and the executor logs a full `UPSTREAM` lifecycle at debug —
+  `→ POST` (url, model, stream, bytes, timeout), `← <status>` (content-type, ttfb),
+  `↻ retry`, `✖` error/abort, and `← stream end` (frames, bytes, duration, stalled).
+  The log level is now a **live, persisted setting** (`PUT /api/settings {logLevel}`)
+  with a **capture** selector in the console, so "turn on debug → reproduce → read
+  the console" needs no restart. Tests: 119/119 (reasoning-only, finish-only,
+  error-in-body, and stage-named timeout cases). Hot path unchanged: overhead p50
+  1.3ms / p99 2.8ms, P3 rig 11/11, P4 rig 14/14.
+
 - 2026-09-23 (P6.1 backend): models moved out of `node.data.models` (a JSON string
   array that could not carry per-model state) into a **`node_models` table** —
   `source` (manual|imported), `enabled`, `stale`, and the last probe's
@@ -339,6 +366,20 @@ axolotl/
 ## Knowledge Gained
 
 *(Append-only; one line per fact with pointer into reference doc where applicable.)*
+
+- 2026-09-23: A "model is slow" probe bug is usually a probe that waits for the wrong
+  thing. Reasoning models emit thinking tokens first and the answer much later —
+  measured live: **4s to the first thinking token, 70s to the first answer token**.
+  Accept a token from *any* reasoning field and the same model looks healthy in 4s.
+- 2026-09-23: `max_tokens: 1` is the wrong probe for a reasoning model: the budget is
+  spent on chain-of-thought and the model returns nothing (9Router issue #3010, their
+  ping uses 1024). Since the probe aborts at the first token, a large budget is free.
+- 2026-09-23: "timeout" is not a diagnosis. A probe must say which stage died —
+  headers (`connect`) vs stream opened then silent (`first-token`) — or the user has
+  no way to tell a network problem from a slow model.
+- 2026-09-23: A log ring gated by the same level as stdout cannot ever show debug
+  activity, even when the UI has level filters for it. Separate "what is recorded"
+  (a live, persisted setting) from "what is displayed" (client-side filters).
 
 - 2026-09-23: A migration test that corrupts a *current* database (drop a table, reset
   the version) does not test migration — it tests re-running DDL that already applied.

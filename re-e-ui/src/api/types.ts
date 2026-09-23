@@ -266,6 +266,8 @@ export interface Settings {
   requireApiKey?: boolean;
   /** RTK token-saver compression */
   rtkEnabled?: boolean;
+  /** how much the gateway records: debug | info | warn | error (live, survives restart) */
+  logLevel?: string;
   /** daily ceiling on metered upstream spend; 0 or absent = unlimited */
   budgetUsdPerDay?: number;
   [k: string]: unknown;

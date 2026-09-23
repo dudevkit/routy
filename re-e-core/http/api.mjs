@@ -5,7 +5,7 @@ import { json, readBody } from "../lib/router.mjs";
 import { COMBO_STRATEGIES } from "../core/routing.mjs";
 import { budgetSpent } from "../core/budget.mjs";
 import { probeNode, probeKey, probeModel, mapLimit } from "../core/probe.mjs";
-import { clearLogs, recentLogs, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
+import { clearLogs, log, recentLogs, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
 
 const uuid = () => crypto.randomUUID();
 const maskKey = (k) => (typeof k === "string" && k.length > 12 ? `${k.slice(0, 6)}…${k.slice(-4)}` : k ? "•••" : "—");
@@ -230,7 +230,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const conn = (input.connectionId && conns.find((c) => c.id === input.connectionId)) || conns[0] || null;
     if (!conn) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
 
-    const result = await probeKey(node, conn);
+    const result = await probeKey(node, conn, { log });
     if (!result.ok) return json(res, 502, { error: { message: "upstream_error", detail: result.error, latencyMs: result.latencyMs } });
     repos.connections.recordTest(conn.id, { ok: true, latencyMs: result.latencyMs });
     const summary = repos.nodeModels.import(node.id, result.models || []);
@@ -268,7 +268,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const conn = conns[0] || null;
     if (!conn) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
     const results = await mapLimit(rows, 4, async (row) => {
-      const r = await probeModel(node, row.model, conn);
+      const r = await probeModel(node, row.model, conn, { log });
       repos.nodeModels.recordTest(row.id, r);
       return { modelId: row.id, model: row.model, ok: r.ok, ttftMs: r.ttftMs, error: r.error };
     });
@@ -288,7 +288,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const conn = (url.searchParams.get("connectionId") && conns.find((c) => c.id === url.searchParams.get("connectionId"))) || conns[0] || null;
     if (!conn) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
 
-    const result = await probeModel(node, row.model, conn);
+    const result = await probeModel(node, row.model, conn, { log });
     json(res, 200, { ...repos.nodeModels.recordTest(row.id, result), result });
   });
 
@@ -300,7 +300,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (!conn) return json(res, 404, { error: { message: "not_found" } });
     const node = repos.nodes.get(conn.nodeId);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
-    const result = await probeKey(node, conn);
+    const result = await probeKey(node, conn, { log });
     repos.connections.recordTest(conn.id, { ok: result.ok, latencyMs: result.latencyMs, error: result.ok ? null : result.error });
     json(res, 200, { connectionId: conn.id, ok: result.ok, latencyMs: result.latencyMs, modelCount: result.modelCount ?? 0, error: result.error ?? null });
   });
@@ -311,7 +311,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (!node) return json(res, 404, { error: { message: "not_found" } });
     const active = repos.connections.list(node.id).filter((c) => c.status === "active");
     const results = await mapLimit(active, 4, async (conn) => {
-      const r = await probeKey(node, conn);
+      const r = await probeKey(node, conn, { log });
       repos.connections.recordTest(conn.id, { ok: r.ok, latencyMs: r.latencyMs, error: r.ok ? null : r.error });
       return { connectionId: conn.id, name: conn.name, ok: r.ok, latencyMs: r.latencyMs, modelCount: r.modelCount ?? 0, error: r.error ?? null };
     });
@@ -364,7 +364,15 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("GET", /^\/api\/settings$/, (req, res) => json(res, 200, repos.settings.all()));
   route("PUT", /^\/api\/settings$/, async (req, res) => {
     const patch = JSON.parse((await readBody(req)).toString("utf8"));
+    if (patch.logLevel !== undefined && !["debug", "info", "warn", "error"].includes(patch.logLevel)) {
+      return json(res, 400, { error: { message: "bad_request", detail: "logLevel must be debug | info | warn | error" } });
+    }
     repos.settings.update(patch);
+    // log level is live: flipping to debug must not need a restart to trace a request
+    if (patch.logLevel !== undefined) {
+      setLogLevel(patch.logLevel);
+      log.info("LOG", `capture level set to ${patch.logLevel}`);
+    }
     json(res, 200, repos.settings.all());
   });
 

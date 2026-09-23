@@ -104,6 +104,23 @@ Testing is **diagnostics, not traffic**: a key or model probe never counts towar
 usage, the daily budget or the breaker state. Testing a bad key can't take a healthy
 provider offline.
 
+### When something times out
+
+Open **Live Console**. Every probe logs what it sent, what came back, and — on
+failure — *which stage* died:
+
+```
+INFO  PROBE  → ts/deepseek-v4-flash:free   {url, budgetMs:45000, key:"twst1 key"}
+INFO  PROBE  ← ok ts/deepseek-v4-flash:free {ttftMs:30370, via:"reasoning_content"}
+WARN  PROBE  ✖ ts/deepseek-v4.1-flash:free  {stage:"connect", error:"no response within 45000ms"}
+```
+
+`stage: connect` means headers never arrived (network, auth, or the provider queued
+you); `stage: first-token` means the stream opened and then went silent. Switch the
+console's **capture** selector to `debug` and you also get every upstream dispatch,
+response, retry and stream end — `UPSTREAM` lines with URL, model, byte count, TTFB
+and duration. That setting is live and survives restarts.
+
 ---
 
 ## Point a CLI tool at it

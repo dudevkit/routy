@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useClearLogs, useLogStream } from "../api/hooks";
+import { useClearLogs, useLogStream, usePutSettings, useSettings } from "../api/hooks";
 import type { LogRecord } from "../api/types";
 import type { StreamLevel } from "../api/transport";
 import { toastApiError } from "../utils/errors";
@@ -78,6 +78,24 @@ export function ConsoleLog() {
   const scroller = useRef<HTMLDivElement | null>(null);
   const toast = useToast();
   const clearLogs = useClearLogs();
+  const settings = useSettings();
+  const put = usePutSettings();
+  /** What the gateway *records* (vs `levels`, which only filters what is shown). */
+  const capture = (settings.data?.logLevel as Level) ?? "info";
+
+  const setCaptureLevel = (level: Level) =>
+    put.mutate(
+      { logLevel: level },
+      {
+        onSuccess: () =>
+          toast(
+            level === "debug"
+              ? "Capturing debug — upstream dispatch, responses, retries and stream ends are now logged"
+              : `Capture level set to ${level}`,
+          ),
+        onError: (err) => toastApiError(toast, err, "Failed to set capture level"),
+      },
+    );
 
   /**
    * When the enabled chips form a suffix of the level order, ask the server to stop
@@ -158,6 +176,24 @@ export function ConsoleLog() {
         </div>
 
         <div className="flex items-center gap-2">
+          <label
+            className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-text-subtle"
+            title="How much the gateway records. 'info' shows requests and probes; 'debug' also logs every upstream dispatch, response, retry and stream end."
+          >
+            capture
+            <select
+              value={capture}
+              onChange={(e) => setCaptureLevel(e.target.value as Level)}
+              disabled={put.isPending}
+              className="h-6 rounded-full border border-border-subtle bg-surface-2 px-2 font-mono text-[10px] normal-case tracking-normal text-text-main focus:outline-none"
+            >
+              {LEVELS.map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </label>
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}

@@ -46,6 +46,14 @@ const releaseLock = () => { try { fs.rmSync(lockPath); } catch { /* already gone
 
 const db = openDatabase(cfg.dataDir);
 const repos = createRepos(db);
+
+// A log level chosen from the dashboard wins over config/env and survives restarts,
+// so "turn on debug, reproduce, read the console" keeps working after a reboot.
+const persistedLogLevel = repos.settings.get("logLevel");
+if (persistedLogLevel && ["debug", "info", "warn", "error"].includes(persistedLogLevel)) {
+  setLogLevel(persistedLogLevel);
+}
+
 const chatHandler = createChatHandler(repos, { streamIdleTimeoutMs: cfg.streamIdleTimeoutMs });
 
 // ── one-time lift of legacy node.data.models into node_models rows (P6) ─────

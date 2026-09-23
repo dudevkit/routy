@@ -14,7 +14,27 @@
 import { getDispatcher, undiciFetch } from "./executors/pool.mjs";
 
 const DEFAULT_TIMEOUT_MS = 5000;
-const MODEL_PROBE_TIMEOUT_MS = 20_000;
+// Probes get a generous budget: free-tier and reasoning models routinely take
+// 5-15s to their first token, and a probe that times out at 20s reports a healthy
+// model as broken (observed live: 70s to an *answer* token, 4s to the first one).
+const MODEL_PROBE_TIMEOUT_MS = 45_000;
+// Reasoning models spend their budget on chain-of-thought before emitting an
+// answer, so a tiny max_tokens starves them into an empty response (9Router issue
+// #3010). We abort at the first token of ANY kind, so a large budget costs nothing.
+const PROBE_MAX_TOKENS = 1024;
+
+/** Every field a provider has been seen to put the first token in. */
+const TOKEN_FIELDS = ["content", "reasoning_content", "reasoning", "thinking", "thinking_content", "text"];
+const firstTokenIn = (delta) => {
+  if (!delta || typeof delta !== "object") return null;
+  for (const f of TOKEN_FIELDS) {
+    const v = delta[f];
+    if (typeof v === "string" && v.length > 0) return f;
+  }
+  // some providers nest it (e.g. { content: [{ type: "text", text }] })
+  if (Array.isArray(delta.content) && delta.content.some((c) => c?.text)) return "content[]";
+  return null;
+};
 
 const trimBase = (baseUrl) => String(baseUrl || "").replace(/\/+$/, "");
 
@@ -63,16 +83,21 @@ export async function probeKey(node, connection, opts = {}) {
 
 /**
  * Prove a single model id actually serves: a real (tiny) streamed completion.
- * `max_tokens: 1` keeps it to a token or two; we stop at the first content frame,
- * which is also the TTFT.
+ * We stop at the first token of ANY kind — content or reasoning — so a reasoning
+ * model counts as alive at its first thinking token rather than at its answer.
  *
  * Uses the node's pooled dispatcher so the probe travels the same connection path
  * the proxy uses, but bypasses breakers and usage entirely.
+ *
+ * Every attempt logs `PROBE` lines at info: a probe the user triggered must never
+ * fail silently. `log` is optional so the module stays usable from tests.
  */
-export async function probeModel(node, model, connection = null, { timeoutMs = MODEL_PROBE_TIMEOUT_MS } = {}) {
+export async function probeModel(node, model, connection = null, { timeoutMs, log = null } = {}) {
+  const budget = timeoutMs ?? node?.data?.probeTimeoutMs ?? MODEL_PROBE_TIMEOUT_MS;
   const t0 = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let stage = "connect";
+  const timer = setTimeout(() => controller.abort(), budget);
   const apiKey = connection?.credentials?.apiKey ?? null;
   const url = node?.apiType === "responses"
     ? `${trimBase(node.baseUrl)}/responses`
@@ -80,9 +105,18 @@ export async function probeModel(node, model, connection = null, { timeoutMs = M
   const payload = JSON.stringify({
     model,
     stream: true,
-    max_tokens: 1,
+    max_tokens: PROBE_MAX_TOKENS,
     messages: [{ role: "user", content: "ping" }],
   });
+
+  log?.info?.("PROBE", `→ ${node?.prefix ?? "?"}/${model}`, {
+    url, budgetMs: budget, key: connection?.name ?? null,
+  });
+
+  const fail = (error) => {
+    log?.warn?.("PROBE", `✖ ${node?.prefix ?? "?"}/${model}`, { stage, error, elapsedMs: Date.now() - t0 });
+    return { ok: false, ttftMs: null, latencyMs: Date.now() - t0, error, stage };
+  };
 
   try {
     const res = await undiciFetch(url, {
@@ -98,18 +132,27 @@ export async function probeModel(node, model, connection = null, { timeoutMs = M
     });
 
     if (!res.ok) {
-      let detail = `HTTP ${res.status}`;
-      try { detail = (await res.text()).slice(0, 200) || detail; } catch { /* keep status */ }
-      return { ok: false, ttftMs: null, latencyMs: Date.now() - t0, error: detail };
+      stage = "response";
+      const raw = await res.text().catch(() => "");
+      // Pull the human sentence out of a JSON error body instead of dumping the blob.
+      let detail = "";
+      try {
+        const parsed = JSON.parse(raw);
+        detail = parsed?.error?.message || parsed?.msg || parsed?.message
+          || (typeof parsed?.error === "string" ? parsed.error : "") || raw;
+      } catch { detail = raw; }
+      return fail(`HTTP ${res.status}${detail ? `: ${String(detail).slice(0, 240)}` : ""}`);
     }
 
-    // Read until the first frame that carries content, then stop — no need to
-    // drain the rest of a one-token response.
+    stage = "first-token";
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    let sawAnyFrame = false;
-    let ttftMs = null;
+    let sawFrame = false;
+    let finishReason = null;
+    let providerError = null;
+    let tokenField = null;
+
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -120,34 +163,44 @@ export async function probeModel(node, model, connection = null, { timeoutMs = M
           const frame = buffer.slice(0, idx).trim();
           buffer = buffer.slice(idx + 2);
           const data = frame.startsWith("data:") ? frame.slice(5).trim() : "";
-          if (!data) continue;
-          sawAnyFrame = true;
-          if (data === "[DONE]") break;
+          if (!data || data === "[DONE]") continue;
+          sawFrame = true;
           try {
             const obj = JSON.parse(data);
-            if (obj?.error) return { ok: false, ttftMs: null, latencyMs: Date.now() - t0, error: JSON.stringify(obj.error).slice(0, 200) };
-            const delta = obj?.choices?.[0]?.delta;
-            const text = typeof delta?.content === "string" ? delta.content : "";
-            const reasoning = typeof delta?.reasoning_content === "string" ? delta.reasoning_content : "";
-            if (text || reasoning) { ttftMs = Date.now() - t0; break; }
+            // some providers return 200 with an error envelope in the body
+            if (obj?.error) { providerError = obj.error?.message || JSON.stringify(obj.error); break; }
+            if (obj?.status && String(obj.status) !== "200" && String(obj.status) !== "0" && (obj.msg || obj.message)) {
+              providerError = `${obj.status}: ${obj.msg || obj.message}`;
+              break;
+            }
+            const choice = obj?.choices?.[0];
+            const field = firstTokenIn(choice?.delta) ?? firstTokenIn(choice?.message);
+            if (field) { tokenField = field; break; }
+            if (choice?.finish_reason) finishReason = choice.finish_reason;
           } catch { /* non-JSON frame — keep scanning */ }
         }
-        if (ttftMs !== null) break;
+        if (tokenField || providerError) break;
       }
     } finally {
       try { await reader.cancel(); } catch { /* already gone */ }
     }
 
-    if (ttftMs === null && sawAnyFrame) {
-      // the stream opened and spoke, but produced no content token (e.g. an
-      // immediate stop with max_tokens 1) — still a healthy model
-      ttftMs = Date.now() - t0;
+    if (providerError) return fail(`provider error: ${String(providerError).slice(0, 240)}`);
+
+    const ttftMs = Date.now() - t0;
+    if (tokenField) {
+      log?.info?.("PROBE", `← ok ${node?.prefix ?? "?"}/${model}`, { ttftMs, via: tokenField });
+      return { ok: true, ttftMs, latencyMs: ttftMs, error: null, via: tokenField };
     }
-    if (ttftMs === null) return { ok: false, ttftMs: null, latencyMs: Date.now() - t0, error: "upstream returned an empty stream" };
-    return { ok: true, ttftMs, latencyMs: Date.now() - t0, error: null };
+    if (sawFrame) {
+      // the stream spoke but produced no token (e.g. an immediate stop) — alive
+      log?.info?.("PROBE", `← ok ${node?.prefix ?? "?"}/${model}`, { ttftMs, via: `finish:${finishReason ?? "unknown"}` });
+      return { ok: true, ttftMs, latencyMs: ttftMs, error: null, via: `finish:${finishReason ?? "unknown"}` };
+    }
+    return fail(`stream ended with no token after ${ttftMs}ms`);
   } catch (err) {
-    const aborted = controller.signal.aborted;
-    return { ok: false, ttftMs: null, latencyMs: Date.now() - t0, error: aborted ? `timeout after ${timeoutMs}ms` : shapeError(err) };
+    if (controller.signal.aborted) return fail(`no ${stage === "connect" ? "response" : "token"} within ${budget}ms (stage: ${stage})`);
+    return fail(`${stage}: ${shapeError(err)}`);
   } finally {
     clearTimeout(timer);
   }
