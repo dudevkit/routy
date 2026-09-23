@@ -61,6 +61,24 @@ axolotl/
 
 ## Done
 
+- 2026-09-23 (a timeout that named the wrong cause): the user reported that RE-E
+  said `no response within 45000ms (stage: connect)` while Token Harbor's own
+  dashboard showed the request completing in 19s. Measured it end to end rather
+  than guessing: **the probe was right and the label was wrong.** A socket-level
+  trace showed the TCP connection established in 88-98ms and the request written,
+  then no response headers ever — a provider-side stall, not a connection failure.
+  Four consecutive real probes: 10.6s OK, 33.4s OK, >45s no headers, never
+  connected — so the free tier's latency genuinely swings past the budget. Ruled
+  out along the way: ALPN (server negotiates h1 when offered), a wedged response
+  body (the probe already cancels it), and a keep-alive race (a deterministic
+  stub with a 1.5s idle timeout did **not** reproduce a hang, so the pool config
+  was left alone). Fixed the actual defect: `stage` is now split into `connect` /
+  `headers` / `first-token`, where `connect` means *no socket ever opened* —
+  and every failure carries a socket `timeline` (`created@7ms, connected@98ms,
+  error@45005ms`) read from undici's diagnostics channels, correlated per probe by
+  an `x-ree-probe` id header. Verified live on the user's instance. `PROBE_VERSION`
+  → 3 so the old misleading verdicts were invalidated. Tests: 126/126.
+
 - 2026-09-23 (stale probe verdicts outlived the probe that produced them): the user
   asked why `timeout after 20000ms` was still on screen after the probe fix. Because
   a probe result is **stored**, not recomputed — those rows were written at 08:55 by
@@ -395,6 +413,10 @@ axolotl/
 
 *(Append-only; one line per fact with pointer into reference doc where applicable.)*
 
+- 2026-09-23: "Timeout" is not a diagnosis, and naming the wrong stage is worse than
+  naming none. "stage: connect" sent the user hunting a network fault while the
+  socket had connected in 98ms — measure where the time actually went (socket
+  events) before labelling the failure.
 - 2026-09-23: A stored diagnostic verdict outlives the code that produced it. When
   probe semantics change, bump a version and invalidate — an error string the current
   code can no longer emit ("timeout after 20000ms") reads as a live failure and sends

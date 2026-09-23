@@ -11,7 +11,55 @@
 //   probeNode   GET  <baseUrl>/models                        — node-level reachability
 //   probeKey    GET  <baseUrl>/models      with ONE key      — is this key valid?
 //   probeModel  POST <baseUrl>/chat/completions  stream      — does this model serve?
-import { getDispatcher, undiciFetch } from "./executors/pool.mjs";
+import { randomUUID } from "node:crypto";
+import diagnostics_channel from "node:diagnostics_channel";
+import { getDispatcher, originOf, undiciFetch } from "./executors/pool.mjs";
+
+/**
+ * Socket-level truth for a probe, via undici's diagnostics channels.
+ *
+ * "no response within 45000ms (stage: connect)" cannot be acted on: it does not
+ * say whether the socket connected, whether the request was written, or whether
+ * the provider simply never answered. Those are three different problems. The
+ * channels expose them below the fetch abstraction, so a probe reports a
+ * timeline — created / connected / headers — and names the stage it actually
+ * died at. Measured against a real free tier: the socket connected in 88ms and
+ * the headers never came, which is a provider-side stall, not a connect failure.
+ */
+const PROBE_ID_HEADER = "x-ree-probe";
+const inFlight = new Map();
+let observing = false;
+
+const headerValue = (headers, name) => {
+  if (!Array.isArray(headers)) return null;
+  for (let i = 0; i < headers.length; i += 2) if (headers[i] === name) return headers[i + 1];
+  return null;
+};
+
+function observeUpstream() {
+  if (observing) return;
+  observing = true;
+  const mark = (channel, label) => {
+    diagnostics_channel.subscribe(channel, (msg) => {
+      const id = headerValue(msg?.request?.headers, PROBE_ID_HEADER);
+      const probe = id ? inFlight.get(id) : null;
+      if (probe) probe.marks.push(`${label}@${Date.now() - probe.t0}ms`);
+    });
+  };
+  mark("undici:request:create", "created");
+  mark("undici:request:headers", "headers");
+  mark("undici:request:error", "error");
+  // A new socket carries no request reference, so it is matched by host.
+  diagnostics_channel.subscribe("undici:client:connected", (msg) => {
+    const host = msg?.connectParams?.hostname || msg?.connectParams?.host;
+    if (!host) return;
+    const now = Date.now();
+    for (const probe of inFlight.values()) {
+      if (probe.host === host) probe.marks.push(`connected@${now - probe.t0}ms`);
+    }
+  });
+}
+
 
 /**
  * Bump whenever a probe's *verdict* changes meaning — a different timeout, a new
@@ -21,8 +69,11 @@ import { getDispatcher, undiciFetch } from "./executors/pool.mjs";
  * reads as a live failure.
  *
  * v2: accept any reasoning field, 45s budget, name the failing stage.
+ * v3: stages split into connect / headers / first-token — "connect" now means no
+ *     socket ever opened, so a provider that accepted the request and never
+ *     answered no longer reads as a network failure.
  */
-export const PROBE_VERSION = 2;
+export const PROBE_VERSION = 3;
 
 const DEFAULT_TIMEOUT_MS = 5000;
 // Probes get a generous budget: free-tier and reasoning models routinely take
@@ -120,13 +171,20 @@ export async function probeModel(node, model, connection = null, { timeoutMs, lo
     messages: [{ role: "user", content: "ping" }],
   });
 
+  // Track this probe's socket events so a failure can say where it died.
+  observeUpstream();
+  const probeId = randomUUID().slice(0, 8);
+  const probe = { t0, host: new URL(originOf(node?.baseUrl) ?? "http://invalid").hostname, marks: [] };
+  inFlight.set(probeId, probe);
+
   log?.info?.("PROBE", `→ ${node?.prefix ?? "?"}/${model}`, {
     url, budgetMs: budget, key: connection?.name ?? null,
   });
 
   const fail = (error) => {
-    log?.warn?.("PROBE", `✖ ${node?.prefix ?? "?"}/${model}`, { stage, error, elapsedMs: Date.now() - t0 });
-    return { ok: false, ttftMs: null, latencyMs: Date.now() - t0, error, stage };
+    const timeline = probe.marks.join(", ") || "no socket activity";
+    log?.warn?.("PROBE", `✖ ${node?.prefix ?? "?"}/${model}`, { stage, error, elapsedMs: Date.now() - t0, timeline });
+    return { ok: false, ttftMs: null, latencyMs: Date.now() - t0, error, stage, timeline };
   };
 
   try {
@@ -135,6 +193,7 @@ export async function probeModel(node, model, connection = null, { timeoutMs, lo
       headers: {
         "content-type": "application/json",
         "content-length": String(Buffer.byteLength(payload)),
+        [PROBE_ID_HEADER]: probeId,
         ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
       },
       body: payload,
@@ -210,10 +269,21 @@ export async function probeModel(node, model, connection = null, { timeoutMs, lo
     }
     return fail(`stream ended with no token after ${ttftMs}ms`);
   } catch (err) {
-    if (controller.signal.aborted) return fail(`no ${stage === "connect" ? "response" : "token"} within ${budget}ms (stage: ${stage})`);
+    if (controller.signal.aborted) {
+      // Headers arrived and the stream went quiet — a different problem again.
+      if (stage === "first-token") return fail(`no token within ${budget}ms (stage: first-token)`);
+      // A socket that connected and then went quiet is not a connect failure —
+      // it is a provider that never answered. Say which, and show the timeline.
+      const connected = probe.marks.some((m) => m.startsWith("connected@"));
+      stage = connected ? "headers" : "connect";
+      return fail(connected
+        ? `no response headers within ${budget}ms (stage: headers)`
+        : `no socket connected within ${budget}ms (stage: connect)`);
+    }
     return fail(`${stage}: ${shapeError(err)}`);
   } finally {
     clearTimeout(timer);
+    inFlight.delete(probeId);
   }
 }
 

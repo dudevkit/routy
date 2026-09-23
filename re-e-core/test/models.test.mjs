@@ -248,12 +248,27 @@ describe("probes are diagnostics, not traffic", () => {
   it("names the stage it died at instead of a bare timeout", async () => {
     const node = mkNode("a");
     const conn = mkKey(node);
-    stubState.behavior = "silent";
+    stubState.behavior = "silent"; // socket connects, request sent, headers never flushed
 
     const r = await probeModel(node, "quiet", conn, { timeoutMs: 300 });
     expect(r.ok).toBe(false);
-    expect(r.stage).toBe("connect"); // headers never arrived
-    expect(r.error).toMatch(/no response within 300ms/);
+    // the socket connected — so this is the provider never answering, NOT a
+    // connect failure. The old label said "connect", which sent you hunting a
+    // network problem that did not exist.
+    expect(r.stage).toBe("headers");
+    expect(r.error).toMatch(/no response headers within 300ms/);
+    expect(r.timeline).toContain("connected@");
+  });
+
+  it("reports connect when no socket ever opens", async () => {
+    // port 1 refuses — nothing can connect
+    const node = repos.nodes.create({ name: "dead", prefix: "dead", apiType: "openai", baseUrl: "http://127.0.0.1:1/v1", data: {} });
+    const conn = mkKey(node);
+
+    const r = await probeModel(node, "m", conn, { timeoutMs: 3000 });
+    expect(r.ok).toBe(false);
+    expect(r.stage).toBe("connect");
+    expect(r.timeline).not.toContain("connected@");
   });
 
   it("records a failing model probe on the row without touching usage, budget or breakers", async () => {

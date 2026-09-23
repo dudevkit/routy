@@ -151,7 +151,9 @@ POST /api/nodes/{id}/keys/test       probe every active key (bounded concurrency
 ```
 
 A model probe uses the provider's first active key by priority, overridable with
-`?connectionId=` so a specific key can be blamed.
+`?connectionId=` so a specific key can be blamed. Probes send an `x-ree-probe`
+header carrying a short id, which is what lets RE-E match socket events back to
+the probe that caused them; providers ignore it.
 
 **A model probe succeeds at the first token of *any* kind** — content, or any of the
 reasoning fields providers use (`reasoning_content`, `reasoning`, `thinking`,
@@ -164,14 +166,28 @@ model: **4s to the first thinking token, 70s to the first answer token.**
 entirely on chain-of-thought, so the model returns nothing at all (9Router issue
 #3010). The probe aborts at the first token, so the larger budget costs nothing.
 
-Timeouts name the **stage** they died at, because "timeout" alone tells you nothing:
+Timeouts name the **stage** they died at, and carry a socket timeline, because
+"timeout" alone tells you nothing:
 
 | Error | Meaning |
 |---|---|
-| `no response within 45000ms (stage: connect)` | headers never arrived — network, auth, or the provider queued you |
+| `no socket connected within 45000ms (stage: connect)` | nothing ever connected — network, DNS, TLS, or a refused/queued connection |
+| `no response headers within 45000ms (stage: headers)` | the socket connected and the request went out, but the provider never answered |
 | `no token within 45000ms (stage: first-token)` | headers arrived, the stream opened, then silence |
 | `HTTP 402: Your balance is at $0` | the provider's own message, extracted from its JSON error body |
 | `provider error: <msg>` | HTTP 200 with an error envelope in the body |
+
+Every failure also reports `timeline` — the socket events with their offsets, read
+from undici's diagnostics channels below the fetch abstraction:
+
+```
+timeline: "created@7ms, connected@98ms, error@45005ms"
+```
+
+That distinction is the difference between two very different problems. Measured
+against a real free tier: the socket connected in 98ms and the headers never came
+— a provider-side stall. The older single `stage: connect` label called that a
+connection failure and sent you hunting a network problem that did not exist.
 
 Budget: `node.data.probeTimeoutMs`, default 45s.
 
