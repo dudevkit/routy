@@ -72,8 +72,8 @@ export function Sidebar() {
         <NavLink to="/" className="flex flex-col items-start gap-1">
           {/* Two twins, one per theme: the wordmark is drawn in light ink and is
               invisible on the light theme, so it ships recoloured alongside. */}
-          <img src={wordmarkOnDark} alt="routy" className="h-6 w-auto dark:block hidden" />
-          <img src={wordmarkOnLight} alt="routy" className="h-6 w-auto dark:hidden block" />
+          <img src={wordmarkOnDark} alt="routy" className="h-9 w-auto dark:block hidden" />
+          <img src={wordmarkOnLight} alt="routy" className="h-9 w-auto dark:hidden block" />
           <span className="text-xs text-text-muted">v0.1.0 · gateway</span>
         </NavLink>
       </div>
