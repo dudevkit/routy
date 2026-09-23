@@ -40,26 +40,45 @@ in an afternoon and deliberately loud about what it is doing:
 | **CLI tools** | Detects AI CLIs installed on this machine (Claude Code, Codex, opencode, Droid, Cline, Kilo, Copilot, Hermes, jcode, Grok Build, OpenClaw, DeepSeek TUI) and points them at routy in one click — with a disconnect that restores the config byte-for-byte. |
 | **Updates** | An installed copy notices new releases and offers them in the dashboard. Releases are signed; the gateway refuses anything that does not verify. Opt-out, and nothing installs without a click. |
 
-## Quickstart
+## Install
 
-Requires **Node 22.5+** (24 recommended — `node:sqlite` needs `--experimental-sqlite`
-on 22.5–23.3).
+**macOS / Linux**
 
-**From a release** (once one is published) — extract it anywhere and run the
-launcher. This is the layout the in-app updater expects:
+```bash
+curl -fsSL https://raw.githubusercontent.com/dudevkit/routy/main/scripts/install.sh | sh
+```
+
+**Windows** (PowerShell)
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/dudevkit/routy/main/scripts/install.ps1 | iex
+```
+
+Either one downloads the latest release, **verifies its signature** against the key
+compiled into routy, installs to a per-user directory and puts `routy` on your PATH.
+Requires **Node 22.5+** (24 recommended).
+
+```bash
+routy
+```
+
+That starts the gateway and opens a menu — dashboard, a client key to copy, restart,
+and any available update.
+
+**From a release, by hand** — the archive is a self-contained directory:
 
 ```bash
 tar -xzf routy-0.2.0.tar.gz -C routy && cd routy
-node routy.mjs serve          # gateway on :8010
+node routy.mjs serve          # foreground, no menu (for services and scripts)
 ```
 
-**From source** — a checkout runs the gateway directly, and does not update itself:
+**From source** — a checkout runs the gateway directly and does not update itself:
 
 ```bash
 git clone <your-fork> && cd routy
-cd routy-ui && npm ci && npm run build && cd ..     # build the dashboard
-cd routy-core && npm ci && npm run build            # bundle to dist/routy.mjs
-node server.mjs                                     # or: node dist/routy.mjs serve
+cd routy-ui && npm ci && npm run build && cd ..
+cd routy-core && npm ci && npm run build
+node server.mjs
 ```
 
 Then open <http://127.0.0.1:8010>, add a provider on **Providers**, and create a
@@ -96,7 +115,7 @@ routy-core/     the gateway — ESM, plain node:http, zero framework
   db/           node:sqlite driver, migrations, repositories
   http/         management API + Prometheus metrics
 routy-ui/       the dashboard — Vite + React + TypeScript + Tailwind
-docs/           architecture, configuration, database design, cli-tools, releasing, roadmap
+docs/           architecture, configuration, cli-tools, install, releasing, roadmap
 tests/golden/   byte-exact translator fixtures captured from real upstreams
 ```
 
@@ -119,11 +138,10 @@ Built and used daily, but young — treat it as beta. Known gaps, stated plainly
 
 - `/v1/messages/count_tokens` and `/v1/embeddings` are not implemented (404).
   Chat, tool calls and streaming are.
-- The Dockerfile is written but has not been built or run.
 - No packaged service installer; on Windows `scripts/routy-task.ps1` registers a
   scheduled task that starts at boot.
-- **No release has been published yet**, so the updater currently finds nothing to
-  offer. Cutting one is a single command — see [docs/releasing.md](./docs/releasing.md).
+- **No release has been published yet**, so the installer and the updater currently
+  find nothing. Cutting one is a single command — see [docs/releasing.md](./docs/releasing.md).
 
 ## Licence
 

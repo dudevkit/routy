@@ -119,3 +119,56 @@ describe("launcher", () => {
     expect(r.out).toContain("0.2.0");
   }, 30_000);
 });
+
+// The menu is the default command, so it runs on every bare `routy`. It loops
+// asking what to do next, and that loop has one way to go badly wrong: if a
+// question can resolve without input, the loop never ends and the default option
+// fires repeatedly. Option 1 opens a browser, so the failure mode is a tab flood.
+describe("interactive menu", () => {
+  const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "routy.mjs");
+
+  function runMenu({ input, port }) {
+    return new Promise((resolve) => {
+      const child = spawn(process.execPath, [CLI], {
+        cwd: dir,
+        env: {
+          ...process.env,
+          ROUTY_HOME: path.join(dir, "home"),
+          ROUTY_PORT: String(port),
+          ROUTY_NO_OPEN: "1", // never launch a browser from a test
+        },
+        stdio: [input === null ? "ignore" : "pipe", "pipe", "pipe"],
+      });
+      let out = "";
+      child.stdout.on("data", (c) => (out += c));
+      child.stderr.on("data", (c) => (out += c));
+      if (input !== null) child.stdin.end(input);
+      const killer = setTimeout(() => child.kill(), 20_000);
+      child.on("exit", (code) => {
+        clearTimeout(killer);
+        resolve({ code, out });
+      });
+    });
+  }
+
+  it("exits instead of looping when there is no input", async () => {
+    // The exact shape that caused the flood: stdin at EOF, so every question
+    // resolves empty. It must stop, not re-fire the default option.
+    const r = await runMenu({ input: null, port: 8077 });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("gateway stopped");
+    // the menu is offered once, not repeatedly
+    expect(r.out.match(/What next\?/g)?.length ?? 0).toBe(1);
+  }, 30_000);
+
+  it("stops when piped input runs out", async () => {
+    const r = await runMenu({ input: "", port: 8078 });
+    expect(r.code).toBe(0);
+    expect(r.out.match(/What next\?/g)?.length ?? 0).toBe(1);
+  }, 30_000);
+
+  // ROUTY_NO_OPEN (no browser from a scripted run) is verified by hand under a PTY:
+  // a pipe cannot drive these questions, because readline consumes stdin at module
+  // load and closes before the first prompt, so the menu correctly treats it as EOF.
+});
+

@@ -2,6 +2,7 @@
 // Zero-dep: node:readline/promises + node:process. Runs OUTSIDE the server
 // process; edits the same SQLite db (WAL = multi-process safe).
 import { createInterface } from "node:readline/promises";
+import { spawn } from "node:child_process";
 import { stdin, stdout, exit, env, argv } from "node:process";
 import path from "node:path";
 import fs from "node:fs";
@@ -136,11 +137,225 @@ async function cmdServe() {
   await import("../server.mjs"); // boots on cfg.port; stays alive
 }
 
+// ── start: run the gateway and stay useful ───────────────────────────────────
+// The default command, because `routy` on its own should do the obvious thing:
+// start the gateway, say where it is, and offer the things you would otherwise
+// have to remember. `routy serve` is the same server without the menu, for
+// services and scripts.
+
+const DASHBOARD_OPEN = { win32: ["cmd", ["/c", "start", ""]], darwin: ["open", []], default: ["xdg-open", []] };
+
+function openDashboard(url) {
+  // ROUTY_NO_OPEN keeps a headless or scripted run from launching a browser — and
+  // makes the menu testable without spamming windows.
+  if (env.ROUTY_NO_OPEN === "1") return false;
+  const { win32, darwin, default: fallback } = DASHBOARD_OPEN;
+  const [cmd, prefix] = process.platform === "win32" ? win32 : process.platform === "darwin" ? darwin : fallback;
+  try {
+    spawn(cmd, [...prefix, url], { stdio: "ignore", detached: true }).unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Start the gateway as a child so the menu can restart it without re-execing. */
+function startGateway() {
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "serve"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: process.env,
+  });
+  let output = "";
+  let ready = false;
+  const onData = (buf) => {
+    output += buf;
+    if (!ready && output.includes("listening")) ready = true;
+  };
+  child.stdout.on("data", onData);
+  child.stderr.on("data", onData);
+
+  const waitReady = new Promise((resolve) => {
+    const tick = setInterval(() => {
+      if (ready) {
+        clearInterval(tick);
+        resolve(true);
+      }
+    }, 100);
+    child.on("exit", () => {
+      clearInterval(tick);
+      resolve(false);
+    });
+    setTimeout(() => {
+      clearInterval(tick);
+      resolve(ready);
+    }, 20_000).unref?.();
+  });
+
+  return { child, ready: waitReady, log: () => output };
+}
+
+const apiBase = () => `http://${cfg.host === "0.0.0.0" ? "127.0.0.1" : cfg.host}:${cfg.port}`;
+
+async function apiGet(path) {
+  try {
+    const res = await fetch(`${apiBase()}${path}`);
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function cmdStart() {
+  db.close();
+
+  const gateway = startGateway();
+  const up = await gateway.ready;
+
+  if (!up) {
+    console.log("routy: the gateway did not start. Its output:\n");
+    console.log(gateway.log().trim() || "(no output)");
+    process.exit(1);
+  }
+
+  // Reuse the interface created at module load. Closing it and opening a second one
+  // over the same stdin ends the stream, and every question then throws "readline
+  // was closed" — which is what a piped invocation hits immediately.
+  //
+  // Returns null at end of input (a pipe, a script, a closed terminal) so the menu
+  // can stop. Returning the default there would make it spin forever: every question
+  // would resolve empty and re-pick option 1.
+  let inputEnded = false;
+  rl.once("close", () => {
+    inputEnded = true;
+  });
+  const ask2 = async (q, dflt) => {
+    if (inputEnded) return null;
+    try {
+      const answer = (await rl.question(dflt ? `${q} [${dflt}]: ` : `${q}: `)).trim();
+      return answer === "" ? (dflt ?? "") : answer;
+    } catch {
+      return null;
+    }
+  };
+
+  // The check runs in the background and the menu appears immediately, so a slow
+  // or unreachable GitHub never delays the thing the user actually asked for.
+  let updates = null;
+  const updatesPromise = apiGet("/api/updates").then((u) => {
+    updates = u;
+    return u;
+  });
+
+  const endpoint = `${apiBase()}/v1`;
+  const dashboard = apiBase();
+
+  console.log("");
+  console.log(`  routy is running`);
+  console.log(`    dashboard  ${dashboard}`);
+  console.log(`    endpoint   ${endpoint}`);
+  console.log(`    state      ${cfg.home}`);
+  console.log("");
+
+  for (;;) {
+    await updatesPromise;
+    const options = [];
+    if (updates?.available && updates.assetsReady) {
+      options.push({ key: "update", label: `Update to v${updates.latest}  (running v${updates.current})` });
+    }
+    options.push({ key: "open", label: "Open the dashboard" });
+    options.push({ key: "key", label: "Show a client key to paste into a CLI tool" });
+    options.push({ key: "restart", label: "Restart the gateway" });
+    options.push({ key: "quit", label: "Quit" });
+
+    console.log("  What next?");
+    options.forEach((o, i) => console.log(`    ${i + 1}) ${o.label}`));
+    const pick = await ask2("  choice", "1");
+
+    // End of input. Without this the loop never stops: every question resolves
+    // empty, Number("") - 1 indexes nothing, and the `?? options[0]` fallback picks
+    // option 1 — which opens a browser. Piped stdin turned that into a tab flood.
+    if (pick === null) {
+      gateway.child.kill();
+      await new Promise((r) => setTimeout(r, 300));
+      console.log("  gateway stopped");
+      process.exit(0);
+    }
+
+    const chosen = options[Number(pick) - 1] ?? options[0];
+    console.log("");
+
+    if (chosen.key === "open") {
+      const opened = openDashboard(dashboard);
+      console.log(opened ? `  opened ${dashboard} in your browser` : `  open ${dashboard} in your browser`);
+      console.log("");
+      continue;
+    }
+
+    if (chosen.key === "key") {
+      const keys = await apiGet("/api/keys");
+      const usable = (keys ?? []).filter((k) => k.enabled && k.key);
+      if (!usable.length) {
+        console.log("  no client keys yet — create one on the Overview page.");
+      } else {
+        for (const k of usable) console.log(`  ${k.name ?? "(unlabeled)"}:  ${k.key}`);
+      }
+      console.log("");
+      continue;
+    }
+
+    if (chosen.key === "restart") {
+      gateway.child.kill();
+      await new Promise((r) => setTimeout(r, 500));
+      const next = startGateway();
+      const ok = await next.ready;
+      console.log(ok ? "  restarted" : "  failed to restart");
+      console.log("");
+      continue;
+    }
+
+    if (chosen.key === "update") {
+      try {
+        const res = await fetch(`${apiBase()}/api/updates/apply`, {
+          method: "POST",
+          headers: { "x-routy-action": "1" },
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          console.log(`  update failed: ${body?.error?.detail ?? res.status}`);
+          console.log("");
+          continue;
+        }
+        console.log(`  v${body.version} installed — restarting`);
+        // The server drains and exits; this process is not the launcher, so start
+        // the new version the same way the launcher would.
+        await new Promise((r) => gateway.child.on("exit", r));
+        const next = startGateway();
+        const ok = await next.ready;
+        console.log(ok ? "  running the new version" : "  the new version did not start");
+        console.log("");
+        continue;
+      } catch (err) {
+        console.log(`  update failed: ${err.message}`);
+        console.log("");
+        continue;
+      }
+    }
+
+    // quit
+    gateway.child.kill();
+    await new Promise((r) => setTimeout(r, 300));
+    rl.close();
+    console.log("  gateway stopped");
+    process.exit(0);
+  }
+}
+
 function printHelp() {
   console.log(`routy — routy gateway CLI
 
+  routy         start the gateway and open the menu
+  routy serve   start the gateway in the foreground (for services and scripts)
   routy init    connect an upstream, issue a key, point a CLI tool at routy
-  routy serve   start the gateway (same as: node server.mjs)
   routy key     issue a new client API key (sk-…; also copyable from the Overview page)`);
 }
 
@@ -153,8 +368,8 @@ async function cmdKey() {
 
 async function cmdHelp() { printHelp(); }
 
-const cmd = argv[2] || "help";
-const runners = { init: cmdInit, serve: cmdServe, key: cmdKey, help: cmdHelp };
+const cmd = argv[2] || "start";
+const runners = { start: cmdStart, init: cmdInit, serve: cmdServe, key: cmdKey, help: cmdHelp };
 (runners[cmd] || cmdHelp)().catch((err) => {
   console.error("routy:", err?.message || err);
   exit(1);

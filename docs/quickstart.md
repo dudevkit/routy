@@ -31,16 +31,6 @@ node routy-core/dist/routy.mjs serve
 The bundle inlines everything except Node builtins. `dist/ui` (the dashboard) is
 copied next to it automatically when `routy-ui/dist` exists.
 
-### With Docker
-
-```bash
-docker build -t routy .
-docker run -d --name routy -p 8010:8010 -v routy-data:/data routy
-```
-
-The image sets `ROUTY_HOST=0.0.0.0`, so non-loopback callers need the bootstrap
-token for `/api` and a valid API key for `/v1`.
-
 ### As a Windows background task
 
 See [windows-service.md](./windows-service.md) — scheduled task with
