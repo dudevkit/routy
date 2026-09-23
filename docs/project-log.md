@@ -17,7 +17,7 @@
 ## Current State
 
 - **Project:** RE-E — re-engineering of 9Router v0.5.75 into a stable, lightweight, faster gateway.
-- **Phase:** P4 COMPLETE — speed pass landed and gate-verified live (92/92 tests). Remaining: P5 packaging.
+- **Phase:** P5 COMPLETE — packaging landed and gate-verified live (92/92 tests; bundle smokes 13/13 and passes both live rigs). Remaining: P6 expansion (optional menu).
 - **Repo:** upstream `decolua/9router` cloned to `./9router/` (main, shallow) — frozen reference.
 - **Architecture (agreed):** two-part split — separate UI-UX and backend. Backend first.
 - **v1 provider scope:** ZERO embedded providers — custom OpenAI-compatible nodes only
@@ -50,6 +50,33 @@ axolotl/
   backend-architecture §5; P2 redefined per ui-ux decisions (roadmap).
 
 ## Done
+
+- 2026-09-23 (P5 packaging): shippable artifact. `scripts/build.mjs` esbuild-bundles
+  the CLI + gateway + translator tree + undici into **one ESM file** — 1601 KB
+  (798 KB minified), 216 modules inlined, zero runtime dependencies (only Node
+  builtins stay external). The build copies `re-e-ui/dist` to `dist/ui` and
+  `lib/config.mjs` now resolves `<bundleDir>/ui` via `import.meta.url`, so a
+  packaged gateway serves the dashboard with no env var. One non-obvious fix: bundled
+  CJS deps (undici) call `require()` for builtins, which esbuild rewrites to
+  `__require` — in ESM output that throws `Dynamic require of "node:assert" is not
+  supported` unless the bundle carries a `createRequire(import.meta.url)` shim in its
+  banner. `scripts/smoke.mjs` is the gate: it boots `dist/re-e.mjs` **from an
+  unrelated cwd** (proving no source-tree dependency), checks health/metrics/dashboard
+  (from `<bundleDir>/ui`), creates a node, streams a completion, records usage, then
+  shuts down through `/api/gateway/shutdown` and asserts exit 0 and the lock released
+  — **13/13**. `Dockerfile` is multi-stage (ui → bundle → runtime): the runtime layer
+  is `node:24-alpine` carrying only `dist/`, running as `node`, with a healthcheck and
+  `/data` volume; `.dockerignore` keeps scratch state out of layers. Docs:
+  `docs/quickstart.md` (source / bundle / Docker / Windows task) and
+  `docs/configuration.md` (every env var, config key, node `data` knob, combo
+  strategy, breaker and timeout behaviour, endpoint auth).
+- 2026-09-23 (P5 gate, live): the **built artifact** was driven by the P3 and P4 rigs,
+  not the source tree — P3 11/11 (stall watchdog, mid-stream death, 11.4MB stream with
+  bounded RSS, 20-way concurrency), P4 14/14 (strategy ordering, metered cost, 402 at
+  the ceiling, auto-fallback, all metrics families), and the overhead bench on the
+  bundle: **p50 1.4ms / p90 1.5ms / p99 2.7ms, total p50 0ms** — the ≤5ms target holds
+  for what actually ships. Docker image build is NOT verified: `docker` is not
+  installed on this machine, so the Dockerfile is written but unbuilt.
 
 - 2026-09-23 (P4 speed): the P1 residual is solved. **Root cause** — Node's built-in
   `fetch` runs on Node's *bundled* undici, whose default dispatcher re-establishes
@@ -266,6 +293,14 @@ axolotl/
 
 *(Append-only; one line per fact with pointer into reference doc where applicable.)*
 
+- 2026-09-23: esbuild ESM output breaks on bundled CJS deps that `require()` Node
+  builtins (`Dynamic require of "node:assert" is not supported`) — the bundle needs a
+  `createRequire(import.meta.url)` shim in its banner. Use `const`, not `var`: the
+  generated `__require` shim probes `typeof require`, which throws on a TDZ binding.
+- 2026-09-23: A packaged Node app should resolve its static assets from
+  `import.meta.url`, not `process.cwd()` — esbuild rewrites `import.meta.url` to the
+  output file, so `<bundleDir>/ui` works no matter where the process was started.
+
 - 2026-09-23: Node's built-in `fetch` and the npm `undici` package are *different
   copies* with incompatible internals — passing an npm v8 `Agent` as `dispatcher` to
   the built-in fetch fails with `UND_ERR_INVALID_ARG: invalid onRequestStart method`.
@@ -369,6 +404,7 @@ axolotl/
 
 | Date | Summary |
 |---|---|
+| 2026-09-23 | P5 packaging: single-file ESM bundle (1.6MB / 798KB minified, 216 modules, zero runtime deps) with a `createRequire` banner shim, `<bundleDir>/ui` asset resolution, `scripts/smoke.mjs` gate (13/13 booting from an unrelated cwd), multi-stage Dockerfile + .dockerignore (unbuilt — no docker on this machine), quickstart + configuration docs. The built artifact passes the P3 rig 11/11, the P4 rig 14/14 and the overhead bench at p50 1.4ms |
 | 2026-09-23 | P4 speed: pooled per-origin undici dispatcher (overhead 15.6 → 1.3ms p50, 16.1 → 1.7ms p99 — the P1 residual was Node's built-in fetch connection churn), Prometheus `/metrics`, combo strategies `fastest`/`cheapest` with optimistic latency probing, node pricing + daily budget ceiling with auto-fallback to unmetered nodes, `nodes.update` data-merge fix, SPA router basename fix, UI Spend card + node pricing fields. 92/92 tests |
 | 2026-09-23 | P4 gate verified live: 14/14 routing/budget/metrics checks, 3/3 latency-aware routing (combo declared slow-first pinned to the fast node after one probe, 426ms vs 1ms), P3's 11/11 re-run clean after the executor swap, browser-verified Spend card and node pricing (edit preserved the cached model list) |
 | 2026-09-23 | P3 stability: breaker exponential backoff + 2 latent breaker bugs fixed (reset ignored `failures`; success recorded at headers so dying streams looked healthy), stream stall watchdog (stream + non-streaming body reads), mid-stream death counts as a breaker failure, graceful drain shutdown, hourly retention job, Windows service story (scheduled-task script + docs + `/api/gateway/shutdown`), fresh-`RE_E_HOME` boot crash fixed. 69/69 tests |

@@ -10,9 +10,13 @@
   "scripts": {
     "start": "node server.mjs",
     "test": "vitest run",
-    "serve": "node bin/re-e.mjs serve"
+    "serve": "node bin/re-e.mjs serve",
+    "build": "node scripts/build.mjs",
+    "build:min": "node scripts/build.mjs --minify",
+    "smoke": "node scripts/smoke.mjs"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "vitest": "^3.2.4"
   },
   "dependencies": {

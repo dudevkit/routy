@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DEFAULTS = Object.freeze({
   port: 8010,
@@ -31,10 +32,14 @@ export function resolveConfig(env = process.env) {
   };
   // retention is an object — merge per key so a partial override keeps the rest
   cfg.retention = { ...DEFAULTS.retention, ...(fileCfg.retention || {}) };
-  // UI dist: explicit env > repo layout (source checkout) > <home>/ui (packaged)
+  // UI dist: explicit env > next to this module (packaged bundle) > repo layout
+  // (source checkout) > <home>/ui. import.meta.url points at the bundle when
+  // bundled, so <bundleDir>/ui works with no env var.
   cfg.uiDir = env.RE_E_UI_DIR || cfg.uiDir || "";
   if (!cfg.uiDir) {
+    const moduleUi = fileURLToPath(new URL("./ui", import.meta.url));
     const candidates = [
+      moduleUi,
       path.resolve(process.cwd(), "re-e-ui", "dist"),
       path.resolve(process.cwd(), "..", "re-e-ui", "dist"),
       path.join(home, "ui"),

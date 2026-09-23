@@ -17,3 +17,5 @@ tests/golden/.tmp-data/
 /scratch/*-home/
 /scratch/dbg-home/
 re-e-core/node_modules/
+# build output (npm run build in re-e-core, npm run build in re-e-ui)
+/re-e-core/dist/
