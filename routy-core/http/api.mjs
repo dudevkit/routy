@@ -8,6 +8,7 @@ import { probeNode, probeKey, probeModel, mapLimit } from "../core/probe.mjs";
 import { clearLogs, log, recentLogs, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
 import { checkForUpdate, updateState } from "../core/updates.mjs";
 import { RESTART_FOR_UPDATE, applyUpdate } from "../core/update-apply.mjs";
+import { getDispatcher, undiciFetch } from "../core/executors/pool.mjs";
 import { allStatuses, connectTool, disconnectTool, findAdapter, toolStatus } from "../core/cli-tools.mjs";
 
 const uuid = () => crypto.randomUUID();
@@ -432,7 +433,14 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (!sameOriginAction(req, res)) return;
     let result;
     try {
-      result = await applyUpdate(repos, { log });
+      // Download through a pool routy owns rather than built-in fetch. Node's
+      // bundled dispatcher keeps its own keep-alive sockets, closePools() cannot
+      // reach them, and exiting while they close aborts the process on Windows —
+      // which is how an update used to look like a crash to the launcher.
+      result = await applyUpdate(repos, {
+        log,
+        fetchImpl: (url, opts) => undiciFetch(url, { ...opts, dispatcher: getDispatcher({ baseUrl: url }) }),
+      });
     } catch (err) {
       log.warn("UPDATE", `update failed: ${err.message}`);
       return json(res, 502, { error: { message: "update_failed", detail: err.message } });

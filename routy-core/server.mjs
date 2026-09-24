@@ -227,7 +227,18 @@ function shutdown(signal, exitCode = 0) {
     }
     releaseLock();
     // Pools close after the drain so in-flight upstream sockets are not cut early.
-    closePools().finally(() => process.exit(exitCode));
+    closePools().finally(() => {
+      // Deliberately NOT process.exit(). On Windows, exiting while the stdout pipe
+      // still holds a pending write trips a libuv assertion — uv_async_send on a
+      // closing handle, aborting with 0xC0000409 — so the launcher sees a crash
+      // rather than the restart code. Setting exitCode lets the loop drain and the
+      // process leave cleanly with the right status.
+      //
+      // The backstop is unref'd, so it can never hold the process open on its own,
+      // but if a stray handle keeps the loop alive it forces the exit anyway.
+      process.exitCode = exitCode;
+      setTimeout(() => process.exit(exitCode), 2000).unref();
+    });
   };
   // close() fires its callback once every connection has ended
   server.close(finish);
