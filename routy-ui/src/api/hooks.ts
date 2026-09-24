@@ -195,12 +195,21 @@ export const useRemoveKey = () => useMutation({ mutationFn: api.removeKey, onSuc
 /** enabled=false revokes without destroying the key row */
 export const useSetKeyEnabled = () => useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.setKeyEnabled(id, enabled), onSuccess: useInvalidator(KEYS) });
 
-/** Routable model ids from /v1/models — provider models, aliases and combos. */
+/**
+ * Routable model ids from the management API — provider models, aliases and combos.
+ *
+ * Not /v1/models: that is the client-facing proxy surface, and it requires a client
+ * API key from any non-loopback peer. The list therefore came back empty on every
+ * dashboard but the gateway's own machine — which is most of them, now that the
+ * gateway listens on the network by default. /api is authorised by the dashboard
+ * session instead, so this is the same data reached through a surface that can
+ * authenticate the dashboard for it.
+ */
 export const useRoutableModels = () =>
   useQuery({
     queryKey: ROUTABLE,
     queryFn: async () => {
-      const res = await fetch("/v1/models");
+      const res = await fetch("/api/models");
       if (!res.ok) throw new Error(`model list unavailable (${res.status})`);
       const body = (await res.json()) as { data?: { id?: string }[] };
       return (body.data ?? []).map((m) => m.id).filter((id): id is string => typeof id === "string" && id.length > 0).sort();

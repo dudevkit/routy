@@ -2,7 +2,7 @@
 // (the transport contract). Auth: loopback peers pass; non-loopback requires
 // the bootstrap token (Bearer) — the SPA is same-origin by design (P2.1).
 import { json, readBody } from "../lib/router.mjs";
-import { COMBO_STRATEGIES } from "../core/routing.mjs";
+import { COMBO_STRATEGIES, listModels } from "../core/routing.mjs";
 import { budgetSpent } from "../core/budget.mjs";
 import { probeNode, probeKey, probeModel, mapLimit } from "../core/probe.mjs";
 import { clearLogs, log, recentLogs, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
@@ -307,6 +307,14 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     repos.breakers.record(`node:${node.id}`, { state: "closed", failures: 0, openUntil: null, lastError: null });
     json(res, 200, nodeView(repos, repos.nodes.get(node.id)));
   });
+  // The routable model list, on the management surface.
+  //
+  // The dashboard used to read GET /v1/models for this. That is the client-facing
+  // proxy surface, which requires a client API key from any non-loopback peer — so the
+  // list was empty on every dashboard but the gateway's own, which is most of them now
+  // that it listens on the network. /api is authenticated by the dashboard session
+  // instead, so this is the same data reached through the surface that can authorise it.
+  route("GET", /^\/api\/models$/, (req, res) => json(res, 200, listModels(repos)));
   // ── models (P6) ───────────────────────────────────────────────────────────
   // The list is discovery-only: it feeds /v1/models and the UI. Routing still
   // passes any <prefix>/<model> through, so nothing here can break a client.

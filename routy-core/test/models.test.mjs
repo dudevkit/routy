@@ -491,3 +491,38 @@ describe("stale probe verdicts", () => {
     expect(repos.nodeModels.clearTestResults()).toBe(0);
   });
 });
+
+// The model list the dashboard reads. It used to fetch GET /v1/models, which is the
+// client-facing proxy surface: from any non-loopback peer that requires a client API key,
+// so every picker came up empty on a dashboard opened from another machine -- including
+// CLI Tools and Combos, on a gateway that now binds 0.0.0.0 by default. /api/models is
+// the same data on the surface the dashboard can actually authenticate against.
+describe("management model list", () => {
+  it("serves the routable ids on the management surface", async () => {
+    const node = mkNode("tk");
+    repos.nodeModels.create({ nodeId: node.id, model: "deepseek-v4.1-flash:free", enabled: true, source: "manual" });
+    repos.nodeModels.create({ nodeId: node.id, model: "qwen3.8-flash:free", enabled: true, source: "manual" });
+
+    const r = await call("GET", "/api/models");
+    expect(r.status).toBe(200);
+    expect(r.body.object).toBe("list");
+    expect(r.body.data.map((m) => m.id)).toEqual(["tk/deepseek-v4.1-flash:free", "tk/qwen3.8-flash:free"]);
+  });
+
+  it("agrees with the proxy surface, so no second list can drift", async () => {
+    const node = mkNode("ag");
+    repos.nodeModels.create({ nodeId: node.id, model: "mimo", enabled: true, source: "manual" });
+    repos.combos.create({ name: "fast", strategy: "fastest", members: [{ nodeId: node.id }] });
+
+    const r = await call("GET", "/api/models");
+    // same builder as GET /v1/models -- if this diverges, one of the two screens is wrong
+    expect(r.body.data.map((m) => m.id).sort()).toEqual(listModels(repos).data.map((m) => m.id).sort());
+    expect(r.body.data.map((m) => m.id)).toContain("fast");
+  });
+
+  it("exposes the prefix wildcard when a provider has no models configured", async () => {
+    mkNode("bare");
+    const r = await call("GET", "/api/models");
+    expect(r.body.data.map((m) => m.id)).toContain("bare/*");
+  });
+});

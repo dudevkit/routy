@@ -41,10 +41,10 @@ import { useToast } from "../components/ui/Toast";
 import { cn } from "../utils/cn";
 
 /**
- * Routable names come from the proxy's own model list (aliases + combos + node
+ * Routable names come from the management model list (aliases + combos + node
  * prefixes). `reachable` distinguishes "gateway answered, nothing to route yet"
- * from "list unavailable" (auth gate on, or gateway down) — the copy must not
- * blame the gateway for an empty install.
+ * from "list unavailable" (not signed in, or gateway down) — the copy must not
+ * blame the gateway for an empty install, and must not hide a failure behind one.
  */
 type ModelsState = { status: "loading" } | { status: "reachable"; models: string[] } | { status: "unreachable"; reason: string };
 
@@ -52,7 +52,7 @@ function useRoutableModels(): ModelsState {
   const [state, setState] = useState<ModelsState>({ status: "loading" });
   useEffect(() => {
     let cancelled = false;
-    fetch("/v1/models")
+    fetch("/api/models")
       .then(async (res) => {
         if (!res.ok) {
           const body: unknown = await res.json().catch(() => null);

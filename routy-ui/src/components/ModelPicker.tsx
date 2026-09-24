@@ -51,6 +51,19 @@ export function ModelPicker({
 
   if (models.isLoading) return <Skeleton rows={3} />;
 
+  // A failed fetch and an empty list are different facts, and conflating them sends
+  // the user to add a provider they already added. This happened for real: the list
+  // was fetched from a surface the dashboard cannot authenticate against, so every
+  // picker read "no models" while the providers were fine.
+  if (models.isError) {
+    const reason = models.error instanceof Error ? models.error.message : "unavailable";
+    return (
+      <p className="text-xs text-warning">
+        Model list unavailable ({reason}) — names can still be typed by hand.
+      </p>
+    );
+  }
+
   if (total === 0) {
     return (
       <p className="text-xs text-text-muted">
