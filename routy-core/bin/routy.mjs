@@ -10,6 +10,7 @@ import fs from "node:fs";
 import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 import { resolveConfig } from "../lib/config.mjs";
+import { installRoot } from "../core/update-apply.mjs";
 import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
 
@@ -170,6 +171,12 @@ function openDashboard(url) {
     return false;
   }
 }
+
+/**
+ * The gateway this menu is bound to — either one it started (a child it owns) or one
+ * it attached to (a pid it did not). Both are stoppable; only the first has a child.
+ */
+let gateway = { child: null, pid: null, ready: Promise.resolve(true), log: () => "", exitCode: () => null };
 
 /** Start the gateway as a child so the menu can restart it without re-execing. */
 function startGateway() {
@@ -355,13 +362,28 @@ function lanAddress() {
 }
 
 /**
- * Start the gateway detached, so it outlives this menu. A child started normally
- * dies with its parent, which is the opposite of what "run in the background" means.
+ * Start the gateway detached, so it outlives this menu.
+ *
+ * It spawns the LAUNCHER when there is one, not the gateway. That matters for exactly
+ * one reason: an update makes the gateway exit 75 — "I installed a new version,
+ * restart me" — and only the launcher listens for it. A detached gateway with no
+ * supervisor installs the update, exits, and stays down: clicking Update would take
+ * the server offline with no way back except a shell.
+ *
+ * A source checkout has no launcher, so the app supervises itself, which is the
+ * pre-existing behaviour and correct there.
  */
 function startDetached() {
-  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "serve"], {
+  const root = installRoot();
+  const launcher = root ? path.join(root, "routy.mjs") : null;
+  const entry = launcher && fs.existsSync(launcher) ? launcher : fileURLToPath(import.meta.url);
+  const child = spawn(process.execPath, [entry, "serve"], {
     stdio: "ignore",
     detached: true,
+    // Without this, a detached child on Windows gets its own console window — so
+    // "run in the background" pops a terminal up on the user's desktop, which is the
+    // exact opposite of what the option says it does.
+    windowsHide: true,
     env: process.env,
   });
   child.unref();
@@ -376,20 +398,97 @@ async function waitForGateway(attempts = 40) {
   return false;
 }
 
+/**
+ * A gateway already running on this state directory, if there is one.
+ *
+ * Checked before starting a second one, because "run in the background" and then
+ * running `routy` again later is the ordinary way to use this, and it used to end in
+ * a lock message every time. The health endpoint is what proves it — the lock file
+ * alone only says a pid exists, and a pid can be anything by now.
+ */
+async function findRunningGateway() {
+  const health = await apiGet("/api/health");
+  if (!health) return null;
+  let pid = null;
+  try {
+    pid = JSON.parse(fs.readFileSync(path.join(cfg.home, "gateway.lock"), "utf8"))?.pid ?? null;
+  } catch {
+    /* no lock file, or unreadable — the health check is the answer that matters */
+  }
+  return { pid, url: apiBase(), uptimeMs: health.uptimeMs ?? null };
+}
+
+function stopRunningGateway() {
+  if (!gateway.child && !gateway.pid) return;
+  if (gateway.child) {
+    gateway.child.kill();
+  } else if (gateway.pid) {
+    try {
+      process.kill(gateway.pid, "SIGTERM");
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+/** Waits for the port to stop answering, so a restart does not race the old process. */
+async function waitForGatewayDown(attempts = 40) {
+  for (let i = 0; i < attempts; i++) {
+    if (!(await apiGet("/api/health"))) return true;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
+}
+
 async function cmdStart() {
   db.close();
 
-  const gateway = startGateway();
-  const up = await gateway.ready;
+  // Attach to a gateway that is already running rather than colliding with it. "Run in
+  // the background" and then `routy` again later is the ordinary way to use this, and
+  // it used to end in a lock message every single time.
+  let attached = false;
+  const existing = await findRunningGateway();
+  if (existing) {
+    const choice = await choose(
+      `A gateway is already running at ${existing.url}.`,
+      [
+        { key: "use", label: "Use the running gateway" },
+        { key: "replace", label: "Stop it and start a fresh one" },
+        { key: "quit", label: "Quit" },
+      ],
+      0,
+    );
+    console.log("");
+    if (choice === null || choice.key === "quit") process.exit(0);
+    if (choice.key === "replace") {
+      gateway = { child: null, pid: existing.pid, ready: Promise.resolve(true), log: () => "", exitCode: () => null };
+      stopRunningGateway();
+      if (!(await waitForGatewayDown())) {
+        console.log("  it did not stop. Something else may be supervising it —");
+        console.log("  `systemctl stop routy` if it is a service.");
+        console.log("");
+        process.exit(1);
+      }
+    } else {
+      attached = true;
+      // No child to own, but the pid, so the menu can still stop and restart it.
+      gateway = { child: null, pid: existing.pid, ready: Promise.resolve(true), log: () => "", exitCode: () => null };
+    }
+  }
 
-  if (!up) {
-    console.log("routy: the gateway did not start. Its output:\n");
-    console.log(gateway.log().trim() || "(no output)");
-    // Propagate what the gateway actually exited with. This process is the one the
-    // launcher watches, so collapsing every failure to 1 here re-labelled a lock
-    // conflict as a crash and put the launcher back into its eight-attempt backoff —
-    // which is exactly what the distinct exit code was added to prevent.
-    process.exit(gateway.exitCode() ?? 1);
+  if (!attached) {
+    gateway = startGateway();
+    const up = await gateway.ready;
+
+    if (!up) {
+      console.log("routy: the gateway did not start. Its output:\n");
+      console.log(gateway.log().trim() || "(no output)");
+      // Propagate what the gateway actually exited with. This process is the one the
+      // launcher watches, so collapsing every failure to 1 here re-labelled a lock
+      // conflict as a crash and put the launcher back into its eight-attempt backoff —
+      // which is exactly what the distinct exit code was added to prevent.
+      process.exit(gateway.exitCode() ?? 1);
+    }
   }
 
   // The check runs in the background and the menu appears immediately, so a slow
@@ -428,7 +527,9 @@ async function cmdStart() {
       // First, so it is the default. Starting a gateway and then blocking the
       // terminal is not what anyone wants from a bare `routy`; this hands it to the
       // background and gives the shell straight back.
-      { key: "background", label: "Run in the background and exit" },
+      attached
+        ? { key: "background", label: "Leave it running and exit" }
+        : { key: "background", label: "Run in the background and exit" },
     ];
     if (updates?.available && updates.assetsReady) {
       options.push({ key: "update", label: `Update to v${updates.latest}  (running v${updates.current})` });
@@ -444,18 +545,30 @@ async function cmdStart() {
     // End of input. Without this the loop never stops: every prompt resolves empty
     // and the default fires again and again.
     if (chosen === null) {
-      gateway.child.kill();
+      // Only clean up what we started. An attached gateway was somebody else's
+      // process before this menu existed, and Ctrl-D is not a request to kill it.
+      if (attached) {
+        console.log("  left the gateway running");
+        process.exit(0);
+      }
+      stopRunningGateway();
       await new Promise((r) => setTimeout(r, 300));
       console.log("  gateway stopped");
       process.exit(0);
     }
 
     if (chosen.key === "background") {
+      if (attached) {
+        // It is already detached — there is nothing to hand over.
+        console.log(`  already running in the background — ${dashboard}`);
+        console.log("");
+        process.exit(0);
+      }
       // The running gateway is a child of this menu, so it would die with it.
-      // Restart it detached — the brief gap buys a gateway that outlives the
-      // terminal, which is the entire point of the option.
-      gateway.child.kill();
-      await new Promise((r) => gateway.child.on("exit", r));
+      // Restart it detached — and detached through the LAUNCHER, so an update can
+      // still find a supervisor to restart it.
+      stopRunningGateway();
+      await waitForGatewayDown();
       startDetached();
       const alive = await waitForGateway();
       console.log(alive ? `  running in the background — ${dashboard}` : "  failed to start in the background");
@@ -483,10 +596,11 @@ async function cmdStart() {
     }
 
     if (chosen.key === "restart") {
-      gateway.child.kill();
-      await new Promise((r) => setTimeout(r, 500));
-      const next = startGateway();
-      const ok = await next.ready;
+      stopRunningGateway();
+      await waitForGatewayDown();
+      gateway = startGateway();
+      const ok = await gateway.ready;
+      attached = false; // we own the replacement
       console.log(ok ? "  restarted" : "  failed to restart");
       console.log("");
       continue;
@@ -505,11 +619,20 @@ async function cmdStart() {
           continue;
         }
         console.log(`  v${body.version} installed — restarting`);
-        // The server drains and exits; this process is not the launcher, so start
-        // the new version the same way the launcher would.
+
+        if (attached) {
+          // Something else started it, so something else restarts it: systemd, or the
+          // launcher that `startDetached` now spawns. We only wait and report.
+          const back = await waitForGateway(120);
+          console.log(back ? "  running the new version" : "  it did not come back — check the service log");
+          console.log("");
+          continue;
+        }
+
+        // We are the supervisor for this one, so start the new version ourselves.
         await new Promise((r) => gateway.child.on("exit", r));
-        const next = startGateway();
-        const ok = await next.ready;
+        gateway = startGateway();
+        const ok = await gateway.ready;
         console.log(ok ? "  running the new version" : "  the new version did not start");
         console.log("");
         continue;
@@ -521,7 +644,7 @@ async function cmdStart() {
     }
 
     // quit
-    gateway.child.kill();
+    stopRunningGateway();
     await new Promise((r) => setTimeout(r, 300));
     rl?.close();
     console.log("  gateway stopped");
