@@ -121,7 +121,7 @@ routy-core/     the gateway — ESM, plain node:http, zero framework
   http/         management API + Prometheus metrics
 routy-ui/       the dashboard — Vite + React + TypeScript + Tailwind
 scripts/        install.sh / install.ps1 — the one-liners above fetch these
-docs/           configuration, cli-tools, install, quickstart, releasing, windows-service
+docs/           configuration, cli-tools, install, linux-service, quickstart, releasing, windows-service
 ```
 
 The re-engineering notes this was built from — the upstream inventory, the module and

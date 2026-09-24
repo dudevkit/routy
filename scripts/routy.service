@@ -1,0 +1,48 @@
+[Unit]
+Description=routy — OpenAI-compatible gateway
+Documentation=https://github.com/dudevkit/routy
+After=network-online.target
+Wants=network-online.target
+
+# On top of the launcher's own crash backoff, which gives up after 8 tries. This
+# stops systemd from restarting a gateway that is dying for a reason that will not
+# fix itself — a bad config, a port already taken — until someone looks.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# The LAUNCHER, not versions/<v>/routy.mjs. The launcher is what turns `current`
+# into a running process, so an update swaps versions underneath systemd without it
+# ever noticing — and a release that fails to come up gets rolled back instead of
+# leaving the service dead.
+#
+# If node is not on systemd's PATH (nvm, volta, asdf), replace this with the
+# absolute path: /root/.nvm/versions/node/v22.x.x/bin/node
+ExecStart=/usr/bin/env node /root/.local/share/routy/routy.mjs serve
+
+# Explicit, because $HOME is not set for a system service and the fallback is
+# whatever the passwd entry says. Point this at wherever `routy` keeps its state.
+Environment=ROUTY_HOME=/root/.routy
+
+# Listening address. 0.0.0.0 is routy's default (reachable on the LAN, with /api
+# behind the bootstrap token and /v1 behind a client key). Set 127.0.0.1 for
+# loopback only.
+Environment=ROUTY_HOST=0.0.0.0
+Environment=ROUTY_PORT=8010
+
+Restart=on-failure
+RestartSec=2
+
+# routy drains in-flight streams for up to 10s after SIGTERM. Outlive that, or
+# systemd kills it mid-stream and callers see a broken response.
+TimeoutStopSec=20
+KillSignal=SIGTERM
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=routy
+
+[Install]
+WantedBy=multi-user.target
