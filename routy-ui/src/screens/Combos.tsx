@@ -211,7 +211,7 @@ function ComboCard({ combo, suggestions }: { combo: Combo; suggestions: string[]
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="truncate text-sm font-semibold text-text-main">{combo.name}</h3>
+            <h3 className="min-w-0 break-words text-sm font-semibold text-text-main sm:truncate" title={combo.name}>{combo.name}</h3>
             <Badge variant="primary" size="sm">
               {combo.models.length} models
             </Badge>
@@ -441,7 +441,7 @@ function AliasesPanel({ suggestions }: { suggestions: string[] }) {
             >
               <span className="font-mono text-xs font-semibold text-text-main">{alias}</span>
               <span className="text-text-subtle">→</span>
-              <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-muted">{target}</span>
+              <span className="min-w-0 flex-1 break-all font-mono text-xs text-text-muted sm:truncate" title={target}>{target}</span>
               <button
                 aria-label={`Delete alias ${alias}`}
                 onClick={() =>

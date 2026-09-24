@@ -321,3 +321,77 @@ button:disabled,
   outline: none;
   box-shadow: var(--shadow-focus);
 }
+
+/* ── Phones ──────────────────────────────────────────────────────────────────
+ * The shell (MobileNav, h-dvh, safe-area padding) and the per-screen classes do the
+ * structural work. These are the platform facts no component should have to
+ * rediscover, all of which showed up as "text is not visible / badly arranged".
+ */
+
+/* iOS inflates font sizes it judges too small for the viewport width, which shoves
+   dense mono output (log lines, token counts) straight out of its container. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Safari auto-zooms the page whenever a focused control sets font-size below 16px — and
+   this app writes text-sm / text-xs everywhere. Once zoomed, the field you are typing
+   in is off-screen under the keyboard with nothing to scroll it back. */
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Fingertip against cursor: the 26-28px controls that read fine with a mouse are below
+   the target a finger needs. Coarse pointers only, so a desktop keeps its dense layout. */
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  select:not([multiple]) {
+    min-height: 40px;
+    touch-action: manipulation; /* drops the 300ms double-tap-to-zoom delay */
+  }
+
+  /* A 31px number field is a miss waiting to happen, and these are the gateway's port
+     and pricing inputs — the fields where a mis-tap actually costs something. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea {
+    min-height: 40px;
+  }
+}
+
+@keyframes slideInFromLeft {
+  from { transform: translateX(-100%); opacity: 0.4; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.slide-in-left { animation: slideInFromLeft 0.22s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+
+/* Nothing user-facing below ~12px on a phone. text-[10px] / text-[11px] appear in some
+   forty places (badge chips, key labels, log metadata) and were tuned for a desktop
+   display; on a 6-inch screen they are unreadable. A floor here beats forty call-site
+   variants that any new chip would silently miss. Unlayered, so it outranks the
+   Tailwind utility it overrides. */
+@media (max-width: 640px) {
+  .text-\[10px\] {
+    font-size: 11.5px;
+    line-height: 1.45;
+  }
+  .text-\[11px\] {
+    font-size: 12px;
+    line-height: 1.45;
+  }
+}
+
+/* The "Disable text selection on buttons" rule above turns selection off globally. A
+   value you may need to copy by hand — an endpoint, a key — has to stay selectable, and
+   it is the -webkit- prefixed property Safari actually consults, which Tailwind's
+   `select-text` does not emit. */
+.selectable {
+  -webkit-user-select: text;
+  user-select: text;
+}

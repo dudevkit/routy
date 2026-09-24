@@ -52,7 +52,13 @@ export function Modal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    /* Bottom sheet on phones, centred dialog from `sm` up. The old shape — centred, with
+       a `calc(85vh - 100px)` body — sized itself against the *large* viewport, which iOS
+       keeps constant while the browser chrome and then the keyboard shrink what you can
+       actually see. The dialog stayed centred in a box taller than the screen, so its
+       footer fell below the visible area inside a fixed overlay that cannot scroll.
+       Anchoring to the bottom keeps Save/Cancel where the thumb already is. */
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
       {/* Overlay */}
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-[2px] fade-in"
@@ -64,9 +70,10 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         className={cn(
-          "relative w-full bg-surface",
+          "relative flex w-full flex-col bg-surface",
           "border border-border-subtle",
-          "rounded-[14px] shadow-[var(--shadow-elev)]",
+          "max-h-[92vh] supports-[height:100dvh]:max-h-[92dvh]",
+          "rounded-t-[14px] sm:rounded-[14px] shadow-[var(--shadow-elev)]",
           "fade-in",
           sizes[size],
           className,
@@ -74,7 +81,7 @@ export function Modal({
       >
         {/* Clean header */}
         {title && (
-          <div className="flex items-center justify-between px-5 py-3.5 border-b border-border-subtle">
+          <div className="flex shrink-0 items-center justify-between px-4 sm:px-5 py-3.5 border-b border-border-subtle">
             <h2 className="text-base font-semibold text-text-main">{title}</h2>
             <button
               onClick={onClose}
@@ -87,11 +94,11 @@ export function Modal({
         )}
 
         {/* Body */}
-        <div className="p-6 max-h-[calc(85vh-100px)] overflow-y-auto custom-scrollbar">{children}</div>
+        <div className="min-h-0 flex-1 p-4 sm:p-6 overflow-y-auto custom-scrollbar">{children}</div>
 
         {/* Footer */}
         {footer && (
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border-subtle bg-bg-alt/40 rounded-b-[14px]">
+          <div className="flex shrink-0 items-center justify-end gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 border-t border-border-subtle bg-bg-alt/40 pb-[max(0.75rem,env(safe-area-inset-bottom))] rounded-b-none sm:rounded-b-[14px]">
             {footer}
           </div>
         )}

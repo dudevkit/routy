@@ -47,7 +47,7 @@ export function Drawer({
       >
         <header className="flex items-start justify-between gap-3 border-b border-border-subtle px-5 py-4">
           <div className="min-w-0">
-            <h2 className="truncate text-base font-semibold text-text-main">{title}</h2>
+            <h2 className="min-w-0 break-words text-base font-semibold text-text-main sm:truncate" title={title}>{title}</h2>
             {subtitle && <div className="mt-0.5 text-xs text-text-muted">{subtitle}</div>}
           </div>
           <button

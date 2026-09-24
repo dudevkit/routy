@@ -49,20 +49,20 @@ function LogRow({ line }: { line: LogRecord }) {
             : undefined
         }
         className={cn(
-          "flex w-full items-baseline gap-3 px-3 py-[3px] text-left font-mono text-[11.5px] leading-relaxed transition-colors hover:bg-surface-2/60",
+          "flex w-full items-baseline gap-3 px-3 py-[3px] text-left font-mono text-xs leading-relaxed transition-colors hover:bg-surface-2/60 sm:text-[11.5px]",
           hasData && "cursor-pointer",
         )}
       >
         <span className="shrink-0 tabular text-text-subtle">{fmtClockMs(line.t)}</span>
         <span className={cn("w-11 shrink-0 uppercase", levelTextClass[level])}>{level}</span>
-        <span className="w-16 shrink-0 truncate text-text-muted">{line.tag}</span>
+        <span className="w-16 shrink-0 truncate text-text-muted" title={line.tag}>{line.tag}</span>
         <span className="min-w-0 flex-1 break-all text-text-main">
           {hasData && <CaretRight size={10} className={cn("mr-1 inline-block transition-transform", open && "rotate-90")} />}
           {line.msg}
         </span>
       </div>
       {open && hasData && (
-        <pre className="mx-3 mb-1 max-h-52 overflow-auto whitespace-pre-wrap break-all rounded-[8px] border border-border-subtle bg-bg p-2 font-mono text-[11px] text-text-muted custom-scrollbar">
+        <pre className="mx-3 mb-1 max-h-52 overflow-auto whitespace-pre-wrap break-all rounded-[8px] border border-border-subtle bg-bg p-2 font-mono text-xs text-text-muted custom-scrollbar sm:text-[11px]">
           {JSON.stringify(line.data, null, 2)}
         </pre>
       )}
@@ -145,14 +145,14 @@ export function ConsoleLog() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           {LEVELS.map((level) => (
             <button
               key={level}
               onClick={() => toggleLevel(level)}
               aria-pressed={levels[level]}
               className={cn(
-                "rounded-full border px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider transition-colors",
+                "rounded-full border px-2.5 py-0.5 font-mono text-[11px] uppercase tracking-wider transition-colors sm:text-[10px]",
                 levels[level]
                   ? "border-transparent bg-primary/10 text-primary"
                   : "border-border-subtle text-text-subtle hover:text-text-muted",
@@ -164,7 +164,7 @@ export function ConsoleLog() {
           <select
             value={tag}
             onChange={(e) => setTag(e.target.value)}
-            className="h-6 rounded-full border border-border-subtle bg-surface-2 px-2 font-mono text-[10px] text-text-muted focus:outline-none"
+            className="h-6 min-w-0 max-w-full rounded-full border border-border-subtle bg-surface-2 px-2 font-mono text-[11px] text-text-muted focus:outline-none sm:text-[10px]"
           >
             <option value="all">all tags</option>
             {tags.map((t) => (
@@ -175,9 +175,9 @@ export function ConsoleLog() {
           </select>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <label
-            className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-text-subtle"
+            className="flex min-w-0 items-center gap-1.5 text-[11px] uppercase tracking-wider text-text-subtle sm:text-[10px]"
             title="How much the gateway records. 'info' shows requests and probes; 'debug' also logs every upstream dispatch, response, retry and stream end."
           >
             capture
@@ -185,7 +185,7 @@ export function ConsoleLog() {
               value={capture}
               onChange={(e) => setCaptureLevel(e.target.value as Level)}
               disabled={put.isPending}
-              className="h-6 rounded-full border border-border-subtle bg-surface-2 px-2 font-mono text-[10px] normal-case tracking-normal text-text-main focus:outline-none"
+              className="h-6 rounded-full border border-border-subtle bg-surface-2 px-2 font-mono text-[11px] normal-case tracking-normal text-text-main focus:outline-none sm:text-[10px]"
             >
               {LEVELS.map((l) => (
                 <option key={l} value={l}>
@@ -198,7 +198,7 @@ export function ConsoleLog() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Filter messages"
-            className="w-48"
+            className="min-w-0 basis-48"
             inputClassName="h-8 py-0 text-xs"
           />
           <Button size="sm" variant={follow ? "secondary" : "outline"} onClick={() => setFollow((v) => !v)}>
@@ -217,15 +217,15 @@ export function ConsoleLog() {
       </div>
 
       <Card padding="none" className="overflow-hidden">
-        <div className="flex items-center justify-between gap-3 border-b border-border-subtle bg-bg-alt px-3 py-1.5">
-          <div className="flex items-center gap-2 text-[11px] text-text-muted">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle bg-bg-alt px-3 py-1.5">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-text-muted sm:text-[11px]">
             <StatusDot tone={connected ? "green" : "red"} pulse={connected} />
             <span>{connected ? "streaming" : "disconnected"}</span>
             <span className="font-mono tabular">
               {visible.length.toLocaleString()} lines{visible.length > RENDER_CAP ? ` (showing last ${RENDER_CAP})` : ""}
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
             {raw.length > 0 && (
               <Badge variant="warning" size="sm">
                 {raw.length} unparsed
@@ -264,7 +264,7 @@ export function ConsoleLog() {
             <LogRow key={`${l.t}-${i}`} line={l} />
           ))}
           {raw.map((r, i) => (
-            <div key={`raw-${i}`} className="px-3 py-[3px] break-all font-mono text-[11.5px] text-text-subtle">
+            <div key={`raw-${i}`} className="min-w-0 break-all px-3 py-[3px] font-mono text-xs text-text-subtle sm:text-[11.5px]">
               {r}
             </div>
           ))}

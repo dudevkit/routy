@@ -90,11 +90,13 @@ function NodeRow({ node }: { node: UpstreamNode }) {
           <span className="text-text-main">{node.modelCount}</span>
         )}
       </td>
-      <td className="hidden px-4 py-2.5 text-right font-mono text-xs text-text-muted tabular sm:table-cell">
+      <td className="hidden px-4 py-2.5 text-right font-mono text-xs text-text-muted tabular md:table-cell">
         {fmtMs(node.latencyMs)}
       </td>
       <td className="hidden px-4 py-2.5 font-mono text-xs text-text-muted xl:table-cell">{node.keyMasked}</td>
-      <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
+      {/* Below md the whole row is the tap target (it navigates), so the mutating
+          actions — all of which exist on the provider page — give up their 278px. */}
+      <td className="hidden px-4 py-2.5 md:table-cell" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-end gap-1">
           <Button
             size="sm"
@@ -216,12 +218,12 @@ export function Upstreams() {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Tabs value={filter} onChange={setFilter} items={filterTabs} size="sm" />
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search name, URL, prefix"
-            className="w-56"
+            className="w-full min-w-0 sm:w-56"
             inputClassName="h-8 py-0 text-xs"
           />
           <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setAddOpen(true)}>
@@ -248,25 +250,27 @@ export function Upstreams() {
             )}
           </div>
         ) : (
-          <table className="w-full">
-            <thead>
-              <tr className="bg-bg-alt text-left">
-                <th className="px-4 py-2 text-xs font-medium text-text-muted">Node</th>
-                <th className="px-4 py-2 text-xs font-medium text-text-muted">Status</th>
-                <th className="hidden px-4 py-2 text-xs font-medium text-text-muted lg:table-cell">Base URL</th>
-                <th className="px-4 py-2 text-xs font-medium text-text-muted">Prefix</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-text-muted">Models</th>
-                <th className="hidden px-4 py-2 text-right text-xs font-medium text-text-muted sm:table-cell">TTFT</th>
-                <th className="hidden px-4 py-2 text-xs font-medium text-text-muted xl:table-cell">Key</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-text-muted">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((n) => (
-                <NodeRow key={n.id} node={n} />
-              ))}
-            </tbody>
-          </table>
+          <div className="w-full min-w-0 overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-bg-alt text-left">
+                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Node</th>
+                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Status</th>
+                  <th className="hidden px-4 py-2 text-xs font-medium text-text-muted lg:table-cell">Base URL</th>
+                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Prefix</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-text-muted">Models</th>
+                  <th className="hidden px-4 py-2 text-right text-xs font-medium text-text-muted md:table-cell">TTFT</th>
+                  <th className="hidden px-4 py-2 text-xs font-medium text-text-muted xl:table-cell">Key</th>
+                  <th className="hidden px-4 py-2 text-right text-xs font-medium text-text-muted md:table-cell">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((n) => (
+                  <NodeRow key={n.id} node={n} />
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 

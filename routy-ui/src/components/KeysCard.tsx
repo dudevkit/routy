@@ -2,8 +2,9 @@ import { useState } from "react";
 import { useCreateKey, useKeys, useRemoveKey, useSetKeyEnabled } from "../api/hooks";
 import { toastApiError } from "../utils/errors";
 import { fmtAgo, fmtDateTime } from "../utils/format";
-import { Check, Copy, Key as KeyIcon, Plus, Prohibit, Trash } from "./icons";
+import { Check, Copy, Key as KeyIcon, Plus, Prohibit, Trash, Warning } from "./icons";
 import { Badge } from "./ui/Badge";
+import { COPY_FAILED_HINT, useCopy } from "../hooks/useCopy";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
 import { Input } from "./ui/Input";
@@ -23,7 +24,7 @@ function mask(key: string): string {
 }
 
 function KeyChip({ value }: { value: string | null }) {
-  const [copied, setCopied] = useState(false);
+  const { state, copy } = useCopy();
   if (!value) {
     return (
       <span className="font-mono text-[11px] text-text-subtle" title="Created before keys were kept — delete and create a new one to get a copyable key">
@@ -33,19 +34,15 @@ function KeyChip({ value }: { value: string | null }) {
   }
   return (
     <button
-      onClick={() => {
-        navigator.clipboard?.writeText(value).catch(() => {});
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      }}
-      title={`Copy the full key (${mask(value)})`}
+      onClick={() => void copy(value)}
+      title={state === "fail" ? COPY_FAILED_HINT : `Copy the full key (${mask(value)})`}
       className={cn(
         "inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2 py-1",
         "font-mono text-[11px] text-text-main transition-colors hover:border-brand-500/40",
       )}
     >
-      {copied ? <Check size={13} className="shrink-0 text-success" /> : <Copy size={13} className="shrink-0 text-text-muted" />}
-      <span>{mask(value)}</span>
+      {state === "ok" ? <Check size={13} className="shrink-0 text-success" /> : state === "fail" ? <Warning size={13} className="shrink-0 text-danger" /> : <Copy size={13} className="shrink-0 text-text-muted" />}
+      <span className="selectable">{mask(value)}</span>
     </button>
   );
 }

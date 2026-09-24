@@ -138,6 +138,19 @@ describe("chaos: upstream dies mid-stream", () => {
   }, 10_000);
 });
 
+/** Poll a bounded window rather than sleeping a fixed interval: the proxy notices the
+ * walk-away asynchronously, and a hard-coded 300ms is exactly how this test flakes when
+ * the suite runs several workers on a loaded machine. */
+async function until(predicate, ms = 3000) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const value = predicate();
+    if (value) return value;
+    if (Date.now() > deadline) return null;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
 describe("chaos: client vanishes mid-stream", () => {
   it("aborts the upstream and records the request as aborted", async () => {
     let upstreamClosed = false;
@@ -163,11 +176,15 @@ describe("chaos: client vanishes mid-stream", () => {
       req.end(payload);
     });
 
-    await new Promise((r) => setTimeout(r, 300));
+    await until(() => upstreamClosed);
     expect(upstreamClosed).toBe(true); // proxy stopped pulling from upstream
 
-    repos.usage.flush();
-    const events = repos.usage.query({ limit: 10 });
+    // The usage event lands when the pump unwinds, a beat after the socket closes.
+    const events = (await until(() => {
+      repos.usage.flush();
+      const rows = repos.usage.query({ limit: 10 });
+      return rows.length ? rows : null;
+    })) ?? [];
     expect(events).toHaveLength(1);
     expect(events[0].status).toBe("aborted");
   }, 10_000);
@@ -305,9 +322,11 @@ describe("chaos: client hangs up the moment the answer is complete", () => {
       req.end(payload);
     });
 
-    await new Promise((r) => setTimeout(r, 300));
-    repos.usage.flush();
-    const events = repos.usage.query({ limit: 10 });
+    const events = (await until(() => {
+      repos.usage.flush();
+      const rows = repos.usage.query({ limit: 10 });
+      return rows.length ? rows : null;
+    })) ?? [];
     expect(events).toHaveLength(1);
     expect(events[0].status).toBe("ok");
     // credit, not merely "not open": the failure count has to go back to zero

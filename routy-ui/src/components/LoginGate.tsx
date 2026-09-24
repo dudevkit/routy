@@ -53,7 +53,7 @@ export function LoginGate({ children }: { children: ReactNode }) {
 
   if (!state) {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-bg">
+      <div className="flex min-h-dvh w-full items-center justify-center bg-bg">
         <span className="text-xs text-text-subtle">connecting…</span>
       </div>
     );
@@ -61,7 +61,10 @@ export function LoginGate({ children }: { children: ReactNode }) {
 
   if (!state.authed) {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-bg p-6">
+      /* Top-offset rather than centred on phones: this field autofocuses, so the
+         keyboard is up before you look at it, and a vertically centred card ends up
+         half-hidden behind the keyboard with nothing to scroll. */
+      <div className="flex min-h-dvh w-full items-start justify-center bg-bg p-6 pt-[14vh] sm:items-center sm:pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
         <Card className="w-full max-w-sm p-6">
           <div className="mb-4 flex items-center gap-3">
             <Key size={22} className="text-text-subtle" />

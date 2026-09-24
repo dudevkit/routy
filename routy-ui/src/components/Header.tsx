@@ -5,6 +5,7 @@ import {
   ChartBar,
   Coins,
   Gear,
+  List,
   Network,
   SquaresFour,
   Stack,
@@ -35,14 +36,23 @@ function getPageInfo(pathname: string): PageInfo {
   return { title: "Overview", description: "Gateway health and activity", icon: SquaresFour };
 }
 
-export function Header() {
+export function Header({ onMenu }: { onMenu: () => void }) {
   const { pathname } = useLocation();
   const pageInfo = useMemo(() => getPageInfo(pathname), [pathname]);
   const gateway = useGateway();
   const { title, description, icon: Icon } = pageInfo;
 
   return (
-    <header className="shrink-0 flex items-center justify-between gap-3 px-4 lg:px-8 pt-3 pb-2 border-b border-border-subtle bg-surface/60 backdrop-blur-xl lg:bg-transparent lg:backdrop-blur-none z-20">
+    <header className="shrink-0 flex items-center gap-2 sm:gap-3 px-3 lg:px-8 pt-3 pb-2 border-b border-border-subtle bg-surface/60 backdrop-blur-xl lg:bg-transparent lg:backdrop-blur-none z-20">
+      {/* Below lg the rail is display:none, so this button is the only way to change
+          screen on a phone. */}
+      <button
+        onClick={onMenu}
+        aria-label="Open menu"
+        className="-ml-1.5 shrink-0 rounded-[10px] p-2 text-text-muted transition-colors hover:bg-surface-2 hover:text-text-main lg:hidden"
+      >
+        <List size={20} weight="bold" />
+      </button>
       {/* Page title */}
       <div className="flex flex-col min-w-0 flex-1">
         <div className="flex items-center gap-2.5">

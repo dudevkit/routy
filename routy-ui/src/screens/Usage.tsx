@@ -39,10 +39,10 @@ function JsonBlock({ text, truncated }: { text: string; truncated?: boolean }) {
 
   return (
     <div className="flex flex-col gap-1.5">
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-[10px] border border-border-subtle bg-bg p-3 font-mono text-[11px] leading-relaxed text-text-main custom-scrollbar">
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-[10px] border border-border-subtle bg-bg p-3 font-mono text-xs leading-relaxed text-text-main custom-scrollbar md:text-[11px]">
         {pretty}
       </pre>
-      {truncated && <p className="text-[10px] text-warning">payload truncated by the backend size cap</p>}
+      {truncated && <p className="text-xs text-warning md:text-[10px]">payload truncated by the backend size cap</p>}
     </div>
   );
 }
@@ -93,10 +93,10 @@ function OverviewTab({ rows }: { rows: UsageHistoryRow[] }) {
       </div>
 
       <Card padding="sm">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
             <ChartBar size={16} className="text-text-muted" />
-            <h3 className="text-sm font-semibold text-text-main">Last 24 hours</h3>
+            <h3 className="truncate text-sm font-semibold text-text-main">Last 24 hours</h3>
           </div>
           <Tabs
             size="sm"
@@ -213,58 +213,62 @@ function DetailsTab({ rows }: { rows: UsageHistoryRow[] }) {
             <p className="text-xs text-text-subtle">Request rows appear here as soon as the gateway serves traffic.</p>
           </div>
         ) : (
-          <table className="w-full">
-            <thead>
-              <tr className="bg-bg-alt text-left">
-                <th className="px-4 py-2 text-xs font-medium text-text-muted">Time</th>
-                <th className="px-4 py-2 text-xs font-medium text-text-muted">Model</th>
-                <th className="hidden px-4 py-2 text-xs font-medium text-text-muted md:table-cell">Node</th>
-                <th className="px-4 py-2 text-xs font-medium text-text-muted">Status</th>
-                <th className="hidden px-4 py-2 text-right text-xs font-medium text-text-muted sm:table-cell">Tokens</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-text-muted">TTFT</th>
-                <th className="hidden px-4 py-2 text-right text-xs font-medium text-text-muted lg:table-cell">Duration</th>
-                <th className="hidden px-4 py-2 text-right text-xs font-medium text-text-muted xl:table-cell">Cost</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr
-                  key={r.id}
-                  tabIndex={0}
-                  onClick={() => setOpen(r)}
-                  onKeyDown={(e) => e.key === "Enter" && setOpen(r)}
-                  className="cursor-pointer border-t border-border-subtle transition-colors hover:bg-surface-2/60 focus:bg-surface-2/60 focus:outline-none"
-                >
-                  <td className="px-4 py-2 font-mono text-xs text-text-muted tabular">{fmtClock(r.at)}</td>
-                  <td className="px-4 py-2 font-mono text-xs text-text-main">{r.model ?? "—"}</td>
-                  <td className="hidden px-4 py-2 text-xs text-text-muted md:table-cell">
-                    {r.node_id ? nodeNameById[r.node_id] ?? "—" : "—"}
-                  </td>
-                  <td className="px-4 py-2">
-                    {r.status === "ok" ? (
-                      <Badge variant="success" size="sm">
-                        ok
-                      </Badge>
-                    ) : (
-                      <Badge variant="error" size="sm">
-                        {r.error_code ?? r.status ?? "error"}
-                      </Badge>
-                    )}
-                  </td>
-                  <td className="hidden px-4 py-2 text-right font-mono text-xs text-text-main tabular sm:table-cell">
-                    {fmtTokens(TOTAL_TOKENS(r))}
-                  </td>
-                  <td className="px-4 py-2 text-right font-mono text-xs text-text-muted tabular">{fmtMs(r.ttft_ms)}</td>
-                  <td className="hidden px-4 py-2 text-right font-mono text-xs text-text-muted tabular lg:table-cell">
-                    {fmtMs(r.duration_ms)}
-                  </td>
-                  <td className="hidden px-4 py-2 text-right font-mono text-xs text-text-muted tabular xl:table-cell">
-                    {fmtCost(r.cost_usd)}
-                  </td>
+          <div className="w-full min-w-0 overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-bg-alt text-left">
+                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Time</th>
+                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Model</th>
+                  <th className="hidden px-4 py-2 text-xs font-medium text-text-muted md:table-cell">Node</th>
+                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Status</th>
+                  <th className="hidden px-4 py-2 text-right text-xs font-medium text-text-muted md:table-cell">Tokens</th>
+                  <th className="hidden px-4 py-2 text-right text-xs font-medium text-text-muted md:table-cell">TTFT</th>
+                  <th className="hidden px-4 py-2 text-right text-xs font-medium text-text-muted lg:table-cell">Duration</th>
+                  <th className="hidden px-4 py-2 text-right text-xs font-medium text-text-muted xl:table-cell">Cost</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr
+                    key={r.id}
+                    tabIndex={0}
+                    onClick={() => setOpen(r)}
+                    onKeyDown={(e) => e.key === "Enter" && setOpen(r)}
+                    className="cursor-pointer border-t border-border-subtle transition-colors hover:bg-surface-2/60 focus:bg-surface-2/60 focus:outline-none"
+                  >
+                    <td className="px-4 py-2 font-mono text-xs text-text-muted tabular">{fmtClock(r.at)}</td>
+                    <td className="px-4 py-2 font-mono text-xs text-text-main">{r.model ?? "—"}</td>
+                    <td className="hidden px-4 py-2 text-xs text-text-muted md:table-cell">
+                      {r.node_id ? nodeNameById[r.node_id] ?? "—" : "—"}
+                    </td>
+                    <td className="px-4 py-2">
+                      {r.status === "ok" ? (
+                        <Badge variant="success" size="sm">
+                          ok
+                        </Badge>
+                      ) : (
+                        <Badge variant="error" size="sm">
+                          {r.error_code ?? r.status ?? "error"}
+                        </Badge>
+                      )}
+                    </td>
+                    <td className="hidden px-4 py-2 text-right font-mono text-xs text-text-main tabular md:table-cell">
+                      {fmtTokens(TOTAL_TOKENS(r))}
+                    </td>
+                    <td className="hidden px-4 py-2 text-right font-mono text-xs text-text-muted tabular md:table-cell">
+                      {fmtMs(r.ttft_ms)}
+                    </td>
+                    <td className="hidden px-4 py-2 text-right font-mono text-xs text-text-muted tabular lg:table-cell">
+                      {fmtMs(r.duration_ms)}
+                    </td>
+                    <td className="hidden px-4 py-2 text-right font-mono text-xs text-text-muted tabular xl:table-cell">
+                      {fmtCost(r.cost_usd)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 
@@ -345,15 +349,15 @@ function QuotaTab({ rows }: { rows: UsageHistoryRow[] }) {
   return (
     <div className="flex flex-col gap-4">
       <Card padding="sm" className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-3">
-          <div>
+        <div className="flex flex-col items-start gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0">
             <h3 className="text-sm font-semibold text-text-main">Token share by node · 7d</h3>
             <p className="text-xs text-text-muted">
               Per-provider quota limits arrive with embedded providers — custom compatible nodes expose no quota API,
               so this is measured usage, not remaining allowance.
             </p>
           </div>
-          <CopyChip value={keyLine} label="router key" />
+          <CopyChip className="shrink-0" value={keyLine} label="router key" />
         </div>
 
         {byNode.length === 0 ? (
@@ -425,7 +429,11 @@ export function Usage() {
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Tabs value={tab} onChange={setTab} items={TABS} />
-        <span className="font-mono text-[11px] text-text-subtle">{gateway.data?.endpoint ?? ""}</span>
+        {/* The endpoint is the thing a phone user most needs to read (and copy), so it
+            wraps here rather than truncating with nothing to reveal the rest. */}
+        <span className="min-w-0 break-all font-mono text-xs text-text-subtle sm:truncate md:text-[11px]" title={gateway.data?.endpoint ?? ""}>
+          {gateway.data?.endpoint ?? ""}
+        </span>
       </div>
 
       {tab === "overview" && <OverviewTab rows={history.data ?? []} />}

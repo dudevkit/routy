@@ -125,7 +125,7 @@ function PoolCard({ pool }: { pool: ProxyPool }) {
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <StatusDot tone={pool.enabled ? "green" : "gray"} />
-          <h3 className="truncate text-sm font-semibold text-text-main">{pool.name}</h3>
+          <h3 className="min-w-0 break-words text-sm font-semibold text-text-main sm:truncate" title={pool.name}>{pool.name}</h3>
           <Badge variant="default" size="sm">
             {pool.kind}
           </Badge>
@@ -170,7 +170,7 @@ function PoolCard({ pool }: { pool: ProxyPool }) {
               ) : (
                 <XCircle size={12} className="shrink-0 text-danger" />
               )}
-              <span className="min-w-0 flex-1 truncate text-text-muted">{r.url}</span>
+              <span className="min-w-0 flex-1 break-all text-text-muted sm:truncate" title={r.url}>{r.url}</span>
               <span className="shrink-0 text-text-main tabular">{r.ok ? `${r.latencyMs}ms` : (r.error ?? "failed")}</span>
             </div>
           ))}

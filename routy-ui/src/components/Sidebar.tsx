@@ -46,7 +46,7 @@ function NavItem({ to, label, icon: Icon, end }: NavItemSpec) {
       end={end}
       className={({ isActive }) =>
         cn(
-          "relative flex items-center gap-2.5 rounded-md px-2.5 py-1 transition-colors duration-150",
+          "relative flex min-h-11 items-center gap-2.5 rounded-md px-2.5 py-1.5 transition-colors duration-150 lg:min-h-0 lg:py-1",
           isActive ? "text-primary" : "text-text-muted hover:text-text-main",
         )
       }
@@ -58,7 +58,7 @@ function NavItem({ to, label, icon: Icon, end }: NavItemSpec) {
             <span className="absolute -left-[11px] top-1/2 h-4 w-[2px] -translate-y-1/2 rounded-full bg-primary" />
           )}
           <Icon size={17} weight={isActive ? "fill" : "regular"} className="shrink-0" />
-          <span className={cn("text-[13px]", isActive ? "font-semibold" : "font-medium")}>{label}</span>
+          <span className={cn("text-sm lg:text-[13px]", isActive ? "font-semibold" : "font-medium")}>{label}</span>
         </>
       )}
     </NavLink>
@@ -70,7 +70,7 @@ export function Sidebar() {
   // sidebar ends up advertising a version the process is not running.
   const gateway = useGateway();
   return (
-    <aside className="flex w-72 flex-col border-r border-border-subtle bg-vibrancy backdrop-blur-xl min-h-full">
+    <aside className="flex w-full flex-col border-r border-border-subtle bg-vibrancy backdrop-blur-xl min-h-full">
       {/* Wordmark block — the rail's top anchor (traffic lights removed) */}
       <div className="px-6 pt-6 pb-3">
         <NavLink to="/" className="flex flex-col items-start gap-1">

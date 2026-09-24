@@ -213,15 +213,15 @@ function ModelsTab({ node }: { node: UpstreamNode }) {
           >
             Import from provider
           </Button>
-          <span className="text-[11px] text-text-subtle">optional — add ids by hand instead</span>
+          <span className="text-xs text-text-subtle sm:text-[11px]">optional — add ids by hand instead</span>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
             <input
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
               placeholder="model-id"
-              className="w-52 rounded-md border border-border-subtle bg-surface-2 px-3 py-1.5 font-mono text-xs text-text-main placeholder:text-text-main/40 focus:outline-none focus:ring-2 focus:ring-accent/40"
+              className="w-52 min-w-0 rounded-md border border-border-subtle bg-surface-2 px-3 py-1.5 font-mono text-xs text-text-main placeholder:text-text-main/40 focus:outline-none focus:ring-2 focus:ring-accent/40"
             />
             <Button variant="primary" size="sm" icon={<Plus size={14} />} disabled={!draft.trim()} loading={addModel.isPending} onClick={submit}>
               Add model
@@ -263,6 +263,7 @@ function ModelsTab({ node }: { node: UpstreamNode }) {
           </div>
         )}
 
+        <div className="w-full overflow-x-auto">
         <table className="w-full">
           <thead>
             <tr className="border-b border-border-subtle">
@@ -278,9 +279,9 @@ function ModelsTab({ node }: { node: UpstreamNode }) {
                 </th>
               )}
               <th className={TH}>Model</th>
-              <th className={TH}>Source</th>
+              <th className={cn(TH, "hidden md:table-cell")}>Source</th>
               <th className={TH}>State</th>
-              <th className={TH}>Last test</th>
+              <th className={cn(TH, "hidden md:table-cell")}>Last test</th>
               <th className={`${TH} text-right`}>Actions</th>
             </tr>
           </thead>
@@ -314,11 +315,11 @@ function ModelsTab({ node }: { node: UpstreamNode }) {
                   )}
                   <td className={`${TD} font-mono text-xs`}>
                     <div className="flex items-center gap-1">
-                      <span className="truncate">{row.model}</span>
+                      <span className="truncate" title={row.model}>{row.model}</span>
                       <CopyButton value={routableId(row.model)} title={`Copy ${routableId(row.model)}`} />
                     </div>
                   </td>
-                  <td className={TD}>
+                  <td className={cn(TD, "hidden md:table-cell")}>
                     <Badge variant={row.source === "manual" ? "default" : "info"} size="sm">{row.source}</Badge>
                   </td>
                   <td className={TD}>
@@ -328,7 +329,7 @@ function ModelsTab({ node }: { node: UpstreamNode }) {
                       {row.enabled && !row.stale && <span className="text-xs text-text-subtle">listed</span>}
                     </div>
                   </td>
-                  <td className={TD}>
+                  <td className={cn(TD, "hidden md:table-cell")}>
                     <TestCell at={row.lastTestAt} ok={row.lastTestOk} ms={row.lastTestTtftMs} error={row.lastTestError} />
                   </td>
                   <td className={`${TD} text-right`}>
@@ -359,6 +360,7 @@ function ModelsTab({ node }: { node: UpstreamNode }) {
             )}
           </tbody>
         </table>
+        </div>
       </Card>
 
       {bulkResults && (
@@ -372,7 +374,7 @@ function ModelsTab({ node }: { node: UpstreamNode }) {
           <div className="flex max-h-64 flex-col gap-1 overflow-y-auto">
             {bulkResults.map((r) => (
               <div key={r.modelId} className="flex items-center gap-3 text-xs">
-                <span className="w-64 truncate font-mono text-text-main">{r.model}</span>
+                <span className="w-64 min-w-0 truncate font-mono text-text-main" title={r.model}>{r.model}</span>
                 <TestCell at="now" ok={r.ok} ms={r.ttftMs} error={r.error} />
               </div>
             ))}
@@ -428,7 +430,7 @@ function ModelsTab({ node }: { node: UpstreamNode }) {
         </p>
         <div className="mt-3 max-h-40 overflow-y-auto rounded-md border border-border-subtle bg-surface-2 p-2">
           {selectedRows.map((r) => (
-            <div key={r.id} className="truncate font-mono text-[11px] text-text-muted">{r.model}</div>
+            <div key={r.id} className="break-all font-mono text-xs text-text-muted sm:truncate sm:text-[11px]" title={r.model}>{r.model}</div>
           ))}
         </div>
       </Modal>
@@ -552,13 +554,14 @@ function KeysTab({ node }: { node: UpstreamNode }) {
           </Button>
         </div>
 
+        <div className="w-full overflow-x-auto">
         <table className="w-full">
           <thead>
             <tr className="border-b border-border-subtle">
               <th className={TH}>Label</th>
-              <th className={TH}>Key</th>
+              <th className={cn(TH, "hidden md:table-cell")}>Key</th>
               <th className={TH}>Status</th>
-              <th className={TH}>Last test</th>
+              <th className={cn(TH, "hidden md:table-cell")}>Last test</th>
               <th className={`${TH} text-right`}>Actions</th>
             </tr>
           </thead>
@@ -573,11 +576,11 @@ function KeysTab({ node }: { node: UpstreamNode }) {
               conns.map((c) => (
                 <tr key={c.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-2/40">
                   <td className={TD}>{c.name || "key"}</td>
-                  <td className={`${TD} font-mono text-xs text-text-muted`}>{c.keyMasked}</td>
+                  <td className={cn(TD, "hidden md:table-cell font-mono text-xs text-text-muted")}>{c.keyMasked}</td>
                   <td className={TD}>
                     <Badge variant={c.status === "active" ? "success" : "default"} size="sm">{c.status ?? "active"}</Badge>
                   </td>
-                  <td className={TD}>
+                  <td className={cn(TD, "hidden md:table-cell")}>
                     <TestCell at={c.lastTestAt} ok={c.lastTestOk} ms={c.lastTestTtftMs} error={c.lastError} />
                   </td>
                   <td className={`${TD} text-right`}>
@@ -600,6 +603,7 @@ function KeysTab({ node }: { node: UpstreamNode }) {
             )}
           </tbody>
         </table>
+        </div>
       </Card>
 
       {allResults && (
@@ -611,7 +615,7 @@ function KeysTab({ node }: { node: UpstreamNode }) {
           <div className="flex flex-col gap-1">
             {allResults.map((r) => (
               <div key={r.connectionId} className="flex items-center gap-3 text-xs">
-                <span className="w-40 truncate text-text-main">{r.name || r.connectionId}</span>
+                <span className="w-40 min-w-0 truncate text-text-main" title={r.name || r.connectionId}>{r.name || r.connectionId}</span>
                 <TestCell at={r.ok ? "now" : "now"} ok={r.ok} ms={r.latencyMs} error={r.error} />
                 <span className="text-text-subtle">{r.modelCount} models</span>
               </div>
@@ -826,9 +830,9 @@ export function ProviderDetail() {
           <Badge variant={status.badge} dot size="sm">{status.label}</Badge>
           <span className="font-mono text-xs text-text-muted">{node.prefix}/</span>
           <span className="font-mono text-xs text-text-subtle">{node.latencyMs !== null ? fmtMs(node.latencyMs) : "no TTFT yet"}</span>
-          {node.lastError && <span className="truncate text-xs text-danger max-w-[40ch]" title={node.lastError}>{node.lastError}</span>}
+          {node.lastError && <span className="min-w-0 max-w-[40ch] truncate text-xs text-danger" title={node.lastError}>{node.lastError}</span>}
         </div>
-        <span className="font-mono text-[11px] text-text-subtle break-all">{node.baseUrl}</span>
+        <span className="font-mono text-xs break-all text-text-subtle sm:text-[11px]">{node.baseUrl}</span>
       </div>
 
       <Tabs

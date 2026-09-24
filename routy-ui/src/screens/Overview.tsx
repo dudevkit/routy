@@ -28,7 +28,11 @@ function HealthCard({ node, onRemove }: { node: UpstreamNode; onRemove: (node: U
     <Card padding="sm" className="flex flex-col gap-2">
       <div className="flex min-w-0 items-center gap-2">
         <StatusDot tone={meta.dot} />
-        <span className="truncate text-sm font-semibold text-text-main">{node.name}</span>
+        {/* Wraps instead of truncating on phones — a provider name cut at 164px of 304px
+            is unreadable and (no hover on touch) unrecoverable. */}
+        <span className="min-w-0 break-words text-sm font-semibold text-text-main sm:truncate" title={node.name}>
+          {node.name}
+        </span>
         <Badge variant={meta.badge} size="sm" dot>
           {meta.label}
         </Badge>
@@ -48,7 +52,10 @@ function HealthCard({ node, onRemove }: { node: UpstreamNode; onRemove: (node: U
         </button>
       </div>
 
-      <div className="truncate font-mono text-[11px] text-text-muted">{node.baseUrl}</div>
+      {/* break-all, not break-words: a URL has no spaces to break on */}
+      <div className="min-w-0 break-all font-mono text-[11px] text-text-muted sm:truncate" title={node.baseUrl}>
+        {node.baseUrl}
+      </div>
 
       <div className="flex items-center gap-3 font-mono text-[11px] text-text-muted tabular">
         <span>{fmtMs(node.latencyMs)}</span>
@@ -56,7 +63,9 @@ function HealthCard({ node, onRemove }: { node: UpstreamNode; onRemove: (node: U
         <span className="ml-auto">{node.keyMasked}</span>
       </div>
 
-      {node.lastError && <p className="truncate font-mono text-[11px] text-danger">{node.lastError}</p>}
+      <p className="min-w-0 break-words font-mono text-[11px] text-danger sm:truncate" title={node.lastError}>
+        {node.lastError}
+      </p>
 
       {node.status === "down" && (
         <Button
