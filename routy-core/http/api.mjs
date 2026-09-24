@@ -6,6 +6,16 @@ import { COMBO_STRATEGIES } from "../core/routing.mjs";
 import { budgetSpent } from "../core/budget.mjs";
 import { probeNode, probeKey, probeModel, mapLimit } from "../core/probe.mjs";
 import { clearLogs, log, recentLogs, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
+import {
+  DEFAULT_PASSWORD,
+  clearSessionCookieHeader,
+  createSessionToken,
+  hashPassword,
+  readSessionCookie,
+  sessionCookieHeader,
+  verifyPassword,
+  verifySessionToken,
+} from "../lib/auth.mjs";
 import { checkForUpdate, updateState } from "../core/updates.mjs";
 import { RESTART_FOR_UPDATE, applyUpdate } from "../core/update-apply.mjs";
 import { getDispatcher, undiciFetch } from "../core/executors/pool.mjs";
@@ -20,24 +30,36 @@ export function isLoopback(req) {
 }
 
 /**
- * Who may reach /api.
+ * May this request manage the gateway?
  *
- * Loopback always may — that is the dashboard on the gateway's own machine. For any
- * other peer the answer is "yes, unless the operator turned the token on": routy is a
- * local gateway, and demanding a credential before the dashboard will render is
- * friction where the user expects it to work. Turning it on is for the case where the
- * gateway is reachable from somewhere you do not control.
+ * Loopback always may — that is the dashboard on the machine running routy, and
+ * asking it to log in to itself is friction with no security value. So does a valid
+ * session cookie, and so does anyone when the operator has turned the login off.
  *
- * This is only the /api surface. /v1 has always required a client key from a
- * non-loopback peer, and still does.
+ * This is only the /api surface. /v1 has its own client-key auth and is unaffected —
+ * a client never sees this.
  */
-export function mgmtAuthorized(req, cfg, requireToken = false) {
+export function dashboardAuthorized(req, { requireLogin = true, sessionKey = null } = {}) {
   if (isLoopback(req)) return true;
-  if (!requireToken) return true;
-  const h = req.headers.authorization || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  return !!m && m[1].trim() === cfg.bootstrapToken;
+  if (!requireLogin) return true;
+  return verifySessionToken(readSessionCookie(req), sessionKey);
 }
+
+/**
+ * Paths the login page needs before it can authenticate: it cannot present a form it
+ * is not allowed to load, and it cannot post a password to a gated endpoint.
+ *
+ * Deliberately small. /api/health and /api/version are here so the shell can tell
+ * "gateway down" from "not signed in", which are different problems with different
+ * fixes.
+ */
+export const PUBLIC_API_PATHS = new Set([
+  "/api/auth",
+  "/api/auth/login",
+  "/api/auth/logout",
+  "/api/health",
+  "/api/version",
+]);
 
 /**
  * Guard for state-changing endpoints a browser could be tricked into calling.
@@ -405,19 +427,54 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     json(res, 200, repos.requestDetails.list({ limit }));
   });
 
-  // gateway info + health/version
+  // ── dashboard auth ────────────────────────────────────────────────────────
   //
-  // Reachable without a token (server.mjs exempts it). It answers two questions the
-  // dashboard cannot answer any other way — does this peer need a token, and is this
-  // gateway sitting unlocked on a network — and never returns the token itself.
+  // All three are reachable without a session (server.mjs exempts them): the login
+  // page cannot present a form it is not allowed to load. None of them ever returns
+  // the password or its hash.
   route("GET", /^\/api\/auth$/, (req, res) => {
-    const requireToken = cfg.requireToken ?? repos.settings.get("requireToken", false);
+    const { authed = true, requireLogin = true } = req.routyAuth ?? {};
     const networkBound = cfg.host !== "127.0.0.1" && cfg.host !== "::1" && cfg.host !== "localhost";
     json(res, 200, {
-      required: requireToken && !isLoopback(req),
-      unlockedNetwork: networkBound && !requireToken,
+      // whatever the guard decided for this request — not a second opinion
+      authed,
+      requireLogin,
+      // the banner case: reachable from the network with no login at all
+      unlockedNetwork: networkBound && !requireLogin,
+      passwordIsDefault: !repos.settings.get("passwordHash"),
     });
   });
+
+  route("POST", /^\/api\/auth\/login$/, async (req, res) => {
+    const input = JSON.parse((await readBody(req)).toString("utf8") || "{}");
+    const stored = repos.settings.get("passwordHash");
+    // No hash set yet means the documented default, overridable with INITIAL_PASSWORD
+    // for anyone provisioning a fleet who does not want 123456 to exist even briefly.
+    const ok = stored
+      ? verifyPassword(input?.password, stored)
+      : String(input?.password ?? "") === (process.env.INITIAL_PASSWORD || DEFAULT_PASSWORD);
+
+    if (!ok) {
+      log.warn("AUTH", "failed dashboard login", { peer: req.socket?.remoteAddress ?? "?" });
+      return json(res, 401, { error: { message: "auth_error", detail: "incorrect password" } });
+    }
+
+    const { sessionKey } = req.routyAuth ?? {};
+    const token = createSessionToken(sessionKey);
+    // Secure only when the request arrived over TLS — setting it on plain HTTP would
+    // make the cookie vanish and the login silently never stick.
+    const secure = (req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
+    res.setHeader("set-cookie", sessionCookieHeader(token, { secure }));
+    log.info("AUTH", "dashboard login");
+    json(res, 200, { ok: true });
+  });
+
+  route("POST", /^\/api\/auth\/logout$/, (req, res) => {
+    res.setHeader("set-cookie", clearSessionCookieHeader());
+    json(res, 200, { ok: true });
+  });
+
+  // gateway info + health/version
   route("GET", /^\/api\/health$/, (req, res) => json(res, 200, { status: "ok", uptimeMs: Date.now() - (globalThis.__bootedAt || Date.now()) }));
   route("GET", /^\/api\/version$/, (req, res) => json(res, 200, { version, name: "routy" }));
   route("GET", /^\/api\/gateway$/, (req, res) => json(res, 200, gatewayInfo(repos, cfg, version, req)));
@@ -430,11 +487,31 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   });
 
   // settings
-  route("GET", /^\/api\/settings$/, (req, res) => json(res, 200, repos.settings.all()));
+  //
+  // passwordHash never leaves the process. It is not the plaintext, but it is the one
+  // value whose theft is equivalent to knowing the password, so it has no business in
+  // a response body or in the dashboard's state.
+  const publicSettings = () => {
+    const { passwordHash, ...rest } = repos.settings.all();
+    return { ...rest, passwordIsDefault: !passwordHash };
+  };
+
+  route("GET", /^\/api\/settings$/, (req, res) => json(res, 200, publicSettings()));
   route("PUT", /^\/api\/settings$/, async (req, res) => {
     const patch = JSON.parse((await readBody(req)).toString("utf8"));
     if (patch.logLevel !== undefined && !["debug", "info", "warn", "error"].includes(patch.logLevel)) {
       return json(res, 400, { error: { message: "bad_request", detail: "logLevel must be debug | info | warn | error" } });
+    }
+    // A plaintext password in, a hash stored. Six characters is the floor: the default
+    // is 123456, and a shorter one would be a downgrade dressed as a setting.
+    if (patch.password !== undefined) {
+      const next = String(patch.password);
+      if (next.length < 6) {
+        return json(res, 400, { error: { message: "bad_request", detail: "password must be at least 6 characters" } });
+      }
+      patch.passwordHash = hashPassword(next);
+      delete patch.password;
+      log.info("AUTH", "dashboard password changed");
     }
     repos.settings.update(patch);
     // log level is live: flipping to debug must not need a restart to trace a request
@@ -442,7 +519,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       setLogLevel(patch.logLevel);
       log.info("LOG", `capture level set to ${patch.logLevel}`);
     }
-    json(res, 200, repos.settings.all());
+    json(res, 200, publicSettings());
   });
 
   // ── updates ───────────────────────────────────────────────────────────────

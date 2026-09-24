@@ -98,44 +98,48 @@ a service, a script, or a terminal you want to leave alone. With no terminal att
 
 ## Using the dashboard from another device
 
-The gateway listens on the network, and the dashboard works from any device with no
-setup — open `http://<server>:8010` and it loads. That is deliberate: routy is a local
-gateway, and a credential before the dashboard renders is friction where you expect it
-to just work.
+Open `http://<server>:8010` from your laptop or phone and you get a login:
 
-**The trade is stated rather than hidden.** While the management API is unlocked on a
-network, the dashboard shows a banner and the boot log says so once:
+```
+  Sign in to routy
+
+    password  [            ]
+    [ Sign in ]
+
+  Still on the default password: 123456. Change it in Settings once you are in.
+```
+
+**The default password is `123456`** — the way a router's admin page ships with one. It
+keeps the dashboard reachable from anywhere without a setup step, while still refusing
+anonymous access. Change it in **Settings → Access → Dashboard password**.
+
+You enter it **once per browser**: the server sets an `HttpOnly` session cookie, so the
+browser sends it from then on, and no script on the page can read it. Changing the
+password signs out every other device.
+
+**Loopback is trusted**, so the dashboard on the gateway's own machine is never asked to
+sign in to itself.
+
+### What the login protects
+
+Without it, a peer that can reach the port can read your **client API keys** (the
+dashboard shows them so you can copy them) and rewrite the **CLI tool configs** on the
+machine running routy. They cannot read your provider keys — those are masked — and they
+cannot run code, because updates are signature-verified.
+
+### Turning the login off
+
+**Settings → Access → Require a login for the dashboard.** With it off the dashboard
+shows a banner and the boot log says so once, because the exposure above is then real
+and unmitigated:
 
 ```
 listening on the network with the management API unlocked
   anyone who can reach this port can read client keys and edit CLI tool configs
 ```
 
-That is the actual exposure. A peer that can reach the port can read your **client API
-keys** (the dashboard shows them so you can copy them) and rewrite the **CLI tool
-configs** on the machine running routy. They cannot read your provider keys — those are
-masked — and they cannot run code, because updates are signature-verified.
-
-### Locking it down
-
-Turn on **Settings → Access → Require a management token for `/api`**, or set
-`ROUTY_REQUIRE_TOKEN=1`. The dashboard then asks once per browser:
-
-```
-  Management token required
-
-    journalctl -u routy | grep managementToken
-```
-
-The token is generated when you turn this on, kept in `~/.routy/mgmt-token`, and stays
-the same across restarts — a one-time step, not a per-session one.
-
-Do this if the gateway is reachable from somewhere you do not control: a VPS with a
-public address, an office or shared network, a machine on the open internet. On a home
-LAN behind a router, the default is reasonable.
-
-`ROUTY_HOST=127.0.0.1` is the other option — bind loopback and nothing outside the
-machine can reach the management API at all, with no token needed.
+`ROUTY_HOST=127.0.0.1` is the other way to make the question moot: bind loopback, and
+nothing outside the machine can reach the management API at all.
 
 ## Environment variables
 

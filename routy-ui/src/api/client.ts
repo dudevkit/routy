@@ -41,7 +41,7 @@ import type {
   UsageHistoryRow,
   UsageStats,
 } from "./types";
-import { getToken, signalUnauthorized } from "./auth";
+import { signalUnauthorized } from "./auth";
 
 /** Structured API failure: message + detail + retry hint, ready for the UI to render. */
 export class ApiRequestError extends Error {
@@ -109,40 +109,28 @@ async function json<T>(res: Response): Promise<T> {
  * Every mutating request carries this header. It is not authentication — it forces a
  * CORS preflight, which a cross-origin page cannot satisfy, so a hostile tab cannot
  * drive the gateway by POSTing to 127.0.0.1. Endpoints that care reject its absence.
+ *
+ * Auth itself needs nothing here: the session is an HttpOnly cookie, which the browser
+ * attaches to every same-origin request without being asked.
  */
 const ACTION = { "x-routy-action": "1" };
 
-/**
- * The management token, when we have one. Empty from loopback (where /api is open),
- * present once the dashboard has been used from another device. Sent on every
- * request rather than only after a 401, so a token that gets rotated does not need a
- * failed round trip to be noticed.
- */
-const authHeaders = (): Record<string, string> => {
-  const token = getToken();
-  return token ? { authorization: `Bearer ${token}` } : {};
-};
-
 /** Explicit generics at each call site — `.then(json)` alone loses `T`. */
-const getJson = <T,>(path: string): Promise<T> =>
-  fetch(path, { headers: { ...authHeaders() } }).then((res) => json<T>(res));
+const getJson = <T,>(path: string): Promise<T> => fetch(path).then((res) => json<T>(res));
 const postJson = <T,>(path: string, body?: unknown): Promise<T> =>
   fetch(path, {
     method: "POST",
-    headers:
-      body === undefined
-        ? { ...ACTION, ...authHeaders() }
-        : { ...ACTION, ...authHeaders(), "content-type": "application/json" },
+    headers: body === undefined ? { ...ACTION } : { ...ACTION, "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   }).then((res) => json<T>(res));
 const putJson = <T,>(path: string, body: unknown): Promise<T> =>
   fetch(path, {
     method: "PUT",
-    headers: { ...ACTION, ...authHeaders(), "content-type": "application/json" },
+    headers: { ...ACTION, "content-type": "application/json" },
     body: JSON.stringify(body),
   }).then((res) => json<T>(res));
 const deleteJson = (path: string): Promise<void> =>
-  fetch(path, { method: "DELETE", headers: { ...ACTION, ...authHeaders() } }).then((res) => json<void>(res));
+  fetch(path, { method: "DELETE", headers: { ...ACTION } }).then((res) => json<void>(res));
 
 const qs = (params: Record<string, string | number | undefined>) => {
   const sp = new URLSearchParams();
@@ -205,7 +193,7 @@ export function streamLogs(handlers: LogStreamHandlers, level?: StreamLevel): ()
   void (async () => {
     try {
       const res = await fetch(LOG_STREAM_URL + qs({ level }), {
-        headers: { ...authHeaders(), accept: "text/event-stream" },
+        headers: { accept: "text/event-stream" },
         signal: controller.signal,
       });
       if (!res.ok) {

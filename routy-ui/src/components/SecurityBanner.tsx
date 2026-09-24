@@ -1,16 +1,15 @@
 import { Warning } from "./icons";
 
 /**
- * Shown when the gateway is listening on a network with the management API unlocked.
+ * Shown when the gateway is listening on a network with the dashboard login turned off.
  *
  * Not dismissible. It is a statement about the gateway's current state, not a notice:
  * anyone who can reach this port can read the client keys and edit the CLI tool
- * configs on the machine running routy. It goes away when the state does — turn on
- * "Require token" in Settings, or bind loopback.
+ * configs on the machine running routy. It goes away when the state does — turn the
+ * login back on in Settings, or bind loopback.
  *
- * The point is consent rather than a wall. The default is open because this is a local
- * gateway and a credential before the dashboard renders is friction nobody asked for;
- * a banner is the honest version of that trade.
+ * The default is a login with a known password, so this banner should be rare: you
+ * have to have deliberately switched the login off.
  */
 export function SecurityBanner() {
   return (
@@ -20,11 +19,11 @@ export function SecurityBanner() {
     >
       <Warning size={14} className="shrink-0 text-warning" />
       <span>
-        Listening on the network with the management API unlocked — anyone who can reach this port can
-        read your client keys and edit CLI tool configs.
+        Listening on the network with the dashboard login turned off — anyone who can reach this port
+        can read your client keys and edit CLI tool configs.
       </span>
       <a href="/settings" className="ml-auto shrink-0 whitespace-nowrap text-warning underline">
-        Lock it down
+        Turn it on
       </a>
     </div>
   );

@@ -6,8 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
-import { buildApiRoutes, mgmtAuthorized } from "../http/api.mjs";
-import { loadOrCreateManagementToken } from "../lib/auth.mjs";
+import { buildApiRoutes, dashboardAuthorized } from "../http/api.mjs";
+import { createSessionToken, hashPassword, loadOrCreateSessionKey, verifyPassword, verifySessionToken } from "../lib/auth.mjs";
 import { createRouter } from "../lib/router.mjs";
 
 let tmp, db, repos, server, handlerPort, stubServer, stubPort, stubState, cfg;
@@ -197,27 +197,31 @@ describe("management API", () => {
     expect(captured).toContain("live line arrives");
   });
 
-  it("guards /api for non-loopback peers once the token is required", () => {
-    const fakeReq = (addr, auth) => ({ socket: { remoteAddress: addr }, headers: auth ? { authorization: `Bearer ${auth}` } : {} });
-    // loopback is always allowed, token or not — that is the dashboard on this machine
-    expect(mgmtAuthorized(fakeReq("127.0.0.1"), cfg, true)).toBe(true);
-    expect(mgmtAuthorized(fakeReq("127.0.0.1"), cfg, false)).toBe(true);
-    // token off (the default): any peer is allowed, which is the whole point
-    expect(mgmtAuthorized(fakeReq("10.1.2.3"), cfg, false)).toBe(true);
-    // token on: a non-loopback peer must present it
-    expect(mgmtAuthorized(fakeReq("10.1.2.3"), cfg, true)).toBe(false);
-    expect(mgmtAuthorized(fakeReq("10.1.2.3", "tok-123"), cfg, true)).toBe(true);
-    expect(mgmtAuthorized(fakeReq("10.1.2.3", "wrong"), cfg, true)).toBe(false);
+  it("trusts loopback and a valid session, and nothing else", () => {
+    const key = "test-session-key-that-is-long-enough";
+    const withCookie = (addr, cookie) => ({ socket: { remoteAddress: addr }, headers: cookie ? { cookie } : {} });
+
+    // loopback never signs in to itself
+    expect(dashboardAuthorized(withCookie("127.0.0.1"), { requireLogin: true, sessionKey: key })).toBe(true);
+    // login turned off: any peer is allowed, which is the whole point of the toggle
+    expect(dashboardAuthorized(withCookie("10.1.2.3"), { requireLogin: false, sessionKey: key })).toBe(true);
+    // login on, no cookie
+    expect(dashboardAuthorized(withCookie("10.1.2.3"), { requireLogin: true, sessionKey: key })).toBe(false);
+    // login on, valid cookie
+    expect(dashboardAuthorized(withCookie("10.1.2.3", `routy_session=${createSessionToken(key)}`), { requireLogin: true, sessionKey: key })).toBe(true);
+    // a cookie signed with a different key is not a session
+    expect(dashboardAuthorized(withCookie("10.1.2.3", `routy_session=${createSessionToken("some-other-key")}`), { requireLogin: true, sessionKey: key })).toBe(false);
   });
 
-  it("tells the dashboard whether this peer needs the token", async () => {
-    // The one /api path a peer reaches unauthenticated, so the shell can decide
-    // between the gate and the app. It must never return the token itself.
+  it("reports what the guard decided, so the shell can render the right thing", async () => {
     const r = await get("/api/auth");
     expect(r.status).toBe(200);
-    expect(r.body.required).toBe(false); // the harness connects over loopback, always open
+    expect(r.body.authed).toBe(true); // the harness connects over loopback
+    expect(typeof r.body.requireLogin).toBe("boolean");
     expect(typeof r.body.unlockedNetwork).toBe("boolean");
+    expect(JSON.stringify(r.body)).not.toContain("passwordHash");
   });
+
 });
 
 describe("gateway info", () => {
@@ -241,28 +245,62 @@ describe("gateway info", () => {
   });
 });
 
-describe("management token", () => {
-  it("is created once and reused, so a dashboard stays logged in", () => {
-    // It used to be regenerated every boot. That was fine while /api was loopback
-    // only, but the gateway now listens on the network, and a token that changes on
-    // every restart would log the dashboard out every time the service bounced.
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "routy-tok-"));
-    const first = loadOrCreateManagementToken(home);
-    expect(first.created).toBe(true);
+describe("dashboard password", () => {
+  it("round-trips a password and rejects the wrong one", () => {
+    const stored = hashPassword("correct horse");
+    expect(verifyPassword("correct horse", stored)).toBe(true);
+    expect(verifyPassword("Correct horse", stored)).toBe(false);
+    expect(verifyPassword("", stored)).toBe(false);
+    // the hash carries its own parameters, so changing the cost is not a lockout
+    expect(stored.startsWith("scrypt$")).toBe(true);
+    expect(stored).not.toContain("correct horse");
+  });
 
-    const second = loadOrCreateManagementToken(home);
-    expect(second.created).toBe(false);
-    expect(second.token).toBe(first.token);
+  it("rejects a malformed or foreign hash rather than throwing", () => {
+    expect(verifyPassword("x", "not-a-hash")).toBe(false);
+    expect(verifyPassword("x", "bcrypt$whatever")).toBe(false);
+    expect(verifyPassword("x", "")).toBe(false);
+  });
 
+  it("salted: the same password hashes differently every time", () => {
+    expect(hashPassword("same")).not.toBe(hashPassword("same"));
+  });
+});
+
+describe("session tokens", () => {
+  const key = "a-key-that-is-definitely-long-enough";
+
+  it("accepts what it signed, rejects a tampered token", () => {
+    const token = createSessionToken(key);
+    expect(verifySessionToken(token, key)).toBe(true);
+    expect(verifySessionToken(`${token}x`, key)).toBe(false);
+    expect(verifySessionToken(token.replace(/^\d+/, "9999999999999"), key)).toBe(false);
+    expect(verifySessionToken("garbage", key)).toBe(false);
+    expect(verifySessionToken("", key)).toBe(false);
+    expect(verifySessionToken(token, "another-key")).toBe(false);
+  });
+
+  it("expires", () => {
+    const issued = Date.now() - 31 * 24 * 60 * 60 * 1000;
+    const token = createSessionToken(key, issued);
+    expect(verifySessionToken(token, key, issued + 1000)).toBe(true);
+    expect(verifySessionToken(token, key, Date.now())).toBe(false);
+  });
+});
+
+describe("session key", () => {
+  it("is created once and reused, so a login survives a restart", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "routy-session-"));
+    const first = loadOrCreateSessionKey(home);
+    expect(first.length).toBeGreaterThanOrEqual(32);
+    expect(loadOrCreateSessionKey(home)).toBe(first);
     fs.rmSync(home, { recursive: true, force: true });
   });
 
-  it("replaces a truncated token file instead of accepting it", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "routy-tok-"));
-    fs.writeFileSync(path.join(home, "mgmt-token"), "short\n");
-    const result = loadOrCreateManagementToken(home);
-    expect(result.created).toBe(true);
-    expect(result.token.length).toBeGreaterThanOrEqual(32);
+  it("replaces a truncated key file instead of accepting it", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "routy-session-"));
+    fs.writeFileSync(path.join(home, "session-key"), "short\n");
+    expect(loadOrCreateSessionKey(home).length).toBeGreaterThanOrEqual(32);
     fs.rmSync(home, { recursive: true, force: true });
   });
 });

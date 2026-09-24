@@ -1,46 +1,69 @@
 /**
- * Management token, for using the dashboard from another device.
+ * Dashboard auth.
  *
- * `/api` is open to loopback and requires a token from anywhere else — which is
- * every time you open the dashboard on your laptop and the gateway is on your
- * server. The token lives in the state directory (`mgmt-token`) and is printed at
- * boot, so it survives restarts: store it once and the dashboard keeps working.
+ * There is no credential for the client to hold: the session is an HttpOnly cookie the
+ * server sets, so the browser attaches it to every same-origin request on its own, and
+ * no script on the page can read it. That is strictly better than the token this
+ * replaced, which lived in localStorage where any injected script could take it.
  *
- * It is a credential, not a session — the same token authenticates every request.
- * Kept in localStorage because the alternative (in memory) means re-entering it on
- * every page load, which is the annoyance this exists to remove.
+ * All this module does is ask the gateway what it wants and tell the shell when the
+ * answer changes.
  */
-const STORAGE_KEY = "routy.mgmtToken";
+export interface AuthState {
+  /** this request was allowed through */
+  authed: boolean;
+  /** a login is required for non-loopback peers */
+  requireLogin: boolean;
+  /** reachable from the network with no login at all — the banner case */
+  unlockedNetwork: boolean;
+  /** still on the shipped default password */
+  passwordIsDefault: boolean;
+}
 
-export function getToken(): string | null {
+const UNKNOWN: AuthState = {
+  authed: true,
+  requireLogin: true,
+  unlockedNetwork: false,
+  passwordIsDefault: false,
+};
+
+export async function fetchAuthState(): Promise<AuthState> {
   try {
-    const value = localStorage.getItem(STORAGE_KEY);
-    return value && value.trim() ? value.trim() : null;
+    const res = await fetch("/api/auth");
+    if (!res.ok) return UNKNOWN;
+    const body: unknown = await res.json();
+    if (typeof body !== "object" || body === null) return UNKNOWN;
+    const rec = body as Record<string, unknown>;
+    return {
+      authed: rec.authed === true,
+      requireLogin: rec.requireLogin !== false,
+      unlockedNetwork: rec.unlockedNetwork === true,
+      passwordIsDefault: rec.passwordIsDefault === true,
+    };
   } catch {
-    return null; // private mode, or storage disabled
+    return UNKNOWN; // a network failure is not an auth problem
   }
 }
 
-export function setToken(token: string): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, token.trim());
-  } catch {
-    /* private mode — the token works for this page load only */
-  }
+export async function login(password: string): Promise<{ ok: boolean; detail?: string }> {
+  const res = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-routy-action": "1" },
+    body: JSON.stringify({ password }),
+  });
+  if (res.ok) return { ok: true };
+  const body: unknown = await res.json().catch(() => null);
+  const err = (body as { error?: { detail?: string; message?: string } } | null)?.error;
+  return { ok: false, detail: err?.detail ?? err?.message ?? `HTTP ${res.status}` };
 }
 
-export function clearToken(): void {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    /* nothing to clear */
-  }
+export async function logout(): Promise<void> {
+  await fetch("/api/auth/logout", { method: "POST", headers: { "x-routy-action": "1" } }).catch(() => {});
 }
 
 /**
- * The gateway rejected our token. Raised as an event rather than a callback so the
- * transport does not have to import the shell — the shell subscribes, and shows the
- * gate. Anything else would make client.ts depend on React.
+ * The session expired, or the server rejected it. Raised as an event rather than a
+ * callback so the transport does not have to import React — the shell subscribes.
  */
 export const UNAUTHORIZED_EVENT = "routy:unauthorized";
 

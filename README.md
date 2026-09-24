@@ -66,13 +66,14 @@ That starts the gateway and gives you an arrow-key menu — run it in the backgr
 open the dashboard, copy a client key, restart, and any available update. The default
 hands the gateway to the background and gives you your shell back.
 
-It listens on **`0.0.0.0`** and the dashboard works from any device with no setup. The
-management API is open by default — this is a local gateway, and a credential before
-the dashboard renders is friction nobody asked for. While it is open on a network the
-dashboard says so, because anyone who can reach the port can read your client keys and
-edit CLI tool configs. Turn on **Require a management token** in Settings (or set
-`ROUTY_REQUIRE_TOKEN=1`) when the gateway is reachable from somewhere you do not
-control. `ROUTY_HOST=127.0.0.1` keeps it local instead.
+It listens on **`0.0.0.0`** and the dashboard works from any device. There is a login —
+the default password is `123456`, the way a router's admin page ships with one — and you
+enter it once per browser because the session is a cookie. Change it in **Settings**.
+Loopback is trusted, so the dashboard on the gateway's own machine is never asked.
+
+Switch the login off in Settings and the dashboard says so in a banner, because anyone
+who can reach the port can then read your client keys and edit CLI tool configs.
+`ROUTY_HOST=127.0.0.1` keeps it local instead.
 
 **From a release, by hand** — the archive is a self-contained directory:
 

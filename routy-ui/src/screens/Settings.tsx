@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useCheckUpdates, useGateway, useHealth, usePutSettings, useSettings, useStats, useUpdates } from "../api/hooks";
 import { toastApiError } from "../utils/errors";
 import { fmtAgo, fmtCost } from "../utils/format";
@@ -5,6 +6,7 @@ import { CopyChip } from "../components/CopyChip";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
+import { Input } from "../components/ui/Input";
 import { Skeleton } from "../components/ui/Skeleton";
 import { ThemeToggle } from "../components/ui/ThemeToggle";
 import { Toggle } from "../components/ui/Toggle";
@@ -183,9 +185,26 @@ export function Settings() {
   const setRequireApiKey = (enabled: boolean) =>
     put.mutate({ requireApiKey: enabled }, { onError: (err) => toastApiError(toast, err, "Failed to save setting") });
 
-  const requireToken = settings.data?.requireToken === true;
-  const setRequireToken = (enabled: boolean) =>
-    put.mutate({ requireToken: enabled }, { onError: (err) => toastApiError(toast, err, "Failed to save setting") });
+  const requireLogin = settings.data?.requireLogin !== false;
+  const setRequireLogin = (enabled: boolean) =>
+    put.mutate({ requireLogin: enabled }, { onError: (err) => toastApiError(toast, err, "Failed to save setting") });
+
+  const [newPassword, setNewPassword] = useState("");
+  const [passwordSaved, setPasswordSaved] = useState(false);
+  const savePassword = () => {
+    if (newPassword.length < 6) return;
+    put.mutate(
+      { password: newPassword },
+      {
+        onSuccess: () => {
+          setNewPassword("");
+          setPasswordSaved(true);
+          setTimeout(() => setPasswordSaved(false), 2500);
+        },
+        onError: (err) => toastApiError(toast, err, "Failed to change password"),
+      },
+    );
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -227,16 +246,43 @@ export function Settings() {
               onChange={setRequireApiKey}
             />
             <Toggle
-              label="Require a management token for /api"
+              label="Require a login for the dashboard"
               hint={
-                requireToken
-                  ? "The dashboard asks for the token on any device but this one. Find it with: journalctl -u routy | grep managementToken"
-                  : "Anyone who can reach this port can read your client keys and edit CLI tool configs. Turn this on if the gateway is reachable from a network you do not control."
+                requireLogin
+                  ? settings.data?.passwordIsDefault
+                    ? "Asked once per device, on any device but this one. Still on the default password (123456) — change it below."
+                    : "Asked once per device, on any device but this one."
+                  : "Anyone who can reach this port can read your client keys and edit CLI tool configs. Turn this back on unless the gateway is only reachable from a network you trust."
               }
-              checked={requireToken}
+              checked={requireLogin}
               loading={put.isPending}
-              onChange={setRequireToken}
+              onChange={setRequireLogin}
             />
+            {requireLogin && (
+              <div className="flex flex-col gap-2 border-t border-border pt-3">
+                <span className="text-[11px] text-text-muted">Dashboard password</span>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="new password (6+ characters)"
+                    autoComplete="new-password"
+                    aria-label="new dashboard password"
+                  />
+                  <Button
+                    variant="secondary"
+                    disabled={newPassword.length < 6 || put.isPending}
+                    onClick={savePassword}
+                  >
+                    {passwordSaved ? "saved" : "Change"}
+                  </Button>
+                </div>
+                <p className="text-[11px] text-text-subtle">
+                  Changing this signs out every other device, since sessions are keyed to it.
+                </p>
+              </div>
+            )}
           </>
         )}
       </Card>

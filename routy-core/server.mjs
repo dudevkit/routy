@@ -6,7 +6,7 @@ import path from "node:path";
 import { resolveConfig } from "./lib/config.mjs";
 import { log, setLogLevel } from "./lib/log.mjs";
 import { createRouter, json } from "./lib/router.mjs";
-import { loadOrCreateManagementToken } from "./lib/auth.mjs";
+import { loadOrCreateSessionKey } from "./lib/auth.mjs";
 import { serveStatic } from "./lib/static.mjs";
 import { openDatabase } from "./db/driver.mjs";
 import { createRepos } from "./db/repos.mjs";
@@ -18,14 +18,13 @@ import { seedTtft } from "./core/latency.mjs";
 import { PROBE_VERSION } from "./core/probe.mjs";
 import { startUpdateChecks } from "./core/updates.mjs";
 import { VERSION } from "./lib/version.mjs";
-import { buildApiRoutes, mgmtAuthorized } from "./http/api.mjs";
+import { buildApiRoutes, dashboardAuthorized, PUBLIC_API_PATHS } from "./http/api.mjs";
 import { createMetricsRoute } from "./http/metrics.mjs";
 
 const cfg = resolveConfig();
 setLogLevel(cfg.logLevel);
 
 
-let bootstrapToken = null; // printed once at boot; required for /api from non-loopback peers
 globalThis.__bootedAt = Date.now();
 
 // ── single-gateway lock (R3-6): one routy.db implies one gateway ─────────────
@@ -169,27 +168,16 @@ const routes = [
 const dispatch = createRouter(routes);
 
 /**
- * The management token, minted on demand rather than only at boot.
+ * The key that signs dashboard session cookies. Loaded once, lazily, so a gateway
+ * that never needs it (loopback-only, or login disabled) never touches the disk.
  *
- * Turning the setting on from the dashboard has to produce the token immediately:
- * otherwise a non-loopback peer enables it, every subsequent request is rejected
- * against a null token, and the operator is locked out of the UI they just used with
- * nothing to paste. Which is the worst possible moment to be locked out.
- *
- * Printed with log.raw, so it reaches the journal (where `grep managementToken`
- * finds it) but not the ring buffer the dashboard streams — a credential does not
- * belong in the log view.
+ * Stable across restarts: a browser that logged in stays logged in when the service
+ * bounces. Deleting the file logs everyone out, which is the emergency lever.
  */
-function ensureManagementToken() {
-  if (cfg.bootstrapToken) return cfg.bootstrapToken;
-  const mgmt = loadOrCreateManagementToken(cfg.home);
-  cfg.bootstrapToken = mgmt.token;
-  bootstrapToken = mgmt.token;
-  log.raw("BOOT", `management token ${mgmt.created ? "created" : "loaded"}`, {
-    managementToken: cfg.bootstrapToken,
-    find: "journalctl -u routy | grep managementToken",
-  });
-  return cfg.bootstrapToken;
+let sessionKey = null;
+function getSessionKey() {
+  if (!sessionKey) sessionKey = loadOrCreateSessionKey(cfg.home);
+  return sessionKey;
 }
 
 // In-flight request count drives graceful shutdown: we drain what is already
@@ -201,17 +189,19 @@ const server = http.createServer((req, res) => {
   res.on("close", () => { inflight--; });
   const pathname = new URL(req.url, "http://localhost").pathname;
 
-  // Off unless the operator turned it on: env wins, then Settings. Read per request
-  // because the Settings toggle must take effect without a restart — and minted here
-  // rather than only at boot, so flipping it on produces the token it now demands.
-  const requireToken = cfg.requireToken ?? repos.settings.get("requireToken", false);
-  if (requireToken) ensureManagementToken();
-  // The one /api path a peer may reach unauthenticated. It reports whether a token is
-  // needed and whether this gateway is sitting unlocked on a network — never the
-  // token itself.
-  const isAuthProbe = pathname === "/api/auth";
-  if (!isAuthProbe && (pathname.startsWith("/api") || pathname === "/metrics") && !mgmtAuthorized(req, cfg, requireToken)) {
-    return json(res, 401, { error: { message: "auth_error", detail: "management token required for non-loopback peers" } });
+  // Dashboard auth. Loopback is trusted — that is the dashboard on the machine running
+  // routy — and so is a valid session cookie. Everything else needs the login, unless
+  // the operator turned it off. The handful of public paths are what the login page
+  // itself needs to render and post to.
+  const requireLogin = repos.settings.get("requireLogin", true) !== false;
+  const auth = { requireLogin, sessionKey: getSessionKey() };
+  const authed = dashboardAuthorized(req, auth);
+  // Resolved once, and handed to the route layer, so /api/auth reports exactly what
+  // the guard decided rather than re-deriving it and risking a different answer.
+  req.routyAuth = { ...auth, authed };
+  const needsAuth = (pathname.startsWith("/api") && !PUBLIC_API_PATHS.has(pathname)) || pathname === "/metrics";
+  if (needsAuth && !authed) {
+    return json(res, 401, { error: { message: "auth_error", detail: "sign in to manage this gateway" } });
   }
   // Proxy surface: chat/messages enforce keys in-handler; /v1/models gets the
   // guard here. Loopback (the SPA's own origin) is trusted by design.
@@ -236,10 +226,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(cfg.port, cfg.host, () => {
-  const requireToken = cfg.requireToken ?? repos.settings.get("requireToken", false);
-  // Logs the token, so `journalctl -u routy | grep managementToken` finds it at boot
-  // when authentication is configured. When it is not, no secret is minted at all.
-  if (requireToken) ensureManagementToken();
+  const requireLogin = repos.settings.get("requireLogin", true) !== false;
 
   const networkBound = cfg.host !== "127.0.0.1" && cfg.host !== "::1" && cfg.host !== "localhost";
   log.info("BOOT", `gateway started (v${VERSION})`, { host: cfg.host, port: cfg.port, ui: cfg.uiDir || null }); // ring provenance — token stays out
@@ -248,12 +235,12 @@ server.listen(cfg.port, cfg.host, () => {
     port: cfg.port,
     home: cfg.home,
   });
-  if (networkBound && !requireToken) {
+  if (networkBound && !requireLogin) {
     // Said once, at boot, where someone reading a service log will see it. The
     // dashboard shows the same warning; this is for the operator who never opens it.
     log.warn("SECURITY", "listening on the network with the management API unlocked", {
       detail: "anyone who can reach this port can read client keys and edit CLI tool configs",
-      fix: "set ROUTY_REQUIRE_TOKEN=1, or turn on 'Require token' in Settings",
+      fix: "turn on 'Require a login' in Settings, or bind ROUTY_HOST=127.0.0.1",
     });
   }
 });
