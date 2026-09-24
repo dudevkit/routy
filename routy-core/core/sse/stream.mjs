@@ -78,8 +78,10 @@ export const SSE_HEADERS = {
  * - trailingDone: emit a second [DONE] after the stream (upstream parity quirk).
  * - idleTimeoutMs: stall watchdog — abort + error frame when the upstream goes
  *   silent for that long (0 disables).
- * Returns { clientGone, stalled, errored } — errored means the upstream broke
- * (stall or mid-stream death) and the node should count a breaker failure.
+ * Returns { clientGone, completed, stalled, errored } — errored means the upstream
+ * broke (stall or mid-stream death) and the node should count a breaker failure.
+ * `completed` means the client was handed everything there was to hand, which is what
+ * separates a real walk-away from a client that hung up the moment it was done with us.
  */
 
 /** Thrown internally when the upstream goes silent past the idle budget. */
@@ -87,13 +89,50 @@ class StallError extends Error {
   constructor() { super("upstream stream stalled"); this.name = "StallError"; }
 }
 
+/**
+ * Does this outgoing frame END the answer?
+ *
+ * Checked on what goes TO the client, so "the client got a terminal" stays a claim
+ * about the client's stream rather than the upstream's. Both dialects count: OpenAI
+ * sends a non-null finish_reason then [DONE]; Anthropic ends on message_delta /
+ * message_stop.
+ */
+export function isTerminalFrame(text) {
+  if (!text) return false;
+  const match = /^data:[ \t]*(.*)$/m.exec(text);
+  if (!match) return false; // event-only frame (message_start, ping, ...)
+  const payload = match[1].trim();
+  if (payload === "[DONE]") return true;
+  if (!payload.startsWith("{")) return false;
+  try {
+    const obj = JSON.parse(payload);
+    if (obj?.choices?.some?.((c) => c && c.finish_reason)) return true;
+    return obj?.type === "message_delta" || obj?.type === "message_stop";
+  } catch {
+    return false; // partial or non-JSON data line
+  }
+}
+
 export async function pumpSse({ upstream, res, signal, t0, transform = null, flushFrames = null, usage = null, logBuffer = null, maxEmptyReads = 4, trailingDone = false, idleTimeoutMs = 0 }) {
   res.writeHead(upstream.status, SSE_HEADERS);
   const parser = new SseParser();
   const reader = upstream.body.getReader();
   let clientGone = false;
+  // Set once the client has been handed the end of the answer, or the upstream stream
+  // ran out on its own -- either way there is nothing left to deliver. Clients such as
+  // CLI agents stop reading the instant they see finish_reason / [DONE] and close the
+  // socket, so clientGone on its own cannot tell "walked away mid-generation" from
+  // "got the whole answer and hung up first". Conflating them charged every completed
+  // request as an abort: the node was never credited, its latency was never learned,
+  // and a healthy provider filled the Recent failures list.
+  let completed = false;
   const onClose = () => { clientGone = true; };
   res.on("close", onClose);
+  const write = (out) => {
+    const more = res.write(out);
+    if (!completed && isTerminalFrame(out)) completed = true;
+    return more;
+  };
 
   // Stall watchdog: an upstream that stops sending without closing the socket
   // would hang the client forever. Bound the wait between chunks (first byte
@@ -124,7 +163,9 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
         break;
       }
       const { done, value } = await readWithIdle();
-      if (done) break;
+      // The upstream ended by itself: there is nothing left to hand the client, so a
+      // hangup from here on is the client finishing, not us being cut off.
+      if (done) { completed = true; break; }
       if (value && value.length > 0) {
         emptyReads = 0;
         usage?.observeFirstByte(t0);
@@ -134,7 +175,7 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
           const outFrames = transform ? transform(frame) : [formatSse(frame.event, frame.data)];
           for (const out of outFrames) {
             frames++; bytes += out.length;
-            if (!res.write(out)) await onceDrain(res);
+            if (!write(out)) await onceDrain(res);
           }
         }
       } else {
@@ -146,18 +187,18 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
       const outFrames = transform ? transform(frame) : [formatSse(frame.event, frame.data)];
       for (const out of outFrames) {
         frames++; bytes += out.length;
-        if (!res.write(out)) await onceDrain(res);
+        if (!write(out)) await onceDrain(res);
       }
     }
     // Translator tail flush (e.g. claude message_stop) — translate mode only
     if (flushFrames) {
       for (const out of flushFrames() || []) {
-        if (!res.writableEnded && !res.write(out)) await onceDrain(res);
+        if (!res.writableEnded && !write(out)) await onceDrain(res);
       }
     }
     // Upstream parity: 9Router's transform+flush both emit [DONE] — clients stop at
     // the first one, so the duplicate is benign. Keep it for byte-identical output.
-    if (trailingDone && !res.writableEnded && !clientGone) res.write("data: [DONE]\n\n");
+    if (trailingDone && !res.writableEnded && !clientGone) write("data: [DONE]\n\n");
   } catch (err) {
     if (err instanceof StallError) {
       stalled = true;
@@ -184,7 +225,7 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
     res.off("close", onClose);
     if (!res.writableEnded) res.end();
   }
-  return { clientGone, stalled, errored, frames, bytes, durationMs: Date.now() - t0 };
+  return { clientGone, completed, stalled, errored, frames, bytes, durationMs: Date.now() - t0 };
 }
 
 function onceDrain(res) {

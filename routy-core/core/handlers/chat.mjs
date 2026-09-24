@@ -218,12 +218,18 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           trailingDone = true;
         }
 
-        const { clientGone, stalled, errored, frames, bytes, durationMs } = await pumpSse({
+        const { clientGone, completed, stalled, errored, frames, bytes, durationMs } = await pumpSse({
           upstream: result.response, res, signal: clientAbort.signal, t0, usage, logBuffer,
           transform, flushFrames, trailingDone, idleTimeoutMs,
         });
+        // Only a client that left BEFORE the answer was complete is an abort. Agents
+        // like Hermes close the socket the moment they see finish_reason, which is a
+        // successful request, and charging it as an abort meant the node was never
+        // credited, its latency was never learned, and every such call showed up in
+        // Recent failures.
+        const genuineAbort = clientGone && !completed;
         log.debug("UPSTREAM", `← stream end ${r.node.prefix}`, {
-          frames, bytes, durationMs, stalled, errored, clientGone,
+          frames, bytes, durationMs, stalled, errored, clientGone, completed,
           ttftMs: usage.ttftMs ?? null,
         });
         if (errored) {
@@ -235,7 +241,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             message: stalled ? `no upstream data for ${idleTimeoutMs}ms` : "upstream stream failed mid-response",
           });
           log.warn("CHAT", `node ${r.node.prefix} stream broke (${stalled ? "stalled" : "failed"})`);
-        } else if (!clientGone) {
+        } else if (!genuineAbort) {
           recordSuccess(repos, r.node);
         }
 
@@ -246,7 +252,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           completionTokens = translator.state.usage.completion_tokens ?? completionTokens;
         }
         const usageEventId = recordUsage(repos, log, r, connection, body.model, {
-          status: errored ? "error" : clientGone ? "aborted" : "ok",
+          status: errored ? "error" : genuineAbort ? "aborted" : "ok",
           usage: { promptTokens, completionTokens, ttftMs: usage.ttftMs },
           durationMs: Date.now() - t0,
           apiKeyId,

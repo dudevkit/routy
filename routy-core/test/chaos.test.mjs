@@ -8,8 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
-import { createChatHandler } from "../core/handlers/chat.mjs";
-import { LogBuffer } from "../core/sse/stream.mjs";
+import { createChatHandler, recordFailure } from "../core/handlers/chat.mjs";
+import { isTerminalFrame, LogBuffer } from "../core/sse/stream.mjs";
 
 let tmp, db, repos, handlerServer, handlerPort, stubServer, stubPort, stubState;
 
@@ -260,4 +260,74 @@ describe("chaos: bounded buffers", () => {
     const detail = repos.requestDetails.list({ limit: 10 })[0];
     if (detail) expect(detail.content.length).toBeLessThanOrEqual(64 * 1024 + 200);
   }, 30_000);
+});
+
+// The Hermes shape, and the case that was being mislabelled. The provider is still
+// holding its SSE open; the client sees finish_reason / [DONE] and closes the socket
+// immediately. Routy delivered the entire answer, but `clientGone` was the only signal,
+// so the request was charged as an abort: the node never got breaker credit, its
+// latency was never learned (chat.mjs gates observeTtft on status === "ok"), and every
+// such call landed in Recent failures. 30 of 32 requests on a real server read that way.
+describe("chaos: client hangs up the moment the answer is complete", () => {
+  it("records ok and credits the breaker when the client leaves after the terminal frame", async () => {
+    const node = repos.nodes.list()[0];
+    // Start from a damaged breaker: a bare `failures === 0` assertion would pass even
+    // if recordSuccess were never called, which is the bug being tested.
+    recordFailure(repos, node, { errorCode: "upstream_error", status: 502, message: "earlier problem" });
+    recordFailure(repos, node, { errorCode: "upstream_error", status: 502, message: "earlier problem" });
+    expect(repos.breakers.get(`node:${node.id}`).failures).toBe(2);
+
+    stubState.handler = (req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write('data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}\n\n');
+      res.write('data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n');
+      res.write("data: [DONE]\n\n");
+      // deliberately NOT res.end(): a real upstream often keeps the socket open, and
+      // that gap is exactly where the client hangup lands.
+    };
+
+    await new Promise((resolve) => {
+      const payload = JSON.stringify({ model: "a/m1", stream: true, messages: [{ role: "user", content: "x" }] });
+      const req = http.request(
+        { host: "127.0.0.1", port: handlerPort, path: "/v1/chat/completions", method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } },
+        (res) => {
+          let seen = "";
+          res.on("data", (c) => {
+            seen += c;
+            if (seen.includes("[DONE]")) {
+              req.destroy(); // walk away as soon as the answer is complete
+              resolve();
+            }
+          });
+        },
+      );
+      req.on("error", () => { /* our own destroy */ });
+      req.end(payload);
+    });
+
+    await new Promise((r) => setTimeout(r, 300));
+    repos.usage.flush();
+    const events = repos.usage.query({ limit: 10 });
+    expect(events).toHaveLength(1);
+    expect(events[0].status).toBe("ok");
+    // credit, not merely "not open": the failure count has to go back to zero
+    const breaker = repos.breakers.get(`node:${node.id}`);
+    expect(breaker.failures).toBe(0);
+    expect(breaker.state).toBe("closed");
+    expect(breaker.lastError).toBeNull();
+  }, 10_000);
+});
+
+describe("terminal frame detection", () => {
+  it("recognises both dialects and their terminal markers", () => {
+    expect(isTerminalFrame('data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n')).toBe(true);
+    expect(isTerminalFrame("data: [DONE]\n\n")).toBe(true);
+    expect(isTerminalFrame('data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n')).toBe(true);
+    expect(isTerminalFrame('data: {"type":"message_stop"}\n\n')).toBe(true);
+    // not terminal: a content delta, an event-only frame, a non-JSON line
+    expect(isTerminalFrame('data: {"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}\n\n')).toBe(false);
+    expect(isTerminalFrame("event: ping\ndata: {\"type\":\"ping\"}\n\n")).toBe(false);
+    expect(isTerminalFrame("data: \n\n")).toBe(false);
+    expect(isTerminalFrame("")).toBe(false);
+  });
 });
