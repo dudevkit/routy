@@ -14,7 +14,12 @@ const HOME_NAME = ".routy";
 
 const DEFAULTS = Object.freeze({
   port: 8010,
-  host: "127.0.0.1",
+  // Reachable from the network by default, not just loopback. A gateway you have to
+  // re-configure before another machine can use it is a gateway nobody uses off the
+  // box. This is safe to default because the guards are independent of the bind:
+  // non-loopback peers need the bootstrap token for /api, and a valid client key for
+  // /v1. Set ROUTY_HOST=127.0.0.1 to go back to loopback-only.
+  host: "0.0.0.0",
   logLevel: "info",
   retention: { detailsDays: 7, detailsMaxRows: 50000, usageDays: 90, usageMaxRows: 500000 },
 });

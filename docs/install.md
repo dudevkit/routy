@@ -63,20 +63,34 @@ version exits within 15 seconds, the launcher reverts to the previous one.
 routy
 ```
 
-Starts the gateway and shows a menu:
+Starts the gateway and shows a menu you drive with the arrow keys:
 
 ```
   routy is running
-    dashboard  http://127.0.0.1:8010
-    endpoint   http://127.0.0.1:8010/v1
+    dashboard  http://192.168.1.50:8010
+    endpoint   http://192.168.1.50:8010/v1
+               also http://127.0.0.1:8010 on this machine
     state      ~/.routy
 
-  What next?
-    1) Open the dashboard
-    2) Show a client key to paste into a CLI tool
-    3) Restart the gateway
-    4) Quit
+  Listening on 0.0.0.0, so other machines can reach it. /api needs the boot
+  token, /v1 needs a client key. ROUTY_HOST=127.0.0.1 keeps it local.
+
+  What next?  (↑/↓ then enter)
+  ❯ Run in the background and exit
+    Open the dashboard
+    Show a client key to paste into a CLI tool
+    Restart the gateway
+    Stop the gateway and quit
 ```
+
+**Run in the background and exit** is the default. It detaches the gateway and gives
+you your shell back, so the gateway outlives the terminal — which is what you want on
+a server, and the reason the menu does not block by default.
+
+The gateway listens on **`0.0.0.0`** out of the box, so another machine can use it
+without you re-configuring anything first. That is safe to default because the guards
+do not depend on the bind address: a non-loopback peer needs the bootstrap token for
+`/api` and a valid client key for `/v1`. Set `ROUTY_HOST=127.0.0.1` for loopback only.
 
 `routy serve` starts the same gateway in the foreground with no menu — use that for
 a service, a script, or a terminal you want to leave alone. With no terminal attached

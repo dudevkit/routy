@@ -87,6 +87,7 @@ route above is not needed.
 - **Config precedence** is defaults < `<ROUTY_HOME>/config.json` < environment.
   See `routy-core/lib/config.mjs`; `retention` and `streamIdleTimeoutMs` are the
   keys that matter for long-running hosts.
-- **Firewall**: the default bind is `127.0.0.1`. Exposing the gateway on the LAN
-  (`ROUTY_HOST=0.0.0.0`) makes the bootstrap token mandatory for `/api`, and
-  `/v1` falls back to API-key auth.
+- **Firewall**: the default bind is `0.0.0.0`, so the gateway is reachable on the
+  LAN — allow the port through the firewall, or set `ROUTY_HOST=127.0.0.1` for
+  loopback only. On a non-loopback bind the bootstrap token is mandatory for `/api`
+  and `/v1` falls back to API-key auth, so exposure is not the same as open.

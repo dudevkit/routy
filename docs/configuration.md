@@ -12,7 +12,7 @@ read per request).
 |---|---|---|
 | `ROUTY_HOME` | `~/.routy` | State directory: `config.json`, `data/routy.db`, `gateway.lock` |
 | `ROUTY_PORT` | `8010` | Listen port |
-| `ROUTY_HOST` | `127.0.0.1` | Bind address. Anything else makes `/api` require the bootstrap token and `/v1` require an API key |
+| `ROUTY_HOST` | `0.0.0.0` | Bind address. On anything but loopback, `/api` requires the bootstrap token and `/v1` requires an API key — that is the default. `127.0.0.1` opts out and keeps it to this machine |
 | `ROUTY_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `ROUTY_UI_DIR` | auto | Dashboard directory. Auto-resolved: `<bundleDir>/ui` → `./routy-ui/dist` → `../routy-ui/dist` → `<home>/ui` |
 | `ROUTY_STREAM_IDLE_TIMEOUT_MS` | `120000` | Stall watchdog budget in ms; `0` disables. Overridable per node |

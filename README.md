@@ -62,8 +62,13 @@ Requires **Node 22.5+** (24 recommended).
 routy
 ```
 
-That starts the gateway and opens a menu — dashboard, a client key to copy, restart,
-and any available update.
+That starts the gateway and gives you an arrow-key menu — run it in the background,
+open the dashboard, copy a client key, restart, and any available update. The default
+hands the gateway to the background and gives you your shell back.
+
+It listens on **`0.0.0.0`**, so another machine can use it without re-configuring
+anything: non-loopback peers need the bootstrap token for `/api` and a client key for
+`/v1`. `ROUTY_HOST=127.0.0.1` keeps it local.
 
 **From a release, by hand** — the archive is a self-contained directory:
 
@@ -99,7 +104,7 @@ override it.
 |---|---|---|
 | `ROUTY_HOME` | `~/.routy` | state directory (`config.json`, `data/routy.db`) |
 | `ROUTY_PORT` | `8010` | |
-| `ROUTY_HOST` | `127.0.0.1` | loopback only; `0.0.0.0` exposes it to your network |
+| `ROUTY_HOST` | `0.0.0.0` | bind address. Reachable on your network by default — non-loopback peers need the bootstrap token for `/api` and a client key for `/v1`. `127.0.0.1` keeps it to this machine |
 | `ROUTY_LOG_LEVEL` | `info` | `debug` adds every upstream dispatch and stream end |
 | `ROUTY_STREAM_IDLE_TIMEOUT_MS` | — | stall watchdog budget; `0` disables |
 | `ROUTY_UI_DIR` | — | serve the dashboard from elsewhere |

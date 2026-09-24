@@ -2,10 +2,12 @@
 // Zero-dep: node:readline/promises + node:process. Runs OUTSIDE the server
 // process; edits the same SQLite db (WAL = multi-process safe).
 import { createInterface } from "node:readline/promises";
+import { emitKeypressEvents } from "node:readline";
 import { spawn } from "node:child_process";
 import { stdin, stdout, exit, env, argv } from "node:process";
 import path from "node:path";
 import fs from "node:fs";
+import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 import { resolveConfig } from "../lib/config.mjs";
 import { openDatabase } from "../db/driver.mjs";
@@ -15,10 +17,14 @@ const cfg = resolveConfig();
 const db = openDatabase(cfg.dataDir);
 const repos = createRepos(db);
 
-const rl = createInterface({ input: stdin, output: stdout });
+// Created on demand, not at module load. The menu reads keys in raw mode, and a
+// readline interface already attached to stdin would swallow them (and, on a pipe,
+// consume the whole stream before the first prompt).
+let rl = null;
+const getRl = () => (rl ??= createInterface({ input: stdin, output: stdout }));
 const ask = async (q, def = "") => {
   const suffix = def ? ` [${def}]` : "";
-  const a = (await rl.question(`${q}${suffix}: `)).trim();
+  const a = (await getRl().question(`${q}${suffix}: `)).trim();
   return a || def;
 };
 
@@ -127,12 +133,12 @@ async function cmdInit() {
   const firstModel = node ? `${node.prefix}/*` : "";
   await writeCliConfig(`http://${cfg.host === "0.0.0.0" ? "127.0.0.1" : cfg.host}:${cfg.port}/v1`, key || "<reuse existing key>", firstModel);
   console.log("\n✓ done. Start the gateway with: routy serve");
-  rl.close();
+  rl?.close();
   db.close();
 }
 
 async function cmdServe() {
-  rl.close();
+  rl?.close();
   db.close();
   await import("../server.mjs"); // boots on cfg.port; stays alive
 }
@@ -152,7 +158,13 @@ function openDashboard(url) {
   const { win32, darwin, default: fallback } = DASHBOARD_OPEN;
   const [cmd, prefix] = process.platform === "win32" ? win32 : process.platform === "darwin" ? darwin : fallback;
   try {
-    spawn(cmd, [...prefix, url], { stdio: "ignore", detached: true }).unref();
+    const child = spawn(cmd, [...prefix, url], { stdio: "ignore", detached: true });
+    // A headless box has no xdg-open, and spawn reports that as an asynchronous
+    // 'error' event. Unhandled, it takes the whole process down — which on a
+    // server means the menu dies, leaves its gateway orphaned holding the db lock,
+    // and the launcher restarts into "another gateway already holds data".
+    child.on("error", () => {});
+    child.unref();
     return true;
   } catch {
     return false;
@@ -205,6 +217,158 @@ async function apiGet(path) {
   }
 }
 
+// ── choosing ─────────────────────────────────────────────────────────────────
+const ANSI = { hide: "\x1b[?25l", show: "\x1b[?25h", up: (n) => `\x1b[${n}A`, clearLine: "\x1b[2K" };
+
+/**
+ * A buffered line reader for a non-TTY stdin. Readline cannot be used here: it is
+ * created at first use for the init wizard, and attaching it to a pipe consumes the
+ * whole stream before the first prompt — which is how a piped run ended up answering
+ * every question with nothing. Resolves null at end of input.
+ */
+const pipeLine = (() => {
+  let buf = "";
+  let ended = false;
+  let started = false;
+  const waiters = [];
+  const flush = () => {
+    while (waiters.length) {
+      const nl = buf.indexOf("\n");
+      if (nl >= 0) {
+        waiters.shift()(buf.slice(0, nl).trim());
+        buf = buf.slice(nl + 1);
+      } else if (ended) {
+        const rest = buf.trim();
+        buf = "";
+        waiters.shift()(rest === "" ? null : rest);
+      } else break;
+    }
+  };
+  return () => {
+    if (!started) {
+      started = true;
+      stdin.setEncoding("utf8");
+      stdin.on("data", (chunk) => {
+        buf += chunk;
+        flush();
+      });
+      stdin.on("end", () => {
+        ended = true;
+        flush();
+      });
+    }
+    return new Promise((resolve) => {
+      waiters.push(resolve);
+      flush();
+    });
+  };
+})();
+
+async function chooseNumbered(question, options, defaultIndex) {
+  console.log(`  ${question}`);
+  options.forEach((o, i) => console.log(`    ${i + 1}) ${o.label}`));
+  const line = await pipeLine();
+  if (line === null) return null;
+  return options[Number(line) - 1] ?? options[defaultIndex];
+}
+
+/**
+ * Pick from a list with the arrow keys. Falls back to a numbered prompt when stdin
+ * is not a terminal — there is no cursor to move there, and a scripted run should
+ * still be able to answer.
+ *
+ * Resolves null at end of input. The caller must treat that as "stop", never as
+ * "take the default": on a pipe every prompt resolves empty, and a default that has
+ * a side effect would then fire forever.
+ */
+function choose(question, options, defaultIndex = 0) {
+  if (!stdin.isTTY || !stdout.isTTY) return chooseNumbered(question, options, defaultIndex);
+
+  return new Promise((resolve) => {
+    let index = defaultIndex;
+    let drawn = 0;
+
+    const draw = (first) => {
+      if (!first) stdout.write(ANSI.up(drawn));
+      for (let i = 0; i < options.length; i++) {
+        const pointer = i === index ? "❯" : " ";
+        const label = i === index ? `\x1b[1m${options[i].label}\x1b[22m` : options[i].label;
+        stdout.write(`${ANSI.clearLine}  ${pointer} ${label}\n`);
+      }
+      drawn = options.length;
+    };
+
+    const done = (value) => {
+      stdin.removeListener("keypress", onKey);
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdout.write(ANSI.show);
+      resolve(value);
+    };
+
+    const onKey = (str, key = {}) => {
+      if (key.ctrl && key.name === "c") return done(null);
+      if (key.name === "up" || str === "k") index = (index - 1 + options.length) % options.length;
+      else if (key.name === "down" || str === "j") index = (index + 1) % options.length;
+      else if (key.name === "return" || key.name === "enter") return done(options[index]);
+      else if (/^[1-9]$/.test(str) && Number(str) <= options.length) index = Number(str) - 1;
+      else return;
+      draw(false);
+    };
+
+    emitKeypressEvents(stdin);
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdout.write(ANSI.hide);
+    stdout.write(`  ${question}\n`);
+    draw(true);
+    stdin.on("keypress", onKey);
+  });
+}
+
+/**
+ * The address another machine would use, for showing what this is reachable at.
+ *
+ * The first non-internal IPv4 is not good enough: a dev machine with VirtualBox,
+ * VMware or a VPN has several, and the first is often one of those. Physical-looking
+ * interface names win; anything virtual is only used if nothing else exists.
+ */
+const VIRTUAL_IFACE = /vbox|vmware|virtual|docker|br-|veth|tun|tap|wg|zt|tailscale|loopback|hyper-v|vethernet/i;
+function lanAddress() {
+  const candidates = [];
+  for (const [name, list] of Object.entries(networkInterfaces())) {
+    for (const ni of list ?? []) {
+      if (ni.family !== "IPv4" || ni.internal) continue;
+      if (ni.address.startsWith("169.254.")) continue; // link-local, never routable
+      candidates.push({ name, address: ni.address });
+    }
+  }
+  const physical = candidates.find((c) => !VIRTUAL_IFACE.test(c.name));
+  return (physical ?? candidates[0])?.address ?? null;
+}
+
+/**
+ * Start the gateway detached, so it outlives this menu. A child started normally
+ * dies with its parent, which is the opposite of what "run in the background" means.
+ */
+function startDetached() {
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "serve"], {
+    stdio: "ignore",
+    detached: true,
+    env: process.env,
+  });
+  child.unref();
+  return child;
+}
+
+async function waitForGateway(attempts = 40) {
+  for (let i = 0; i < attempts; i++) {
+    if (await apiGet("/api/health")) return true;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
+}
+
 async function cmdStart() {
   db.close();
 
@@ -217,27 +381,6 @@ async function cmdStart() {
     process.exit(1);
   }
 
-  // Reuse the interface created at module load. Closing it and opening a second one
-  // over the same stdin ends the stream, and every question then throws "readline
-  // was closed" — which is what a piped invocation hits immediately.
-  //
-  // Returns null at end of input (a pipe, a script, a closed terminal) so the menu
-  // can stop. Returning the default there would make it spin forever: every question
-  // would resolve empty and re-pick option 1.
-  let inputEnded = false;
-  rl.once("close", () => {
-    inputEnded = true;
-  });
-  const ask2 = async (q, dflt) => {
-    if (inputEnded) return null;
-    try {
-      const answer = (await rl.question(dflt ? `${q} [${dflt}]: ` : `${q}: `)).trim();
-      return answer === "" ? (dflt ?? "") : answer;
-    } catch {
-      return null;
-    }
-  };
-
   // The check runs in the background and the menu appears immediately, so a slow
   // or unreachable GitHub never delays the thing the user actually asked for.
   let updates = null;
@@ -248,41 +391,66 @@ async function cmdStart() {
 
   const endpoint = `${apiBase()}/v1`;
   const dashboard = apiBase();
+  const lan = cfg.host === "0.0.0.0" ? lanAddress() : null;
 
   console.log("");
-  console.log(`  routy is running`);
-  console.log(`    dashboard  ${dashboard}`);
-  console.log(`    endpoint   ${endpoint}`);
+  console.log("  routy is running");
+  if (lan) {
+    console.log(`    dashboard  http://${lan}:${cfg.port}`);
+    console.log(`    endpoint   http://${lan}:${cfg.port}/v1`);
+    console.log(`               also http://127.0.0.1:${cfg.port} on this machine`);
+  } else {
+    console.log(`    dashboard  ${dashboard}`);
+    console.log(`    endpoint   ${endpoint}`);
+  }
   console.log(`    state      ${cfg.home}`);
+  if (lan) {
+    console.log("");
+    console.log(`  Listening on ${cfg.host}, so other machines can reach it. /api needs the boot`);
+    console.log("  token, /v1 needs a client key. ROUTY_HOST=127.0.0.1 keeps it local.");
+  }
   console.log("");
 
   for (;;) {
     await updatesPromise;
-    const options = [];
+    const options = [
+      // First, so it is the default. Starting a gateway and then blocking the
+      // terminal is not what anyone wants from a bare `routy`; this hands it to the
+      // background and gives the shell straight back.
+      { key: "background", label: "Run in the background and exit" },
+    ];
     if (updates?.available && updates.assetsReady) {
       options.push({ key: "update", label: `Update to v${updates.latest}  (running v${updates.current})` });
     }
     options.push({ key: "open", label: "Open the dashboard" });
     options.push({ key: "key", label: "Show a client key to paste into a CLI tool" });
     options.push({ key: "restart", label: "Restart the gateway" });
-    options.push({ key: "quit", label: "Quit" });
+    options.push({ key: "quit", label: "Stop the gateway and quit" });
 
-    console.log("  What next?");
-    options.forEach((o, i) => console.log(`    ${i + 1}) ${o.label}`));
-    const pick = await ask2("  choice", "1");
+    const chosen = await choose("What next?  (↑/↓ then enter)", options, 0);
+    console.log("");
 
-    // End of input. Without this the loop never stops: every question resolves
-    // empty, Number("") - 1 indexes nothing, and the `?? options[0]` fallback picks
-    // option 1 — which opens a browser. Piped stdin turned that into a tab flood.
-    if (pick === null) {
+    // End of input. Without this the loop never stops: every prompt resolves empty
+    // and the default fires again and again.
+    if (chosen === null) {
       gateway.child.kill();
       await new Promise((r) => setTimeout(r, 300));
       console.log("  gateway stopped");
       process.exit(0);
     }
 
-    const chosen = options[Number(pick) - 1] ?? options[0];
-    console.log("");
+    if (chosen.key === "background") {
+      // The running gateway is a child of this menu, so it would die with it.
+      // Restart it detached — the brief gap buys a gateway that outlives the
+      // terminal, which is the entire point of the option.
+      gateway.child.kill();
+      await new Promise((r) => gateway.child.on("exit", r));
+      startDetached();
+      const alive = await waitForGateway();
+      console.log(alive ? `  running in the background — ${dashboard}` : "  failed to start in the background");
+      console.log("");
+      process.exit(alive ? 0 : 1);
+    }
 
     if (chosen.key === "open") {
       const opened = openDashboard(dashboard);
@@ -344,7 +512,7 @@ async function cmdStart() {
     // quit
     gateway.child.kill();
     await new Promise((r) => setTimeout(r, 300));
-    rl.close();
+    rl?.close();
     console.log("  gateway stopped");
     process.exit(0);
   }
@@ -362,7 +530,7 @@ function printHelp() {
 async function cmdKey() {
   const { key } = repos.apiKeys.create("cli");
   console.log(key);
-  rl.close();
+  rl?.close();
   db.close();
 }
 
