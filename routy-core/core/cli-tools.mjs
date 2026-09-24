@@ -215,23 +215,23 @@ export const ADAPTERS = [
     id: "hermes",
     name: "Hermes",
     binaries: ["hermes"],
-    note: "YAML config plus a .env for the key. The model block is replaced; everything else in the file is untouched.",
+    // Hermes resolves a credential by ENV VAR NAME (key_env -> os.getenv), and every
+    // os.path.expandvars call in its source is on a path, never on api_key. Writing
+    // "${OPENAI_API_KEY}" therefore sent that literal string as the bearer token and
+    // the gateway answered 401 -- "Provider authentication failed". The key goes into
+    // the config as itself; the file is 0600, same as the .env it replaced.
+    note: "YAML config. The model block is replaced; everything else in the file is untouched.",
     files: [
       {
         path: "~/.hermes/config.yaml",
         format: "yaml",
         connectedWhen: "model.base_url",
-        patch: ({ baseUrl, model }) => ({
+        patch: ({ baseUrl, model, apiKey }) => ({
           "model.provider": "custom",
           "model.base_url": baseUrl,
           ...(model ? { "model.default": model } : {}),
-          "model.api_key": "${OPENAI_API_KEY}",
+          ...(apiKey ? { "model.api_key": apiKey } : {}),
         }),
-      },
-      {
-        path: "~/.hermes/.env",
-        format: "env",
-        patch: ({ apiKey }) => ({ OPENAI_API_KEY: apiKey }),
       },
     ],
   },
