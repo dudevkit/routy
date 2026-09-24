@@ -39,8 +39,16 @@ if (fs.existsSync(lockPath)) {
     try { process.kill(holder.pid, 0); alive = true; } catch { /* dead holder */ }
   }
   if (alive && holder.pid !== process.pid) {
-    console.error(`routy: another gateway (pid ${holder.pid}, started ${holder.startedAt}) already holds ${cfg.dataDir}. One routy.db implies one gateway.`);
-    process.exit(1);
+    console.error(
+      `routy: another gateway (pid ${holder.pid}, started ${holder.startedAt}) is already running on ${cfg.dataDir}.\n` +
+        `       One routy.db implies one gateway. Use the one that is running, or stop it first:\n` +
+        `         systemctl stop routy     # if it is a service\n` +
+        `         kill ${holder.pid}`,
+    );
+    // A distinct code, not 1. This is not a crash — retrying cannot help, and the
+    // launcher's backoff loop turned a clear conflict into eight identical failures.
+    // Mirrors LOCK_HELD in bin/launch.mjs; they must agree.
+    process.exit(73);
   }
   fs.rmSync(lockPath); // stale lock from a dead process — take over
 }

@@ -36,6 +36,13 @@ import { fileURLToPath } from "node:url";
  */
 export const RESTART_FOR_UPDATE = 75;
 
+/**
+ * Exit code the app uses to say "another gateway already owns this state directory".
+ * Mirrors the value in server.mjs, which this file cannot import — it is copied into a
+ * release root on its own. Retrying cannot fix a conflict, so it is fatal here.
+ */
+export const LOCK_HELD = 73;
+
 /** A version that exits within this window of being switched to never came up. */
 const CRASH_WINDOW_MS = 15_000;
 const BACKOFF_MS = [500, 1_000, 2_000, 4_000, 8_000, 15_000];
@@ -151,6 +158,14 @@ function main() {
       const lived = Date.now() - startedAt;
 
       if (code === 0) return; // clean shutdown
+
+      // Not a crash: another gateway already owns this state directory. Retrying
+      // cannot help, and the backoff loop turned a one-line conflict into eight
+      // identical failures that buried the one message that explained it. The gateway
+      // has already named the pid holding the lock and how to stop it.
+      if (code === LOCK_HELD) {
+        die("another routy is already running on this state directory — nothing to start.");
+      }
 
       // `current` is the desired state, so re-read it however the process ended —
       // an update may have repointed it and then died for an unrelated reason (a

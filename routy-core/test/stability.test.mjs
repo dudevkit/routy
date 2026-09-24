@@ -212,3 +212,35 @@ describe("retention", () => {
     expect(purged.aged).toBe(1);
   });
 });
+
+// The single-gateway lock. One routy.db implies one gateway, and the two halves of
+// that rule live in files that cannot import each other: server.mjs decides the exit
+// code, bin/launch.mjs decides whether to retry it. If they drift, a clear conflict
+// turns back into an eight-attempt backoff loop.
+describe("single-gateway lock", () => {
+  it("exits with LOCK_HELD rather than a crash code when another gateway owns the db", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "routy-lock-"));
+    // Our own pid is alive, so this reads as a running gateway holding the lock.
+    fs.writeFileSync(
+      path.join(home, "gateway.lock"),
+      JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
+    );
+
+    const { spawn } = await import("node:child_process");
+    const child = spawn(process.execPath, [path.resolve("server.mjs")], {
+      cwd: path.resolve("."),
+      env: { ...process.env, ROUTY_HOME: home, ROUTY_PORT: "8099" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let err = "";
+    child.stderr.on("data", (c) => (err += c));
+    const code = await new Promise((resolve) => child.on("exit", resolve));
+
+    expect(code).toBe(73); // LOCK_HELD — must match bin/launch.mjs
+    expect(err).toContain("already running");
+    // it names the holder and how to stop it, so the operator is not left guessing
+    expect(err).toContain(String(process.pid));
+
+    fs.rmSync(home, { recursive: true, force: true });
+  }, 30_000);
+});
