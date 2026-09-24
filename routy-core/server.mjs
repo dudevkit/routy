@@ -6,7 +6,7 @@ import path from "node:path";
 import { resolveConfig } from "./lib/config.mjs";
 import { log, setLogLevel } from "./lib/log.mjs";
 import { createRouter, json } from "./lib/router.mjs";
-import { createBootstrapToken } from "./lib/auth.mjs";
+import { loadOrCreateManagementToken } from "./lib/auth.mjs";
 import { serveStatic } from "./lib/static.mjs";
 import { openDatabase } from "./db/driver.mjs";
 import { createRepos } from "./db/repos.mjs";
@@ -169,7 +169,11 @@ const server = http.createServer((req, res) => {
   res.on("close", () => { inflight--; });
   const pathname = new URL(req.url, "http://localhost").pathname;
 
-  if ((pathname.startsWith("/api") || pathname === "/metrics") && !mgmtAuthorized(req, cfg)) {
+  // The one /api path a non-loopback peer may reach without the token: it only says
+  // whether a token is needed, so the dashboard can show a login gate instead of
+  // rendering an empty shell. It must never reveal the token itself.
+  const isAuthProbe = pathname === "/api/auth";
+  if (!isAuthProbe && (pathname.startsWith("/api") || pathname === "/metrics") && !mgmtAuthorized(req, cfg)) {
     return json(res, 401, { error: { message: "auth_error", detail: "management token required for non-loopback peers" } });
   }
   // Proxy surface: chat/messages enforce keys in-handler; /v1/models gets the
@@ -195,14 +199,17 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(cfg.port, cfg.host, () => {
-  bootstrapToken = createBootstrapToken();
-  cfg.bootstrapToken = bootstrapToken; // consulted by mgmtAuthorized for non-loopback peers
+  // Persisted, so a dashboard on another device stays logged in across restarts.
+  const mgmt = loadOrCreateManagementToken(cfg.home);
+  bootstrapToken = mgmt.token;
+  cfg.bootstrapToken = mgmt.token; // consulted by mgmtAuthorized for non-loopback peers
   log.info("BOOT", `gateway started (v${VERSION})`, { host: cfg.host, port: cfg.port, ui: cfg.uiDir || null }); // ring provenance — token stays out
   log.raw("BOOT", `routy ${VERSION} listening`, {
     host: cfg.host,
     port: cfg.port,
     home: cfg.home,
-    bootstrapToken, // intentionally unredacted: printed exactly once at boot
+    managementToken: bootstrapToken, // intentionally unredacted: this is how you log in
+    tokenCreated: mgmt.created, // true only on the first boot, when the file was made
   });
 });
 

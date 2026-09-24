@@ -153,11 +153,18 @@ function failures(repos, limit = 20) {
   });
 }
 
-function gatewayInfo(repos, cfg, version) {
+function gatewayInfo(repos, cfg, version, req) {
   const key = repos.apiKeys.list()[0];
+  // The address the request arrived on, not the bind address. With a 0.0.0.0 bind
+  // this used to report 127.0.0.1 — correct from the server itself and useless from
+  // anywhere else, which is exactly the case the network bind exists for: you would
+  // copy that endpoint into a client on your laptop and it would point at the laptop.
+  // The Host header is what the client already used to reach us, so it is the one
+  // address we know works.
+  const host = req?.headers?.host || `${cfg.host}:${cfg.port}`;
   return {
     online: true,
-    endpoint: `http://${cfg.host === "0.0.0.0" ? "127.0.0.1" : cfg.host}:${cfg.port}/v1`,
+    endpoint: `http://${host}/v1`,
     // Mask the real key. This used to render a hardcoded "re_…" prefix followed by
     // the key's *id*, so it never showed anything about the key itself — and after
     // the rename to sk- keys it advertised a format that no longer exists.
@@ -386,9 +393,15 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   });
 
   // gateway info + health/version
+  //
+  // Reachable without the management token from a non-loopback peer (server.mjs
+  // exempts it). It answers one question — does this peer need a token — so the
+  // dashboard can show a login gate rather than an empty shell. It never returns
+  // the token.
+  route("GET", /^\/api\/auth$/, (req, res) => json(res, 200, { required: !isLoopback(req) }));
   route("GET", /^\/api\/health$/, (req, res) => json(res, 200, { status: "ok", uptimeMs: Date.now() - (globalThis.__bootedAt || Date.now()) }));
   route("GET", /^\/api\/version$/, (req, res) => json(res, 200, { version, name: "routy" }));
-  route("GET", /^\/api\/gateway$/, (req, res) => json(res, 200, gatewayInfo(repos, cfg, version)));
+  route("GET", /^\/api\/gateway$/, (req, res) => json(res, 200, gatewayInfo(repos, cfg, version, req)));
   // Graceful stop for scripts and service managers (Windows has no SIGTERM).
   // Answer first so the caller sees a clean 202, then drain and exit.
   route("POST", /^\/api\/gateway\/shutdown$/, (req, res) => {
@@ -465,8 +478,11 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("POST", /^\/api\/cli-tools\/(?<id>[^/]+)\/connect$/, async (req, res, p) => {
     if (!sameOriginAction(req, res)) return;
     const input = JSON.parse((await readBody(req)).toString("utf8") || "{}");
-    // Default to this gateway's own endpoint, so the common case needs no argument.
-    const baseUrl = input.baseUrl || gatewayInfo(repos, cfg, version).endpoint;
+    // Default to loopback, not to the address the request arrived on. These are
+    // config files for tools on the machine running routy, so they must point at
+    // 127.0.0.1 — a LAN address here would break the moment the network changes, and
+    // would be written by a dashboard someone happened to open from their laptop.
+    const baseUrl = input.baseUrl || `http://127.0.0.1:${cfg.port}/v1`;
     const result = connectTool(repos, p.id, { baseUrl, apiKey: input.apiKey ?? null, model: input.model ?? null });
     if (!result.ok) return json(res, result.error === "unknown_tool" ? 404 : 400, { error: result });
     log.info("CLI", `connected ${p.id} → ${baseUrl}`);

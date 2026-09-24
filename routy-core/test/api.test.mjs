@@ -7,6 +7,7 @@ import path from "node:path";
 import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
 import { buildApiRoutes, mgmtAuthorized } from "../http/api.mjs";
+import { loadOrCreateManagementToken } from "../lib/auth.mjs";
 import { createRouter } from "../lib/router.mjs";
 
 let tmp, db, repos, server, handlerPort, stubServer, stubPort, stubState, cfg;
@@ -203,9 +204,26 @@ describe("management API", () => {
     expect(mgmtAuthorized(fakeReq("10.1.2.3", "tok-123"), cfg)).toBe(true);
     expect(mgmtAuthorized(fakeReq("10.1.2.3", "wrong"), cfg)).toBe(false);
   });
+
+  it("tells the dashboard whether this peer needs the token", async () => {
+    // The one /api path a non-loopback peer reaches unauthenticated, so the shell can
+    // show a login gate instead of rendering empty cards against a 401. It must never
+    // return the token itself — only whether one is required.
+    const r = await get("/api/auth");
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ required: false }); // the harness connects over loopback
+  });
 });
 
 describe("gateway info", () => {
+  it("reports the endpoint the request arrived on, not the bind address", async () => {
+    // With a 0.0.0.0 bind this used to report 127.0.0.1: correct from the server,
+    // useless from anywhere else — you would copy it into a client on your laptop
+    // and it would point at the laptop. The Host header is the address that worked.
+    const r = await request("GET", "/api/gateway", undefined, { host: "192.168.1.230:8010" });
+    expect(r.body.endpoint).toBe("http://192.168.1.230:8010/v1");
+  });
+
   it("masks the real client key rather than inventing one from its id", async () => {
     const created = await post("/api/keys", { name: "masked" });
     const r = await get("/api/gateway");
@@ -215,5 +233,31 @@ describe("gateway info", () => {
     expect(mask.endsWith(created.body.key.slice(-4))).toBe(true);
     expect(mask).not.toContain(created.body.id.slice(0, 4));
     expect(mask.startsWith("re_")).toBe(false);
+  });
+});
+
+describe("management token", () => {
+  it("is created once and reused, so a dashboard stays logged in", () => {
+    // It used to be regenerated every boot. That was fine while /api was loopback
+    // only, but the gateway now listens on the network, and a token that changes on
+    // every restart would log the dashboard out every time the service bounced.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "routy-tok-"));
+    const first = loadOrCreateManagementToken(home);
+    expect(first.created).toBe(true);
+
+    const second = loadOrCreateManagementToken(home);
+    expect(second.created).toBe(false);
+    expect(second.token).toBe(first.token);
+
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("replaces a truncated token file instead of accepting it", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "routy-tok-"));
+    fs.writeFileSync(path.join(home, "mgmt-token"), "short\n");
+    const result = loadOrCreateManagementToken(home);
+    expect(result.created).toBe(true);
+    expect(result.token.length).toBeGreaterThanOrEqual(32);
+    fs.rmSync(home, { recursive: true, force: true });
   });
 });

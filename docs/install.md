@@ -96,6 +96,32 @@ do not depend on the bind address: a non-loopback peer needs the bootstrap token
 a service, a script, or a terminal you want to leave alone. With no terminal attached
 (piped input, a service manager) the menu prints once and exits rather than waiting.
 
+## Using the dashboard from another device
+
+The gateway listens on the network, and its management API (`/api`) is open only to
+loopback. From any other device the dashboard asks for the **management token** once,
+then remembers it:
+
+```
+  Management token required
+
+  This gateway is listening on the network, so its management API needs the token it
+  generated on first boot. Find it on the machine running routy:
+
+    journalctl -u routy | grep managementToken
+```
+
+The token lives in `~/.routy/mgmt-token` and is generated on first boot, so it stays
+the same across restarts — this is a one-time step per browser, not per session.
+
+The **proxy endpoint** (`/v1`) is a different credential. Clients use a client API key
+created on the Overview page, and that works from anywhere without the management
+token. If you only want to point a CLI tool at the gateway from your laptop, you need
+a client key, not this token.
+
+Set `ROUTY_HOST=127.0.0.1` and the dashboard needs no token at all, because nothing
+outside the machine can reach it.
+
 ## Environment variables
 
 | | |

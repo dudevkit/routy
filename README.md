@@ -67,8 +67,9 @@ open the dashboard, copy a client key, restart, and any available update. The de
 hands the gateway to the background and gives you your shell back.
 
 It listens on **`0.0.0.0`**, so another machine can use it without re-configuring
-anything: non-loopback peers need the bootstrap token for `/api` and a client key for
-`/v1`. `ROUTY_HOST=127.0.0.1` keeps it local.
+anything: non-loopback peers need a client key for `/v1`, and the dashboard asks for
+the management token once (it is in `~/.routy/mgmt-token` and survives restarts).
+`ROUTY_HOST=127.0.0.1` keeps it local.
 
 **From a release, by hand** — the archive is a self-contained directory:
 

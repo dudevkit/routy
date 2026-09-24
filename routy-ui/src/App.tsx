@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Header } from "./components/Header";
+import { MgmtGate } from "./components/MgmtGate";
 import { Sidebar } from "./components/Sidebar";
 import { ToastProvider } from "./components/ui/Toast";
 import { CliTools } from "./screens/CliTools";
@@ -35,7 +36,10 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <BrowserRouter basename={basename}>
+        {/* Outside the router: the gate must come up before any screen mounts, so a
+            locked dashboard never flashes empty cards and failed requests. */}
+        <MgmtGate>
+          <BrowserRouter basename={basename}>
           <div className="flex h-screen w-full overflow-hidden bg-bg">
             {/* Sidebar - desktop */}
             <div className="hidden lg:flex">
@@ -67,6 +71,7 @@ export default function App() {
             </main>
           </div>
         </BrowserRouter>
+        </MgmtGate>
       </ToastProvider>
     </QueryClientProvider>
   );

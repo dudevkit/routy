@@ -41,6 +41,7 @@ import type {
   UsageHistoryRow,
   UsageStats,
 } from "./types";
+import { getToken, signalUnauthorized } from "./auth";
 
 /** Structured API failure: message + detail + retry hint, ready for the UI to render. */
 export class ApiRequestError extends Error {
@@ -83,6 +84,9 @@ function stringArrayField(source: unknown, key: string): string[] {
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
+    // The token is missing, wrong, or was rotated. The shell listens for this and
+    // puts the gate up, rather than every screen rendering its own "failed to load".
+    if (res.status === 401) signalUnauthorized();
     let message = `HTTP ${res.status}`;
     let detail: string | undefined;
     let retryAfterMs: number | undefined;
@@ -108,22 +112,37 @@ async function json<T>(res: Response): Promise<T> {
  */
 const ACTION = { "x-routy-action": "1" };
 
+/**
+ * The management token, when we have one. Empty from loopback (where /api is open),
+ * present once the dashboard has been used from another device. Sent on every
+ * request rather than only after a 401, so a token that gets rotated does not need a
+ * failed round trip to be noticed.
+ */
+const authHeaders = (): Record<string, string> => {
+  const token = getToken();
+  return token ? { authorization: `Bearer ${token}` } : {};
+};
+
 /** Explicit generics at each call site — `.then(json)` alone loses `T`. */
-const getJson = <T,>(path: string): Promise<T> => fetch(path).then((res) => json<T>(res));
+const getJson = <T,>(path: string): Promise<T> =>
+  fetch(path, { headers: { ...authHeaders() } }).then((res) => json<T>(res));
 const postJson = <T,>(path: string, body?: unknown): Promise<T> =>
   fetch(path, {
     method: "POST",
-    headers: body === undefined ? { ...ACTION } : { ...ACTION, "content-type": "application/json" },
+    headers:
+      body === undefined
+        ? { ...ACTION, ...authHeaders() }
+        : { ...ACTION, ...authHeaders(), "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   }).then((res) => json<T>(res));
 const putJson = <T,>(path: string, body: unknown): Promise<T> =>
   fetch(path, {
     method: "PUT",
-    headers: { ...ACTION, "content-type": "application/json" },
+    headers: { ...ACTION, ...authHeaders(), "content-type": "application/json" },
     body: JSON.stringify(body),
   }).then((res) => json<T>(res));
 const deleteJson = (path: string): Promise<void> =>
-  fetch(path, { method: "DELETE", headers: { ...ACTION } }).then((res) => json<void>(res));
+  fetch(path, { method: "DELETE", headers: { ...ACTION, ...authHeaders() } }).then((res) => json<void>(res));
 
 const qs = (params: Record<string, string | number | undefined>) => {
   const sp = new URLSearchParams();
@@ -154,32 +173,82 @@ export type StreamLevel = "debug" | "info" | "warn" | "error";
  * Subscribe to the SSE log stream; returns an unsubscribe function. `level` maps
  * to the server-side `?level=` filter, so a console watching only warn/error does
  * not pay for debug traffic over the wire.
+ *
+ * fetch plus a hand-rolled SSE parse, rather than EventSource: EventSource cannot
+ * send an Authorization header, and from any device other than the gateway's own,
+ * /api needs one — so the Live Console was the one screen that stayed broken even
+ * after the token worked everywhere else. The wire format is identical.
  */
 export function streamLogs(handlers: LogStreamHandlers, level?: StreamLevel): () => void {
-  const source = new EventSource(LOG_STREAM_URL + qs({ level }));
+  const controller = new AbortController();
+  let closed = false;
 
-  source.addEventListener("init", (event: MessageEvent) => {
-    try {
-      handlers.onInit(stringArrayField(JSON.parse(String(event.data)), "lines"));
-    } catch {
-      /* malformed snapshot frame — skip */
+  const emit = (event: string, data: string) => {
+    if (event === "init") {
+      try {
+        handlers.onInit(stringArrayField(JSON.parse(data), "lines"));
+      } catch {
+        /* malformed snapshot frame — skip */
+      }
+    } else if (event === "line") {
+      try {
+        const text = textField(JSON.parse(data), "text");
+        if (text !== undefined) handlers.onLine(text);
+      } catch {
+        /* malformed frame — skip */
+      }
+    } else if (event === "clear") {
+      handlers.onClear?.();
     }
-  });
+  };
 
-  source.addEventListener("line", (event: MessageEvent) => {
+  void (async () => {
     try {
-      const text = textField(JSON.parse(String(event.data)), "text");
-      if (text !== undefined) handlers.onLine(text);
+      const res = await fetch(LOG_STREAM_URL + qs({ level }), {
+        headers: { ...authHeaders(), accept: "text/event-stream" },
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        if (res.status === 401) signalUnauthorized();
+        if (!closed) handlers.onClose?.();
+        return;
+      }
+      handlers.onOpen?.();
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        if (!closed) handlers.onClose?.();
+        return;
+      }
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // SSE frames are separated by a blank line.
+        for (let split = buffer.indexOf("\n\n"); split >= 0; split = buffer.indexOf("\n\n")) {
+          const frame = buffer.slice(0, split);
+          buffer = buffer.slice(split + 2);
+          let event = "message";
+          const data: string[] = [];
+          for (const line of frame.split("\n")) {
+            if (line.startsWith("event:")) event = line.slice(6).trim();
+            else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
+          }
+          if (data.length) emit(event, data.join("\n"));
+        }
+      }
     } catch {
-      /* malformed frame — skip */
+      /* aborted on unsubscribe, or the connection dropped */
     }
-  });
+    if (!closed) handlers.onClose?.();
+  })();
 
-  source.addEventListener("clear", () => handlers.onClear?.());
-
-  source.onopen = () => handlers.onOpen?.();
-  source.onerror = () => handlers.onClose?.();
-  return () => source.close();
+  return () => {
+    closed = true;
+    controller.abort();
+  };
 }
 
 export const api = {
