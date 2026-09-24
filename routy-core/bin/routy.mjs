@@ -160,7 +160,7 @@ function openDashboard(url) {
   const { win32, darwin, default: fallback } = DASHBOARD_OPEN;
   const [cmd, prefix] = process.platform === "win32" ? win32 : process.platform === "darwin" ? darwin : fallback;
   try {
-    const child = spawn(cmd, [...prefix, url], { stdio: "ignore", detached: true });
+    const child = spawn(cmd, [...prefix, url], { stdio: "ignore", detached: true, windowsHide: true });
     // A headless box has no xdg-open, and spawn reports that as an asynchronous
     // 'error' event. Unhandled, it takes the whole process down — which on a
     // server means the menu dies, leaves its gateway orphaned holding the db lock,
@@ -183,6 +183,10 @@ let gateway = { child: null, pid: null, ready: Promise.resolve(true), log: () =>
 function startGateway() {
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "serve"], {
     stdio: ["ignore", "pipe", "pipe"],
+    // No console window. Without this, spawning a child process on Windows puts a
+    // terminal on the desktop for the gateway the menu started — which is what showed
+    // up uninvited during testing. stdio is piped, so nothing is lost by hiding it.
+    windowsHide: true,
     env: process.env,
   });
   let output = "";

@@ -108,7 +108,7 @@ export function Overview() {
         </Card>
       )}
 
-      {/* Only renders when a newer release exists and has not been dismissed. */}
+      {/* A newer release: the full card. If it was dismissed, a one-line notice with a way back. */}
       <UpdateCard />
 
       {/* Client keys sit next to the endpoint they authenticate against. */}

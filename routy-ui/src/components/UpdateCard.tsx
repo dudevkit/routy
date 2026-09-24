@@ -29,12 +29,39 @@ export function UpdateCard() {
 
   const s = updates.data;
 
-  // Nothing to say: no update, already dismissed, or checks are off.
+  // Nothing to say: no update at all, or checks are turned off.
   if (updates.isLoading) return null;
   if (!s) return null;
   if (s.enabled === false) return null;
   if (!s.available) return null;
-  if (s.dismissed === s.latest) return null;
+
+  // Hidden is not gone. The card is the only place with a "Check again" and the only
+  // thing you'd look at, so making the X delete it turns one stray click into an
+  // unrecoverable silence — you cannot reveal a control that only exists inside the
+  // thing you hid. A dismissed notice therefore collapses to one quiet line here
+  // instead of vanishing, and that line is the way back.
+  if (s.dismissed === s.latest) {
+    return (
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-border-subtle px-3 py-2 text-[11px] text-text-subtle">
+        <ArrowCircleUp size={13} weight="thin" />
+        <span>
+          v{s.latest} is available — you hid this notice
+        </span>
+        <button
+          onClick={() =>
+            dismiss.mutate(null, {
+              onSuccess: () => toast(`v${s.latest} will be offered again`),
+              onError: (e) => toastApiError(toast, e, "Failed to show it again"),
+            })
+          }
+          className="ml-auto shrink-0 text-info underline"
+          title="Show the update card again"
+        >
+          Show
+        </button>
+      </div>
+    );
+  }
 
   const install = () =>
     apply.mutate(undefined, {
