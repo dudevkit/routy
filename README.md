@@ -115,14 +115,19 @@ routy-core/     the gateway — ESM, plain node:http, zero framework
   db/           node:sqlite driver, migrations, repositories
   http/         management API + Prometheus metrics
 routy-ui/       the dashboard — Vite + React + TypeScript + Tailwind
-docs/           architecture, configuration, cli-tools, install, releasing, roadmap
-tests/golden/   byte-exact translator fixtures captured from real upstreams
+scripts/        install.sh / install.ps1 — the one-liners above fetch these
+docs/           configuration, cli-tools, install, quickstart, releasing, windows-service
 ```
+
+The re-engineering notes this was built from — the upstream inventory, the module and
+schema designs, the UI/UX working documents, and the golden translator corpus — are
+kept in the development tree, not here. See [docs/install.md](./docs/install.md) for
+the install and update model.
 
 ## Development
 
 ```bash
-cd routy-core && npm test        # 208 tests
+cd routy-core && npm test        # 210 tests
 npm run smoke                    # boots the real bundle and drives it, 13 checks
 npm run build                    # single-file bundle
 ```

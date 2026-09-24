@@ -3,10 +3,21 @@
 /9router/
 
 # ── Development only ────────────────────────────────────────────────────────
-# Verification rigs and the engineering journal. Users download the release
-# artifact, which contains the app; neither of these belongs in the published tree.
+# Verification rigs, the engineering journal, and the material routy was
+# re-engineered from: the upstream inventory, the module and schema designs, the
+# UI/UX working documents, and the golden translator corpus. Users download the
+# release artifact, which contains the app; none of this belongs in the published
+# tree. All of it stays on disk — this only stops it being published.
 /rigs/
 /docs/project-log.md
+/docs/9router-reference.md
+/docs/roadmap.md
+/docs/backend-architecture.md
+/docs/db-design.md
+/docs/provider-page.md
+/docs/provider-catalog.md
+/docs/ui-ux/
+/tests/
 
 # ── Local state ─────────────────────────────────────────────────────────────
 node_modules/
