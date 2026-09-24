@@ -179,12 +179,19 @@ function startGateway() {
   });
   let output = "";
   let ready = false;
+  let exitCode = null;
   const onData = (buf) => {
     output += buf;
     if (!ready && output.includes("listening")) ready = true;
   };
   child.stdout.on("data", onData);
   child.stderr.on("data", onData);
+  // Remembered so the caller can pass it on. Flattening every failure to 1 here is how
+  // a lock conflict turned back into a crash: the launcher watches THIS process, and
+  // "1" means "retry with backoff" to it.
+  child.on("exit", (code) => {
+    exitCode = code ?? 1;
+  });
 
   const waitReady = new Promise((resolve) => {
     const tick = setInterval(() => {
@@ -203,7 +210,7 @@ function startGateway() {
     }, 20_000).unref?.();
   });
 
-  return { child, ready: waitReady, log: () => output };
+  return { child, ready: waitReady, log: () => output, exitCode: () => exitCode };
 }
 
 const apiBase = () => `http://${cfg.host === "0.0.0.0" ? "127.0.0.1" : cfg.host}:${cfg.port}`;
@@ -378,7 +385,11 @@ async function cmdStart() {
   if (!up) {
     console.log("routy: the gateway did not start. Its output:\n");
     console.log(gateway.log().trim() || "(no output)");
-    process.exit(1);
+    // Propagate what the gateway actually exited with. This process is the one the
+    // launcher watches, so collapsing every failure to 1 here re-labelled a lock
+    // conflict as a crash and put the launcher back into its eight-attempt backoff —
+    // which is exactly what the distinct exit code was added to prevent.
+    process.exit(gateway.exitCode() ?? 1);
   }
 
   // The check runs in the background and the menu appears immediately, so a slow

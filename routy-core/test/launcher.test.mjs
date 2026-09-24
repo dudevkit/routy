@@ -127,13 +127,13 @@ describe("launcher", () => {
 describe("interactive menu", () => {
   const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "routy.mjs");
 
-  function runMenu({ input, port }) {
+  function runMenu({ input, port, home }) {
     return new Promise((resolve) => {
       const child = spawn(process.execPath, [CLI], {
         cwd: dir,
         env: {
           ...process.env,
-          ROUTY_HOME: path.join(dir, "home"),
+          ROUTY_HOME: home ?? path.join(dir, "home"),
           ROUTY_PORT: String(port),
           ROUTY_NO_OPEN: "1", // never launch a browser from a test
         },
@@ -170,5 +170,24 @@ describe("interactive menu", () => {
   // ROUTY_NO_OPEN (no browser from a scripted run) is verified by hand under a PTY:
   // a pipe cannot drive these questions, because readline consumes stdin at module
   // load and closes before the first prompt, so the menu correctly treats it as EOF.
-});
 
+  it("passes the gateway's own exit code through, so a lock conflict is not a crash", async () => {
+    // The menu sits between the launcher and the gateway, and it used to flatten every
+    // startup failure to 1. That re-labelled a lock conflict as a crash, and the
+    // launcher answered with its eight-attempt backoff — which is exactly what the
+    // distinct LOCK_HELD code exists to prevent. Reported from a real server, running
+    // bare `routy`; the `serve` path was fine, which is why testing only that missed it.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "routy-menu-lock-"));
+    // our own pid is alive, so this reads as a running gateway holding the lock
+    fs.writeFileSync(
+      path.join(home, "gateway.lock"),
+      JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
+    );
+
+    const r = await runMenu({ input: null, port: 8079, home });
+    expect(r.code).toBe(73); // LOCK_HELD
+    expect(r.out).toContain("already running");
+
+    fs.rmSync(home, { recursive: true, force: true });
+  }, 30_000);
+});
