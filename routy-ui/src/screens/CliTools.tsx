@@ -55,45 +55,51 @@ export function CliTools() {
   const tools = useCliTools();
   const [selected, setSelected] = useState<CliTool | null>(null);
   const list = tools.data?.tools ?? [];
-  const detected = list.filter((t) => t.installed);
+  // Installed first, but never only installed. A tool that is absent is information
+  // too — it is how you find out routy supports it at all — and an empty screen that
+  // says "nothing found" gives you no way to tell "unsupported" from "detection
+  // missed it", which are different problems with different fixes.
+  const sorted = [...list].sort((a, b) => Number(b.installed) - Number(a.installed));
+  const installedCount = list.filter((t) => t.installed).length;
 
   return (
     <div className="flex flex-col gap-4">
       <div>
         <h1 className="text-lg font-semibold text-text-main">CLI Tools</h1>
         <p className="text-xs text-text-muted">
-          Point an AI CLI installed on this machine at routy. Detection reads your PATH and
-          config files; nothing is written until you connect.
+          Point an AI CLI installed on this machine at routy. Detection reads your PATH, the
+          usual user install directories, and config files; nothing is written until you connect.
         </p>
       </div>
 
       {tools.isLoading ? (
         <Skeleton rows={3} />
-      ) : detected.length === 0 ? (
+      ) : list.length === 0 ? (
         <Card padding="sm" className="flex flex-col items-center gap-3 py-12 text-center">
           <TerminalWindow size={28} className="text-text-subtle" />
-          <p className="text-sm text-text-muted">No supported CLI tools found on this machine.</p>
+          <p className="text-sm text-text-muted">Could not read the tool list.</p>
           <p className="max-w-md text-xs text-text-subtle">
-            routy looks for each tool's binary on your PATH and for its config file in your
-            home directory. Install one and reload.
+            The gateway returned no tools at all, which means the request failed rather than
+            finding nothing — reload, and check the Live Console if it persists.
           </p>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          {detected.map((t) => (
-            <ToolCard key={t.id} tool={t} onOpen={() => setSelected(t)} />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {sorted.map((t) => (
+              <ToolCard key={t.id} tool={t} onOpen={() => setSelected(t)} />
+            ))}
+          </div>
+          <p className="text-[11px] text-text-subtle">
+            {installedCount === 0
+              ? `None of the ${list.length} supported tools were found on this machine.`
+              : `${installedCount} of ${list.length} supported tools found on this machine.`}{" "}
+            Install one and reload.
+          </p>
+        </>
       )}
 
       <CliToolDetail tool={selected} onClose={() => setSelected(null)} />
-
-      {!tools.isLoading && list.length > detected.length && (
-        <p className="text-[11px] text-text-subtle">
-          {list.length - detected.length} other supported tool
-          {list.length - detected.length === 1 ? "" : "s"} not installed here.
-        </p>
-      )}
     </div>
   );
 }

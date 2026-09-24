@@ -276,3 +276,54 @@ describe("every adapter round-trips", () => {
     expect(writable.length).toBe(ADAPTERS.length - 1); // devin is detection-only
   });
 });
+
+describe("binary detection", () => {
+  it("finds a tool in ~/.local/bin even when PATH does not include it", () => {
+    // The case that broke on a real server: systemd hands a service a minimal PATH
+    // (/usr/bin:/bin), so anything installed under the user's home is invisible to it.
+    // That is exactly where these tools live — pipx, uv, cargo and friends all write
+    // to ~/.local/bin — and the dashboard reported "not installed" for a tool that was
+    // installed and worked fine in the user's own shell.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "routy-bin-"));
+    const dir = path.join(home, ".local", "bin");
+    fs.mkdirSync(dir, { recursive: true });
+    const name = process.platform === "win32" ? "routytest-bin.cmd" : "routytest-bin";
+    fs.writeFileSync(path.join(dir, name), "#!/bin/sh\n", { mode: 0o755 });
+
+    const saved = process.env.PATH;
+    process.env.PATH = process.platform === "win32" ? "C:\\Windows\\System32" : "/usr/bin:/bin";
+    try {
+      expect(findBinary(["routytest-bin"], { home })).toBe(path.join(dir, name));
+      // and a tool that really is absent stays absent
+      expect(findBinary(["routytest-absent-xyz"], { home })).toBeNull();
+      // no names is not a crash
+      expect(findBinary([], { home })).toBeNull();
+    } finally {
+      process.env.PATH = saved;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("marks a tool installed when only its binary is present, with no config yet", () => {
+    // A freshly installed CLI has a binary and no config. That is "installed", and it
+    // is the state a user is most likely to be in when they open this screen.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "routy-bin-"));
+    const dir = path.join(home, ".local", "bin");
+    fs.mkdirSync(dir, { recursive: true });
+    const name = process.platform === "win32" ? "routytest-bin2.cmd" : "routytest-bin2";
+    fs.writeFileSync(path.join(dir, name), "#!/bin/sh\n", { mode: 0o755 });
+    const adapter = { id: "t", name: "T", binaries: ["routytest-bin2"], files: [{ path: "~/.nope-xyz/config", format: "json" }] };
+
+    const saved = process.env.PATH;
+    process.env.PATH = process.platform === "win32" ? "C:\\Windows\\System32" : "/usr/bin:/bin";
+    try {
+      const status = toolStatus(repos, adapter, { home });
+      expect(status.installed).toBe(true);
+      expect(status.configExists).toBe(false);
+      expect(status.connected).toBe(false);
+    } finally {
+      process.env.PATH = saved;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});

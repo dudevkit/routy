@@ -448,19 +448,73 @@ export const ADAPTERS = [
 
 export const findAdapter = (id) => ADAPTERS.find((a) => a.id === id) ?? null;
 
-/** Where a binary lives, if installed. npm global bins are not on PATH by default. */
-export function findBinary(names) {
+/**
+ * Directories a binary can live in that are not on this process's PATH.
+ *
+ * A gateway started by systemd gets a minimal PATH — typically
+ * /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin — so anything the user
+ * installed under their own home is invisible to it. That is the common case for the
+ * tools this screen exists for: ~/.local/bin is where pipx, uv, cargo and a dozen
+ * installers put things, and it is on the user's PATH but not the service's.
+ *
+ * Reporting "not installed" for a tool that is installed, and that works in the user's
+ * own shell, is worse than reporting nothing — it sends them looking for a problem
+ * that is ours.
+ */
+function userBinDirs(home) {
+  const dirs = [
+    path.join(home, ".local", "bin"),
+    path.join(home, ".bun", "bin"),
+    path.join(home, ".cargo", "bin"),
+    path.join(home, ".volta", "bin"),
+    path.join(home, ".npm-global", "bin"),
+    path.join(home, "go", "bin"),
+    path.join(home, "bin"),
+    "/usr/local/bin",
+  ];
+  if (process.platform === "win32") {
+    if (process.env.APPDATA) dirs.push(path.join(process.env.APPDATA, "npm"));
+    if (process.env.LOCALAPPDATA) dirs.push(path.join(process.env.LOCALAPPDATA, "Programs"));
+  }
+  return dirs;
+}
+
+const isDir = (p) => {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/** Where a binary lives, if installed. PATH alone is not enough — see userBinDirs. */
+export function findBinary(names, { home = os.homedir() } = {}) {
   if (!names?.length) return null;
   const isWindows = process.platform === "win32";
-  const extra = isWindows && process.env.APPDATA ? path.join(process.env.APPDATA, "npm") : null;
-  const env = extra ? { ...process.env, PATH: `${extra}${path.delimiter}${process.env.PATH}` } : process.env;
+  const extra = userBinDirs(home).filter(isDir);
+  const env = { ...process.env, PATH: [...extra, process.env.PATH || ""].join(path.delimiter) };
+
   for (const name of names) {
     try {
       const out = execFileSync(isWindows ? "where" : "which", [name], { env, encoding: "utf8", windowsHide: true });
       const first = out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0];
       if (first) return first;
     } catch {
-      /* not on PATH — try the next name */
+      /* not found through which — fall through to the direct check */
+    }
+    // `which` is not guaranteed to exist on a minimal image, and it only knows PATH.
+    // A direct executable check costs nothing and covers both.
+    const suffixes = isWindows ? ["", ".exe", ".cmd", ".bat"] : [""];
+    for (const dir of extra) {
+      for (const suffix of suffixes) {
+        const candidate = path.join(dir, name + suffix);
+        try {
+          fs.accessSync(candidate, isWindows ? fs.constants.F_OK : fs.constants.X_OK);
+          return candidate;
+        } catch {
+          /* keep looking */
+        }
+      }
     }
   }
   return null;
@@ -485,8 +539,8 @@ export const resolveFile = (entry, home) => {
 const backupKey = (id) => `cliToolBackup:${id}`;
 
 /** Everything the dashboard needs about one tool, with no side effects. */
-export function toolStatus(repos, adapter, { home } = {}) {
-  const binary = findBinary(adapter.binaries);
+export function toolStatus(repos, adapter, { home = os.homedir() } = {}) {
+  const binary = findBinary(adapter.binaries, { home });
   const files = (adapter.files ?? []).map((entry) => {
     const file = resolveFile(entry, home);
     return { file, text: readText(file), entry };
