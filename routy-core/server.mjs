@@ -160,6 +160,30 @@ const routes = [
 
 const dispatch = createRouter(routes);
 
+/**
+ * The management token, minted on demand rather than only at boot.
+ *
+ * Turning the setting on from the dashboard has to produce the token immediately:
+ * otherwise a non-loopback peer enables it, every subsequent request is rejected
+ * against a null token, and the operator is locked out of the UI they just used with
+ * nothing to paste. Which is the worst possible moment to be locked out.
+ *
+ * Printed with log.raw, so it reaches the journal (where `grep managementToken`
+ * finds it) but not the ring buffer the dashboard streams — a credential does not
+ * belong in the log view.
+ */
+function ensureManagementToken() {
+  if (cfg.bootstrapToken) return cfg.bootstrapToken;
+  const mgmt = loadOrCreateManagementToken(cfg.home);
+  cfg.bootstrapToken = mgmt.token;
+  bootstrapToken = mgmt.token;
+  log.raw("BOOT", `management token ${mgmt.created ? "created" : "loaded"}`, {
+    managementToken: cfg.bootstrapToken,
+    find: "journalctl -u routy | grep managementToken",
+  });
+  return cfg.bootstrapToken;
+}
+
 // In-flight request count drives graceful shutdown: we drain what is already
 // running (a streaming response may be mid-flight) and force-close after the
 // grace period. Sockets' close events are the only place this can be tracked.
@@ -169,11 +193,16 @@ const server = http.createServer((req, res) => {
   res.on("close", () => { inflight--; });
   const pathname = new URL(req.url, "http://localhost").pathname;
 
-  // The one /api path a non-loopback peer may reach without the token: it only says
-  // whether a token is needed, so the dashboard can show a login gate instead of
-  // rendering an empty shell. It must never reveal the token itself.
+  // Off unless the operator turned it on: env wins, then Settings. Read per request
+  // because the Settings toggle must take effect without a restart — and minted here
+  // rather than only at boot, so flipping it on produces the token it now demands.
+  const requireToken = cfg.requireToken ?? repos.settings.get("requireToken", false);
+  if (requireToken) ensureManagementToken();
+  // The one /api path a peer may reach unauthenticated. It reports whether a token is
+  // needed and whether this gateway is sitting unlocked on a network — never the
+  // token itself.
   const isAuthProbe = pathname === "/api/auth";
-  if (!isAuthProbe && (pathname.startsWith("/api") || pathname === "/metrics") && !mgmtAuthorized(req, cfg)) {
+  if (!isAuthProbe && (pathname.startsWith("/api") || pathname === "/metrics") && !mgmtAuthorized(req, cfg, requireToken)) {
     return json(res, 401, { error: { message: "auth_error", detail: "management token required for non-loopback peers" } });
   }
   // Proxy surface: chat/messages enforce keys in-handler; /v1/models gets the
@@ -199,18 +228,26 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(cfg.port, cfg.host, () => {
-  // Persisted, so a dashboard on another device stays logged in across restarts.
-  const mgmt = loadOrCreateManagementToken(cfg.home);
-  bootstrapToken = mgmt.token;
-  cfg.bootstrapToken = mgmt.token; // consulted by mgmtAuthorized for non-loopback peers
+  const requireToken = cfg.requireToken ?? repos.settings.get("requireToken", false);
+  // Logs the token, so `journalctl -u routy | grep managementToken` finds it at boot
+  // when authentication is configured. When it is not, no secret is minted at all.
+  if (requireToken) ensureManagementToken();
+
+  const networkBound = cfg.host !== "127.0.0.1" && cfg.host !== "::1" && cfg.host !== "localhost";
   log.info("BOOT", `gateway started (v${VERSION})`, { host: cfg.host, port: cfg.port, ui: cfg.uiDir || null }); // ring provenance — token stays out
   log.raw("BOOT", `routy ${VERSION} listening`, {
     host: cfg.host,
     port: cfg.port,
     home: cfg.home,
-    managementToken: bootstrapToken, // intentionally unredacted: this is how you log in
-    tokenCreated: mgmt.created, // true only on the first boot, when the file was made
   });
+  if (networkBound && !requireToken) {
+    // Said once, at boot, where someone reading a service log will see it. The
+    // dashboard shows the same warning; this is for the operator who never opens it.
+    log.warn("SECURITY", "listening on the network with the management API unlocked", {
+      detail: "anyone who can reach this port can read client keys and edit CLI tool configs",
+      fix: "set ROUTY_REQUIRE_TOKEN=1, or turn on 'Require token' in Settings",
+    });
+  }
 });
 
 // Graceful shutdown: stop accepting, let in-flight streams finish, then force.

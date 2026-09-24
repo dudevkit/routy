@@ -197,21 +197,26 @@ describe("management API", () => {
     expect(captured).toContain("live line arrives");
   });
 
-  it("guards /api for non-loopback peers via token", () => {
+  it("guards /api for non-loopback peers once the token is required", () => {
     const fakeReq = (addr, auth) => ({ socket: { remoteAddress: addr }, headers: auth ? { authorization: `Bearer ${auth}` } : {} });
-    expect(mgmtAuthorized(fakeReq("127.0.0.1"), cfg)).toBe(true);
-    expect(mgmtAuthorized(fakeReq("10.1.2.3"), cfg)).toBe(false);
-    expect(mgmtAuthorized(fakeReq("10.1.2.3", "tok-123"), cfg)).toBe(true);
-    expect(mgmtAuthorized(fakeReq("10.1.2.3", "wrong"), cfg)).toBe(false);
+    // loopback is always allowed, token or not — that is the dashboard on this machine
+    expect(mgmtAuthorized(fakeReq("127.0.0.1"), cfg, true)).toBe(true);
+    expect(mgmtAuthorized(fakeReq("127.0.0.1"), cfg, false)).toBe(true);
+    // token off (the default): any peer is allowed, which is the whole point
+    expect(mgmtAuthorized(fakeReq("10.1.2.3"), cfg, false)).toBe(true);
+    // token on: a non-loopback peer must present it
+    expect(mgmtAuthorized(fakeReq("10.1.2.3"), cfg, true)).toBe(false);
+    expect(mgmtAuthorized(fakeReq("10.1.2.3", "tok-123"), cfg, true)).toBe(true);
+    expect(mgmtAuthorized(fakeReq("10.1.2.3", "wrong"), cfg, true)).toBe(false);
   });
 
   it("tells the dashboard whether this peer needs the token", async () => {
-    // The one /api path a non-loopback peer reaches unauthenticated, so the shell can
-    // show a login gate instead of rendering empty cards against a 401. It must never
-    // return the token itself — only whether one is required.
+    // The one /api path a peer reaches unauthenticated, so the shell can decide
+    // between the gate and the app. It must never return the token itself.
     const r = await get("/api/auth");
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ required: false }); // the harness connects over loopback
+    expect(r.body.required).toBe(false); // the harness connects over loopback, always open
+    expect(typeof r.body.unlockedNetwork).toBe("boolean");
   });
 });
 

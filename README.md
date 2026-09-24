@@ -66,10 +66,13 @@ That starts the gateway and gives you an arrow-key menu — run it in the backgr
 open the dashboard, copy a client key, restart, and any available update. The default
 hands the gateway to the background and gives you your shell back.
 
-It listens on **`0.0.0.0`**, so another machine can use it without re-configuring
-anything: non-loopback peers need a client key for `/v1`, and the dashboard asks for
-the management token once (it is in `~/.routy/mgmt-token` and survives restarts).
-`ROUTY_HOST=127.0.0.1` keeps it local.
+It listens on **`0.0.0.0`** and the dashboard works from any device with no setup. The
+management API is open by default — this is a local gateway, and a credential before
+the dashboard renders is friction nobody asked for. While it is open on a network the
+dashboard says so, because anyone who can reach the port can read your client keys and
+edit CLI tool configs. Turn on **Require a management token** in Settings (or set
+`ROUTY_REQUIRE_TOKEN=1`) when the gateway is reachable from somewhere you do not
+control. `ROUTY_HOST=127.0.0.1` keeps it local instead.
 
 **From a release, by hand** — the archive is a self-contained directory:
 

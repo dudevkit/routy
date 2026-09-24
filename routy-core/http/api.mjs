@@ -19,8 +19,21 @@ export function isLoopback(req) {
   return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
 }
 
-export function mgmtAuthorized(req, cfg) {
+/**
+ * Who may reach /api.
+ *
+ * Loopback always may — that is the dashboard on the gateway's own machine. For any
+ * other peer the answer is "yes, unless the operator turned the token on": routy is a
+ * local gateway, and demanding a credential before the dashboard will render is
+ * friction where the user expects it to work. Turning it on is for the case where the
+ * gateway is reachable from somewhere you do not control.
+ *
+ * This is only the /api surface. /v1 has always required a client key from a
+ * non-loopback peer, and still does.
+ */
+export function mgmtAuthorized(req, cfg, requireToken = false) {
   if (isLoopback(req)) return true;
+  if (!requireToken) return true;
   const h = req.headers.authorization || "";
   const m = h.match(/^Bearer\s+(.+)$/i);
   return !!m && m[1].trim() === cfg.bootstrapToken;
@@ -394,11 +407,17 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
 
   // gateway info + health/version
   //
-  // Reachable without the management token from a non-loopback peer (server.mjs
-  // exempts it). It answers one question — does this peer need a token — so the
-  // dashboard can show a login gate rather than an empty shell. It never returns
-  // the token.
-  route("GET", /^\/api\/auth$/, (req, res) => json(res, 200, { required: !isLoopback(req) }));
+  // Reachable without a token (server.mjs exempts it). It answers two questions the
+  // dashboard cannot answer any other way — does this peer need a token, and is this
+  // gateway sitting unlocked on a network — and never returns the token itself.
+  route("GET", /^\/api\/auth$/, (req, res) => {
+    const requireToken = cfg.requireToken ?? repos.settings.get("requireToken", false);
+    const networkBound = cfg.host !== "127.0.0.1" && cfg.host !== "::1" && cfg.host !== "localhost";
+    json(res, 200, {
+      required: requireToken && !isLoopback(req),
+      unlockedNetwork: networkBound && !requireToken,
+    });
+  });
   route("GET", /^\/api\/health$/, (req, res) => json(res, 200, { status: "ok", uptimeMs: Date.now() - (globalThis.__bootedAt || Date.now()) }));
   route("GET", /^\/api\/version$/, (req, res) => json(res, 200, { version, name: "routy" }));
   route("GET", /^\/api\/gateway$/, (req, res) => json(res, 200, gatewayInfo(repos, cfg, version, req)));

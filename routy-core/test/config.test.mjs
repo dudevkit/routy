@@ -127,3 +127,28 @@ describe("database file rename", () => {
     db.close();
   }, 20_000);
 });
+
+describe("management token setting", () => {
+  it("is off unless the operator asks for it", () => {
+    // The default matters: routy is a local gateway, and a credential before the
+    // dashboard renders is friction where the user expects it to work.
+    expect(resolveConfig({ ROUTY_HOME: tmp }).requireToken).toBeUndefined();
+  });
+
+  it("accepts the usual spellings, and RE_E_ as well", () => {
+    for (const value of ["1", "true", "yes", "on", "TRUE"]) {
+      expect(resolveConfig({ ROUTY_HOME: tmp, ROUTY_REQUIRE_TOKEN: value }).requireToken).toBe(true);
+    }
+    for (const value of ["0", "false", "no", "off"]) {
+      expect(resolveConfig({ ROUTY_HOME: tmp, ROUTY_REQUIRE_TOKEN: value }).requireToken).toBe(false);
+    }
+    // legacy spelling still answers, like every other ROUTY_* variable
+    expect(resolveConfig({ RE_E_HOME: tmp, RE_E_REQUIRE_TOKEN: "1" }).requireToken).toBe(true);
+  });
+
+  it("lets an explicit 0 override a value in Settings", () => {
+    // undefined means "not set here, ask Settings"; false means "off, regardless".
+    const cfg = resolveConfig({ ROUTY_HOME: tmp, ROUTY_REQUIRE_TOKEN: "0" });
+    expect(cfg.requireToken).toBe(false);
+  });
+});

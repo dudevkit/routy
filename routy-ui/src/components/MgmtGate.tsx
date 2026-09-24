@@ -4,6 +4,7 @@ import { Card } from "./ui/Card";
 import { Input } from "./ui/Input";
 import { getToken, onUnauthorized, setToken } from "../api/auth";
 import { Key } from "./icons";
+import { SecurityBanner } from "./SecurityBanner";
 
 type GateState = "checking" | "open" | "locked";
 
@@ -21,32 +22,42 @@ type GateState = "checking" | "open" | "locked";
  */
 export function MgmtGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<GateState>("checking");
+  const [unlockedNetwork, setUnlockedNetwork] = useState(false);
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  /** Does the current situation need a token, and if we have one, does it work? */
-  const evaluate = async (): Promise<GateState> => {
+  /**
+   * Does this peer need a token, and if we have one, does it work?
+   *
+   * The gateway answers the first question itself: with the token switched off — the
+   * default — no peer needs one, and the dashboard opens straight up. This is only a
+   * gate for operators who turned authentication on.
+   */
+  const evaluate = async (): Promise<{ state: GateState; unlocked: boolean }> => {
     try {
       const probe = await fetch("/api/auth");
-      if (!probe.ok) return "open"; // probe unreachable — let the app surface it
+      if (!probe.ok) return { state: "open", unlocked: false }; // probe unreachable — let the app surface it
       const body: unknown = await probe.json();
-      const required = typeof body === "object" && body !== null && (body as { required?: unknown }).required === true;
-      if (!required) return "open"; // loopback: /api is open
+      const rec = (body ?? {}) as { required?: unknown; unlockedNetwork?: unknown };
+      const unlocked = rec.unlockedNetwork === true;
+      if (rec.required !== true) return { state: "open", unlocked };
 
       const token = getToken();
-      if (!token) return "locked";
+      if (!token) return { state: "locked", unlocked };
       const check = await fetch("/api/version", { headers: { authorization: `Bearer ${token}` } });
-      return check.ok ? "open" : "locked";
+      return { state: check.ok ? "open" : "locked", unlocked };
     } catch {
-      return "open"; // a network failure is not an auth problem
+      return { state: "open", unlocked: false }; // a network failure is not an auth problem
     }
   };
 
   useEffect(() => {
     let alive = true;
-    void evaluate().then((next) => {
-      if (alive) setState(next);
+    void evaluate().then((r) => {
+      if (!alive) return;
+      setState(r.state);
+      setUnlockedNetwork(r.unlocked);
     });
     // The token can be rejected at any time (rotated on the server). The transport
     // raises this instead of every screen rendering its own failure.
@@ -63,9 +74,9 @@ export function MgmtGate({ children }: { children: ReactNode }) {
     setBusy(true);
     setError(null);
     setToken(token);
-    const next = await evaluate();
+    const r = await evaluate();
     setBusy(false);
-    if (next === "open") {
+    if (r.state === "open") {
       setValue("");
       setState("open");
     } else {
@@ -90,8 +101,8 @@ export function MgmtGate({ children }: { children: ReactNode }) {
             <h1 className="text-sm font-medium text-text">Management token required</h1>
           </div>
           <p className="mb-4 text-xs leading-relaxed text-text-muted">
-            This gateway is listening on the network, so its management API needs the token it
-            generated on first boot. Find it on the machine running routy:
+            This gateway is listening on the network and authentication is turned on, so the
+            management API needs the token it generated. Find it on the machine running routy:
           </p>
           <pre className="mb-4 overflow-x-auto rounded-md bg-surface-2 px-3 py-2 text-[11px] text-text-muted">
             journalctl -u routy | grep managementToken
@@ -118,5 +129,10 @@ export function MgmtGate({ children }: { children: ReactNode }) {
     );
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      {unlockedNetwork && <SecurityBanner />}
+      {children}
+    </>
+  );
 }

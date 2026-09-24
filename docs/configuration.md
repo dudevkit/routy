@@ -12,7 +12,8 @@ read per request).
 |---|---|---|
 | `ROUTY_HOME` | `~/.routy` | State directory: `config.json`, `data/routy.db`, `gateway.lock`, `mgmt-token` |
 | `ROUTY_PORT` | `8010` | Listen port |
-| `ROUTY_HOST` | `0.0.0.0` | Bind address. On anything but loopback, `/api` requires the management token (the dashboard asks for it once) and `/v1` requires an API key — that is the default. `127.0.0.1` opts out and keeps it to this machine |
+| `ROUTY_HOST` | `0.0.0.0` | Bind address. On anything but loopback, `/v1` requires a client API key; `/api` is open unless `ROUTY_REQUIRE_TOKEN` is set. `127.0.0.1` keeps it to this machine |
+| `ROUTY_REQUIRE_TOKEN` | off | Require the management token for `/api` from non-loopback peers. `0` forces it off even if Settings has it on |
 | `ROUTY_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `ROUTY_UI_DIR` | auto | Dashboard directory. Auto-resolved: `<bundleDir>/ui` → `./routy-ui/dist` → `../routy-ui/dist` → `<home>/ui` |
 | `ROUTY_STREAM_IDLE_TIMEOUT_MS` | `120000` | Stall watchdog budget in ms; `0` disables. Overridable per node |

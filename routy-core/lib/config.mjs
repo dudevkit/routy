@@ -110,5 +110,14 @@ export function resolveConfig(env = process.env) {
     const v = Number(idle);
     if (Number.isFinite(v) && v >= 0) cfg.streamIdleTimeoutMs = v;
   }
+  // Management API authentication, off by default.
+  //
+  // routy is a local gateway: the dashboard asking for a token the first time you
+  // open it from your laptop is friction where the user expects it to just work.
+  // Turn it on when the gateway is reachable from somewhere you do not control — a
+  // VPS with a public address, a shared or untrusted network. Undefined means "not
+  // set here", so a value in Settings still applies; set it to 0 to force it off.
+  const requireToken = envAny(env, "ROUTY_REQUIRE_TOKEN", "RE_E_REQUIRE_TOKEN");
+  if (requireToken !== undefined) cfg.requireToken = /^(1|true|yes|on)$/i.test(requireToken);
   return cfg;
 }

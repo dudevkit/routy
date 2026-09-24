@@ -264,6 +264,8 @@ export interface ModelBulkResult {
 export interface Settings {
   /** gate: when false the proxy accepts requests without a client key */
   requireApiKey?: boolean;
+  /** gate: when true /api needs the management token from any non-loopback peer */
+  requireToken?: boolean;
   /** RTK token-saver compression */
   rtkEnabled?: boolean;
   /** how much the gateway records: debug | info | warn | error (live, survives restart) */

@@ -98,29 +98,44 @@ a service, a script, or a terminal you want to leave alone. With no terminal att
 
 ## Using the dashboard from another device
 
-The gateway listens on the network, and its management API (`/api`) is open only to
-loopback. From any other device the dashboard asks for the **management token** once,
-then remembers it:
+The gateway listens on the network, and the dashboard works from any device with no
+setup — open `http://<server>:8010` and it loads. That is deliberate: routy is a local
+gateway, and a credential before the dashboard renders is friction where you expect it
+to just work.
+
+**The trade is stated rather than hidden.** While the management API is unlocked on a
+network, the dashboard shows a banner and the boot log says so once:
+
+```
+listening on the network with the management API unlocked
+  anyone who can reach this port can read client keys and edit CLI tool configs
+```
+
+That is the actual exposure. A peer that can reach the port can read your **client API
+keys** (the dashboard shows them so you can copy them) and rewrite the **CLI tool
+configs** on the machine running routy. They cannot read your provider keys — those are
+masked — and they cannot run code, because updates are signature-verified.
+
+### Locking it down
+
+Turn on **Settings → Access → Require a management token for `/api`**, or set
+`ROUTY_REQUIRE_TOKEN=1`. The dashboard then asks once per browser:
 
 ```
   Management token required
 
-  This gateway is listening on the network, so its management API needs the token it
-  generated on first boot. Find it on the machine running routy:
-
     journalctl -u routy | grep managementToken
 ```
 
-The token lives in `~/.routy/mgmt-token` and is generated on first boot, so it stays
-the same across restarts — this is a one-time step per browser, not per session.
+The token is generated when you turn this on, kept in `~/.routy/mgmt-token`, and stays
+the same across restarts — a one-time step, not a per-session one.
 
-The **proxy endpoint** (`/v1`) is a different credential. Clients use a client API key
-created on the Overview page, and that works from anywhere without the management
-token. If you only want to point a CLI tool at the gateway from your laptop, you need
-a client key, not this token.
+Do this if the gateway is reachable from somewhere you do not control: a VPS with a
+public address, an office or shared network, a machine on the open internet. On a home
+LAN behind a router, the default is reasonable.
 
-Set `ROUTY_HOST=127.0.0.1` and the dashboard needs no token at all, because nothing
-outside the machine can reach it.
+`ROUTY_HOST=127.0.0.1` is the other option — bind loopback and nothing outside the
+machine can reach the management API at all, with no token needed.
 
 ## Environment variables
 

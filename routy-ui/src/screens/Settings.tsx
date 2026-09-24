@@ -183,6 +183,10 @@ export function Settings() {
   const setRequireApiKey = (enabled: boolean) =>
     put.mutate({ requireApiKey: enabled }, { onError: (err) => toastApiError(toast, err, "Failed to save setting") });
 
+  const requireToken = settings.data?.requireToken === true;
+  const setRequireToken = (enabled: boolean) =>
+    put.mutate({ requireToken: enabled }, { onError: (err) => toastApiError(toast, err, "Failed to save setting") });
+
   return (
     <div className="flex flex-col gap-4">
       <Card padding="sm" className="flex flex-col gap-3">
@@ -210,17 +214,30 @@ export function Settings() {
         {settings.isLoading ? (
           <Skeleton rows={1} />
         ) : (
-          <Toggle
-            label="Require a client API key for /v1"
-            hint={
-              requireApiKey
-                ? "Requests without a valid key get auth_error. This UI still works — it is same-origin on loopback."
-                : "Open local gateway: any local client can route. Turn it on once you have minted keys."
-            }
-            checked={requireApiKey}
-            loading={put.isPending}
-            onChange={setRequireApiKey}
-          />
+          <>
+            <Toggle
+              label="Require a client API key for /v1"
+              hint={
+                requireApiKey
+                  ? "Requests without a valid key get auth_error. The dashboard still works — it authenticates as the same origin."
+                  : "Open local gateway: any local client can route. Turn it on once you have minted keys."
+              }
+              checked={requireApiKey}
+              loading={put.isPending}
+              onChange={setRequireApiKey}
+            />
+            <Toggle
+              label="Require a management token for /api"
+              hint={
+                requireToken
+                  ? "The dashboard asks for the token on any device but this one. Find it with: journalctl -u routy | grep managementToken"
+                  : "Anyone who can reach this port can read your client keys and edit CLI tool configs. Turn this on if the gateway is reachable from a network you do not control."
+              }
+              checked={requireToken}
+              loading={put.isPending}
+              onChange={setRequireToken}
+            />
+          </>
         )}
       </Card>
 
