@@ -304,3 +304,46 @@ describe("session key", () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 });
+
+// The same-origin guard on mutating endpoints. It hard-coded loopback as the only
+// acceptable Origin, which was fine while the dashboard could only be reached from the
+// gateway's own machine — and turned every mutation on a remote dashboard, including
+// Update, into "cross-origin request rejected" once it was not.
+describe("same-origin guard", () => {
+  const apply = (origin, host) => request("POST", "/api/updates/dismiss", { version: "9.9.9" }, {
+    "x-routy-action": "1",
+    ...(origin ? { origin } : {}),
+    ...(host ? { host } : {}),
+  });
+
+  it("accepts the dashboard opened by LAN address, not just loopback", async () => {
+    const r = await apply("http://192.168.1.230:8010", "192.168.1.230:8010");
+    expect(r.status).not.toBe(403);
+  });
+
+  it("accepts loopback under either name", async () => {
+    expect((await apply("http://localhost:8010", "localhost:8010")).status).not.toBe(403);
+    expect((await apply("http://127.0.0.1:8010", "127.0.0.1:8010")).status).not.toBe(403);
+  });
+
+  it("rejects a hostile page, because its Origin cannot match the Host", async () => {
+    const r = await apply("http://evil.com:8010", "127.0.0.1:8010");
+    expect(r.status).toBe(403);
+    expect(r.body.error.message).toBe("forbidden");
+  });
+
+  it("rejects DNS rebinding, where Origin and Host DO match", async () => {
+    // The reason the guard cannot just compare Origin to Host: an attacker's page can
+    // re-resolve its own hostname to 127.0.0.1, and then both headers agree and the
+    // peer looks like loopback. A Host that is not an address (or operator-declared)
+    // can only have come from that, so it is refused.
+    const r = await apply("http://attacker.pw:8010", "attacker.pw:8010");
+    expect(r.status).toBe(403);
+    expect(String(r.body.error.detail)).toContain("ROUTY_ALLOWED_HOSTS");
+  });
+
+  it("still requires the action header when there is no Origin at all", async () => {
+    const noHeader = await request("POST", "/api/updates/dismiss", { version: "9.9.9" }, { host: "127.0.0.1:8010" });
+    expect(noHeader.status).toBe(400);
+  });
+});

@@ -64,22 +64,42 @@ export const PUBLIC_API_PATHS = new Set([
 /**
  * Guard for state-changing endpoints a browser could be tricked into calling.
  *
- * /api trusts loopback, which is right for a local dashboard — but it also means any
- * page the user has open can POST to 127.0.0.1:8010 without a preflight. Requiring a
- * custom header forces one (a cross-origin page cannot satisfy it without CORS
- * approval), and rejecting a foreign Origin covers the rest.
+ * The threat is a hostile page aiming a request at your gateway, which it can do
+ * because a browser will send a form POST to any host it names. Two things stop it.
+ * Requiring a custom header forces a CORS preflight, which a cross-origin page cannot
+ * complete without this server approving it — and this server sends no CORS headers at
+ * all. And the Origin, when present, must be the very host:port the request was sent
+ * to, which is what "same origin" actually means.
+ *
+ * It used to compare the Origin against a fixed list of loopback names. That was right
+ * only while the dashboard could be reached from loopback. The gateway listens on the
+ * network by default now and you are expected to open it from a laptop, so a LAN origin
+ * is the normal case, not the attack — and the old check was rejecting it, which made
+ * every mutating request on a remote dashboard fail with "cross-origin request
+ * rejected".
+ *
+ * Comparing against the request's own Host fixes that: evil.com -> your gateway can
+ * never match. But on its own it would OPEN a hole the old check happened to plug.
+ *
+ * DNS rebinding: a page at attacker.pw re-resolves that name to 127.0.0.1, the browser
+ * connects to loopback, Origin and Host are both attacker.pw so they match, and the
+ * peer looks like the machine itself — no login, no cross-origin. The fix is to demand a
+ * Host that cannot have come from a name an attacker controls: a numeric address, or
+ * localhost. A rebinding page cannot send Host: 127.0.0.1:8010 for a site it owns, so
+ * an IP literal proves the browser dialled an address. Serving routy under a real
+ * hostname is still available - declare it in ROUTY_ALLOWED_HOSTS.
  */
-function sameOriginAction(req, res) {
+function sameOriginAction(req, res, cfg) {
   const origin = req.headers.origin;
   if (origin && origin !== "null") {
-    let host = null;
-    try {
-      host = new URL(origin).hostname;
-    } catch {
-      host = null;
-    }
-    if (!["127.0.0.1", "localhost", "::1", "[::1]"].includes(host ?? "")) {
+    const want = splitHostPort(origin);
+    const got = splitHostPort(req.headers.host);
+    if (!want || !got || want.host !== got.host || want.port !== got.port) {
       json(res, 403, { error: { message: "forbidden", detail: "cross-origin request rejected" } });
+      return false;
+    }
+    if (!hostIsAddressLike(got.host, cfg?.allowedHosts)) {
+      json(res, 403, { error: { message: "forbidden", detail: `unrecognised host "${got.host}" — set ROUTY_ALLOWED_HOSTS to serve this name` } });
       return false;
     }
   }
@@ -88,6 +108,34 @@ function sameOriginAction(req, res) {
     return false;
   }
   return true;
+}
+
+/** `http://host:8010/x` and `host:8010` both reduce to { host, port }, for comparing. */
+function splitHostPort(value) {
+  const raw = String(value || "").trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, "");
+  const cut = raw.split("/")[0];
+  const bracket = cut.lastIndexOf("]"); // IPv6 is bracketed: [::1]:8010
+  const colon = cut.lastIndexOf(":");
+  if (colon > bracket) return { host: cut.slice(0, colon), port: normalisePort(cut.slice(colon + 1)) };
+  return { host: cut, port: normalisePort("") };
+}
+
+/** A missing port means the scheme default, and routy serves plain HTTP. */
+const normalisePort = (p) => (p === "" || p === "80" ? "" : p);
+
+const IPV4 = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+const IPV6 = /^\[[0-9a-f:.]+\]$/i;
+const LOCAL_NAMES = new Set(["localhost", "[::1]", "::1"]);
+
+/**
+ * A Host that can only have come from dialling an address, not from a name an attacker
+ * controls and can re-point at 127.0.0.1 between two requests.
+ */
+function hostIsAddressLike(host, allowed = []) {
+  if (IPV4.test(host) || IPV6.test(host)) return true;
+  if (LOCAL_NAMES.has(host)) return true;
+  const extras = Array.isArray(allowed) ? allowed : String(allowed || "").split(",");
+  return extras.map((h) => String(h).trim().toLowerCase().replace(/:\d+$/, "")).filter(Boolean).includes(host);
 }
 
 function noContent(res, ok) {
@@ -526,12 +574,12 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("GET", /^\/api\/updates$/, (req, res) => json(res, 200, updateState(repos)));
 
   route("POST", /^\/api\/updates\/check$/, async (req, res) => {
-    if (!sameOriginAction(req, res)) return;
+    if (!sameOriginAction(req, res, cfg)) return;
     json(res, 200, await checkForUpdate(repos, { force: true, log }));
   });
 
   route("POST", /^\/api\/updates\/dismiss$/, async (req, res) => {
-    if (!sameOriginAction(req, res)) return;
+    if (!sameOriginAction(req, res, cfg)) return;
     const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");
     // Dismissal is per version, so silencing 0.2.0 does not also silence 0.3.0.
     repos.settings.update({ updateDismissed: body?.version ?? null });
@@ -539,7 +587,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   });
 
   route("POST", /^\/api\/updates\/apply$/, async (req, res) => {
-    if (!sameOriginAction(req, res)) return;
+    if (!sameOriginAction(req, res, cfg)) return;
     let result;
     try {
       // Download through a pool routy owns rather than built-in fetch. Node's
@@ -572,7 +620,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("GET", /^\/api\/cli-tools$/, (req, res) => json(res, 200, { tools: allStatuses(repos) }));
 
   route("POST", /^\/api\/cli-tools\/(?<id>[^/]+)\/connect$/, async (req, res, p) => {
-    if (!sameOriginAction(req, res)) return;
+    if (!sameOriginAction(req, res, cfg)) return;
     const input = JSON.parse((await readBody(req)).toString("utf8") || "{}");
     // Default to loopback, not to the address the request arrived on. These are
     // config files for tools on the machine running routy, so they must point at
@@ -586,7 +634,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   });
 
   route("POST", /^\/api\/cli-tools\/(?<id>[^/]+)\/disconnect$/, async (req, res, p) => {
-    if (!sameOriginAction(req, res)) return;
+    if (!sameOriginAction(req, res, cfg)) return;
     const result = disconnectTool(repos, p.id);
     if (!result.ok) return json(res, result.error === "unknown_tool" ? 404 : 400, { error: result });
     log.info("CLI", `disconnected ${p.id} (restored ${result.restored?.length ?? 0} key(s))`);

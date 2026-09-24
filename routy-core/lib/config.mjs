@@ -20,6 +20,8 @@ const DEFAULTS = Object.freeze({
   // non-loopback peers need the bootstrap token for /api, and a valid client key for
   // /v1. Set ROUTY_HOST=127.0.0.1 to go back to loopback-only.
   host: "0.0.0.0",
+  // Names other than an IP or localhost that the dashboard may be opened under.
+  allowedHosts: [],
   logLevel: "info",
   retention: { detailsDays: 7, detailsMaxRows: 50000, usageDays: 90, usageMaxRows: 500000 },
 });
@@ -102,6 +104,11 @@ export function resolveConfig(env = process.env) {
   if (port) cfg.port = parseInt(port, 10) || cfg.port;
   const host = envAny(env, "ROUTY_HOST", "RE_E_HOST");
   if (host) cfg.host = host;
+  // Hostnames the gateway may be served under. Numeric addresses and localhost always
+  // pass; a name only passes if declared, because the guard uses "is this an address" to
+  // tell a genuine LAN client from a DNS-rebinding page. Comma-separated.
+  const allowedHosts = envAny(env, "ROUTY_ALLOWED_HOSTS", "RE_E_ALLOWED_HOSTS");
+  if (allowedHosts) cfg.allowedHosts = allowedHosts.split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
   const logLevel = envAny(env, "ROUTY_LOG_LEVEL", "RE_E_LOG_LEVEL");
   if (logLevel) cfg.logLevel = logLevel;
   // Stall watchdog budget in ms; 0 disables. Undefined → handler default.
