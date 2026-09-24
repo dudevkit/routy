@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useCheckUpdates, useGateway, useHealth, usePutSettings, useSettings, useStats, useUpdates } from "../api/hooks";
+import { useCheckUpdates, useDismissUpdate, useGateway, useHealth, usePutSettings, useSettings, useStats, useUpdates } from "../api/hooks";
 import { toastApiError } from "../utils/errors";
 import { fmtAgo, fmtCost } from "../utils/format";
 import { CopyChip } from "../components/CopyChip";
@@ -104,6 +104,7 @@ function UpdateSettingsCard() {
   const updates = useUpdates();
   const put = usePutSettings();
   const check = useCheckUpdates();
+  const dismiss = useDismissUpdate();
 
   const enabled = settings.data?.updateCheck !== false;
   const s = updates.data;
@@ -146,6 +147,31 @@ function UpdateSettingsCard() {
             )
           }
         />
+        {/* A dismissal survives every later check: `force` only skips the cache TTL, it
+            does not clear what the user dismissed. Without this the ✕ on the update card
+            is a one-way click that silences the only channel that delivers every future
+            fix, recoverable only from the API. */}
+        {s?.dismissed && (
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-[11px] text-text-muted">
+            <span>
+              You dismissed <span className="font-mono text-text-main">v{s.dismissed}</span>, so its card is
+              hidden and nothing will be offered until a newer release exists.
+            </span>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={dismiss.isPending}
+              onClick={() =>
+                dismiss.mutate(null, {
+                  onSuccess: () => toast(`v${s.dismissed} will be offered again`),
+                  onError: (err) => toastApiError(toast, err, "Failed to restore the update card"),
+                })
+              }
+            >
+              Show it again
+            </Button>
+          </div>
+        )}
 
         {enabled && (
           <div className="flex flex-wrap items-center gap-3 text-[11px] text-text-subtle">

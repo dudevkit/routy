@@ -61,7 +61,7 @@ export function UpdateCard() {
         <button
           onClick={() => dismiss.mutate(s.latest, { onError: (e) => toastApiError(toast, e, "Failed to dismiss") })}
           aria-label={`Dismiss the v${s.latest} notice`}
-          title="Hide this until the next release"
+          title="Hide this release — bring it back any time in Settings → Updates"
           className="ml-auto rounded-md p-1 text-text-subtle transition-colors hover:bg-surface-2 hover:text-text-main"
         >
           <X size={14} />
