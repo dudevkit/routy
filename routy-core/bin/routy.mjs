@@ -10,6 +10,7 @@ import fs from "node:fs";
 import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 import { resolveConfig } from "../lib/config.mjs";
+import { VERSION } from "../lib/version.mjs";
 import { installRoot } from "../core/update-apply.mjs";
 import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
@@ -671,6 +672,15 @@ async function cmdKey() {
 async function cmdHelp() { printHelp(); }
 
 const cmd = argv[2] || "start";
+
+// Handled before dispatch. Every unknown flag falls through to the help text, so
+// `routy --version` printing six lines of usage was not an answer — and scripts,
+// service wrappers and bug reports all want the version on one line and nothing else.
+if (cmd === "--version" || cmd === "-v" || cmd === "version") {
+  console.log(VERSION);
+  exit(0);
+}
+
 const runners = { start: cmdStart, init: cmdInit, serve: cmdServe, key: cmdKey, help: cmdHelp };
 (runners[cmd] || cmdHelp)().catch((err) => {
   console.error("routy:", err?.message || err);

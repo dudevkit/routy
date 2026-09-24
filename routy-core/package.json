@@ -1,6 +1,6 @@
 {
   "name": "routy-core",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "type": "module",
   "description": "routy gateway core — lean AI proxy (re-engineering of 9Router)",

@@ -191,3 +191,41 @@ describe("interactive menu", () => {
     fs.rmSync(home, { recursive: true, force: true });
   }, 30_000);
 });
+
+describe("version flag", () => {
+  const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "routy.mjs");
+  // Scripts, service wrappers and bug reports all want the version on one line. It used
+  // to fall through to the help text, because every unknown argument does.
+  it("prints just the version and exits 0", async () => {
+    const { spawn } = await import("node:child_process");
+    for (const flag of ["--version", "-v", "version"]) {
+      const out = await new Promise((resolve) => {
+        const child = spawn(process.execPath, [CLI, flag], {
+          cwd: dir,
+          env: { ...process.env, ROUTY_HOME: path.join(dir, "home") },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let text = "";
+        child.stdout.on("data", (c) => (text += c));
+        child.on("exit", (code) => resolve({ code, text: text.trim() }));
+      });
+      expect(out.code).toBe(0);
+      expect(out.text).toMatch(/^\d+\.\d+\.\d+$/);
+    }
+  }, 30_000);
+
+  it("still prints help for an unknown flag", async () => {
+    const { spawn } = await import("node:child_process");
+    const out = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [CLI, "--definitely-not-a-flag"], {
+        cwd: dir,
+        env: { ...process.env, ROUTY_HOME: path.join(dir, "home") },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let text = "";
+      child.stdout.on("data", (c) => (text += c));
+      child.on("exit", () => resolve(text));
+    });
+    expect(out).toContain("routy serve");
+  }, 30_000);
+});
