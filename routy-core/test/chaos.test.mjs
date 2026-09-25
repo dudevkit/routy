@@ -265,8 +265,14 @@ describe("chaos: bounded buffers", () => {
       res.end();
     };
 
+    // Collect first: the assertion is about what the proxy RETAINS. Sampling heapUsed
+    // without this measures uncollected garbage too, and this test was a coin flip on
+    // identical code (7.6MB when the collector ran, 61MB when it had not) against a
+    // 50MB threshold. --expose-gc is set in vitest.config.mjs.
+    global.gc?.();
     const before = process.memoryUsage().heapUsed;
     const r = await post({ model: "a/m1", stream: true, messages: [{ role: "user", content: "x" }] });
+    global.gc?.();
     const growthMb = (process.memoryUsage().heapUsed - before) / 1024 / 1024;
 
     expect(r.status).toBe(200);

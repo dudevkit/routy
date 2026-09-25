@@ -92,10 +92,15 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
     const stream = body.stream !== false; // claude clients often omit; explicit false respected
     const clientAbort = new AbortController();
 
-    // Combo order follows its strategy (fallback/fastest/cheapest); then the
-    // daily budget drops metered routes once the ceiling is reached, so an
+    // Combo order follows its strategy (fallback/fastest/cheapest/round-robin/sticky);
+    // then the daily budget drops metered routes once the ceiling is reached, so an
     // exhausted budget falls through to a free/local node instead of failing.
-    const ordered = route.kind === "combo" ? orderRoutes(route.routes, { strategy: route.strategy }) : [route];
+    const ordered = route.kind === "combo"
+      ? orderRoutes(route.routes, {
+          strategy: route.strategy,
+          rotate: comboTurn(route.id ?? route.name, route.strategy, route.stickyLimit),
+        })
+      : [route];
     const budget = budgetState(settings.budgetUsdPerDay);
     const routes = budget.over ? ordered.filter((r) => r.kind === "node" && !isMetered(r.node)) : ordered;
     res.on("close", () => clientAbort.abort());
@@ -467,6 +472,25 @@ async function withIdleTimeout(promise, timeoutMs, onTimeout) {
   }
 }
 
+// Per-combo dispatch cursor (RAM; a restart merely restarts the cycle). Only the
+// strategies that rotate consult it, so switching a combo to `fastest` and back does
+// not leave the rotation mid-cycle.
+const comboCursor = new Map();
+
+/**
+ * Which turn of the rotation this request is.
+ *   round-robin — advances every request
+ *   sticky      — advances every `stickyLimit` requests, so a conversation keeps
+ *                 hitting the same member (prompt-cache affinity) before moving on
+ * Every other strategy ignores the cursor and keeps declared/ranked order.
+ */
+function comboTurn(comboName, strategy, stickyLimit = 1) {
+  if (strategy !== "round-robin" && strategy !== "sticky") return 0;
+  const n = comboCursor.get(comboName) ?? 0;
+  comboCursor.set(comboName, n + 1);
+  return strategy === "sticky" ? Math.floor(n / Math.max(1, stickyLimit || 1)) : n;
+}
+
 // Round-robin cursor per node (RAM; resets on restart, which merely restarts the
 // rotation). Connections.list is ORDER BY priority, created_at, so the rotation
 // preserves the user's priority order within each turn.
@@ -474,14 +498,21 @@ const rrCursor = new Map();
 
 /**
  * Keys of `node` in dispatch order: active in the DB, not cooling/disabled in the
- * health store, rotated one position per request. Empty means nothing to serve with.
+ * health store, then ordered by the provider's key strategy. Empty means nothing to
+ * serve with.
+ *
+ *   round-robin (default) — start at a different key each request, spreading load
+ *   fallback              — always start at the first usable key, so a primary key
+ *                           carries everything until it fails; the fallover to the
+ *                           next key still happens inside the same request
  */
 function pickConnections(repos, node) {
   const usable = repos.connections.list(node.id)
     .filter((c) => c.status === "active")
     .filter((c) => isConnectionAvailable(connectionState(repos, c.id)));
   if (usable.length === 0) return [];
-  const start = (rrCursor.get(node.id) ?? 0);
+  if (node.data?.keyStrategy === "fallback") return usable;
+  const start = rrCursor.get(node.id) ?? 0;
   rrCursor.set(node.id, start + 1);
   const at = start % usable.length;
   return [...usable.slice(at), ...usable.slice(0, at)];

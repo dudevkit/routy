@@ -59,6 +59,7 @@ export function resolveRoute(repos, modelStr, { depth = 0 } = {}) {
       .map((r) => ({ ...r, marker: r.marker ?? marker }));
     return {
       kind: "combo",
+      id: combo.id,
       name: combo.name,
       strategy: combo.strategy || "fallback",
       stickyLimit: combo.stickyLimit ?? 1,
@@ -84,17 +85,26 @@ export function resolveRoute(repos, modelStr, { depth = 0 } = {}) {
   return null;
 }
 
-export const COMBO_STRATEGIES = Object.freeze(["fallback", "fastest", "cheapest"]);
+// Strategies the UI offers and the API accepts. `round-robin` and `sticky` were both
+// advertised in the combo editor (and sticky_limit has been in the schema since the
+// start) but never reached dispatch: they fell through to declared order, and the API
+// rejected saving them outright, so choosing either in the UI failed with a 400.
+export const COMBO_STRATEGIES = Object.freeze(["fallback", "fastest", "cheapest", "round-robin", "sticky"]);
 
 /**
  * Order combo routes for dispatch. Health always dominates: an unhealthy route
- * is never preferred just because it is fast or cheap.
+ * is never preferred just because it is fast or cheap, and rotation only ever
+ * reorders the healthy ones — the side-lined routes stay at the back.
  *
- *   fallback — declared order (default; what the user wrote is what runs)
- *   fastest  — by recent TTFT EWMA, unknown latency last
- *   cheapest — by configured price, unpriced (unmetered) nodes first
+ *   fallback    — declared order (default; what the user wrote is what runs)
+ *   fastest     — by recent TTFT EWMA, unknown latency last
+ *   cheapest    — by configured price, unpriced (unmetered) nodes first
+ *   round-robin — start at a different member each request (caller supplies `rotate`)
+ *   sticky      — same as round-robin but the caller advances `rotate` only every
+ *                 stickyLimit requests, so a conversation keeps hitting one member
+ *                 (prompt-cache affinity) before moving on
  */
-export function orderRoutes(routes, { strategy = "fallback" } = {}) {
+export function orderRoutes(routes, { strategy = "fallback", rotate = 0 } = {}) {
   const healthy = routes.filter((r) => r.healthy && r.kind === "node");
   const rest = routes.filter((r) => !(r.healthy && r.kind === "node"));
   if (strategy === "fastest") {
@@ -104,9 +114,15 @@ export function orderRoutes(routes, { strategy = "fallback" } = {}) {
     healthy.sort((a, b) => latencyRank(a.node.id) - latencyRank(b.node.id));
   } else if (strategy === "cheapest") {
     healthy.sort((a, b) => priceRank(a.node) - priceRank(b.node));
+  } else if ((strategy === "round-robin" || strategy === "sticky") && healthy.length > 1) {
+    // Rotate the starting position. The dispatch order after the wrap is unchanged,
+    // so a failure still falls through to the members that follow.
+    const at = ((Math.trunc(rotate) % healthy.length) + healthy.length) % healthy.length;
+    healthy.push(...healthy.splice(0, at));
   }
   return [...healthy, ...rest];
 }
+
 
 function latencyRank(nodeId) {
   const v = ttftOf(nodeId);

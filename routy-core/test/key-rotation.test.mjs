@@ -266,3 +266,43 @@ describe("REQ console line: generation rate", () => {
     expect(req.data.tokensPerSec).toBeLessThan(5000);
   }, 15_000);
 });
+
+// Provider-level key strategy. Round-robin spreads load; fallback keeps the first
+// usable key until it fails, which is what a primary/secondary key pair or a
+// prompt-cache-affine provider wants. Either way a *failing* key still falls over
+// inside the same request — the strategy chooses the starting point, not the safety net.
+describe("provider key strategy", () => {
+  it("round-robin spreads requests across keys (the default)", async () => {
+    stubState.handler = (req, res) => sse(res, "hi");
+    const used = [];
+    for (let i = 0; i < 4; i++) {
+      await chat();
+      used.push(whichKey(lastAuth()));
+    }
+    expect(used.filter((k) => k === keyA.id)).toHaveLength(2);
+    expect(used.filter((k) => k === keyB.id)).toHaveLength(2);
+  }, 15_000);
+
+  it("fallback keeps using the first key until it fails", async () => {
+    const node = repos.nodes.list()[0];
+    repos.nodes.update(node.id, { data: { keyStrategy: "fallback" } });
+
+    stubState.handler = (req, res) => sse(res, "hi");
+    for (let i = 0; i < 3; i++) await chat();
+    // never rotates: every request starts at key 1
+    expect(stubState.requests.map((r) => whichKey(r.auth))).toEqual([keyA.id, keyA.id, keyA.id]);
+
+    // now key 1 breaks: the request falls over to key 2, and the next request still
+    // starts at key 1 (which is merely on strike, not cooling) — fallback semantics
+    stubState.handler = (req, res) => {
+      if (whichKey(req.headers.authorization) === keyA.id) {
+        res.writeHead(401, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ error: { message: "invalid api key" } }));
+      }
+      sse(res, "from-b");
+    };
+    const r = await chat();
+    expect(r.status).toBe(200);
+    expect(r.body).toContain("from-b");
+  }, 20_000);
+});

@@ -36,6 +36,7 @@ import { CopyButton } from "../components/ui/CopyButton";
 import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { Skeleton } from "../components/ui/Skeleton";
+import { Select } from "../components/ui/Select";
 import { Tabs } from "../components/ui/Tabs";
 import { Toggle } from "../components/ui/Toggle";
 import { useToast } from "../components/ui/Toast";
@@ -757,6 +758,32 @@ function SettingsTab({ node }: { node: UpstreamNode }) {
           {row("Base URL", <span className="font-mono text-xs break-all">{node.baseUrl}</span>)}
           {row("Pricing", pricing ? <span className="font-mono text-xs">${pricing.inputPer1M ?? 0}/1M in · ${pricing.outputPer1M ?? 0}/1M out</span> : <span className="text-text-muted">unmetered — no cost recorded, never blocked by the budget</span>)}
           {row("Stall watchdog", node.data?.streamIdleTimeoutMs !== undefined ? <span className="font-mono text-xs">{String(node.data.streamIdleTimeoutMs)}ms</span> : <span className="text-text-muted">gateway default</span>)}
+          {row(
+            "Key strategy",
+            <div className="flex flex-col gap-1">
+              <Select
+                className="max-w-xs"
+                value={node.data?.keyStrategy === "fallback" ? "fallback" : "round-robin"}
+                options={[
+                  { value: "round-robin", label: "Round-robin — spread requests across keys" },
+                  { value: "fallback", label: "Fallback — use the first key until it fails" },
+                ]}
+                disabled={updateNode.isPending}
+                onChange={(e) =>
+                  updateNode.mutate(
+                    { id: node.id, patch: { data: { ...node.data, keyStrategy: e.target.value } } },
+                    {
+                      onSuccess: () => toast(e.target.value === "fallback" ? "Keys: first key first" : "Keys: spread across all"),
+                      onError: (err) => toastApiError(toast, err, "Failed to save key strategy"),
+                    },
+                  )
+                }
+              />
+              <span className="text-[11px] text-text-muted">
+                Either way a failing key is skipped within the same request, and a rate-limited one sits out its cooldown.
+              </span>
+            </div>,
+          )}
         </div>
       </Card>
 
