@@ -64,6 +64,17 @@ export interface BatchConnectionResult {
   connections: { id: string; name: string; keyMasked: string; priority: number }[];
 }
 
+/** Live rotation state of one key — from the same store the gateway rotates against. */
+export interface ConnectionHealth {
+  /** closed | cooldown | disabled */
+  state: string;
+  /** when a cooldown ends (ISO); null unless cooling */
+  openUntil?: string | null;
+  /** hard failures counted toward auto-disable */
+  strikes?: number;
+  lastError?: string | null;
+}
+
 /** GET/POST /api/nodes/{id}/connections — keys stay masked */
 export interface NodeConnection {
   id: string;
@@ -76,6 +87,8 @@ export interface NodeConnection {
   lastTestAt?: string | null;
   lastTestOk?: boolean | null;
   lastTestTtftMs?: number | null;
+  /** live rotation state — null while the key has never misbehaved */
+  health?: ConnectionHealth | null;
 }
 
 /* ── usage ─────────────────────────────────────────────────────────────────── */
@@ -270,6 +283,8 @@ export interface Settings {
   passwordIsDefault?: boolean;
   /** RTK token-saver compression */
   rtkEnabled?: boolean;
+  /** per-key cooldown before a rate-limited key rejoins rotation */
+  keyCooldownMs?: number;
   /** how much the gateway records: debug | info | warn | error (live, survives restart) */
   logLevel?: string;
   /** daily ceiling on metered upstream spend; 0 or absent = unlimited */

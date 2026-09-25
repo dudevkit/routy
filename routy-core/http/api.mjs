@@ -19,10 +19,16 @@ import {
 import { checkForUpdate, updateState } from "../core/updates.mjs";
 import { RESTART_FOR_UPDATE, applyUpdate } from "../core/update-apply.mjs";
 import { getDispatcher, undiciFetch } from "../core/executors/pool.mjs";
+import { connectionState } from "../core/key-health.mjs";
+import { CONNECTION_COOLDOWN_MS } from "../core/limits.mjs";
 import { allStatuses, connectTool, disconnectTool, findAdapter, toolStatus } from "../core/cli-tools.mjs";
 
 const uuid = () => crypto.randomUUID();
-const maskKey = (k) => (typeof k === "string" && k.length > 12 ? `${k.slice(0, 6)}…${k.slice(-4)}` : k ? "•••" : "—");
+
+// Imported, not re-exported: `export { maskKey } from "..."` creates no local binding,
+// so every maskKey() call in this module would throw at runtime.
+import { maskKey } from "../lib/mask.mjs";
+export { maskKey };
 
 export function isLoopback(req) {
   const addr = req.socket?.remoteAddress || "";
@@ -174,7 +180,7 @@ function nodeView(repos, node, now = Date.now()) {
 }
 
 // ── connection view (the NodeConnection shape) — keys stay masked ───────────
-function connectionView(c) {
+function connectionView(c, health = null) {
   return {
     id: c.id, name: c.name, status: c.status, priority: c.priority,
     keyMasked: maskKey(c.credentials?.apiKey), lastError: c.lastError,
@@ -182,7 +188,17 @@ function connectionView(c) {
     lastTestAt: c.lastTestAt ?? null,
     lastTestOk: c.lastTestOk ?? null,
     lastTestTtftMs: c.lastTestTtftMs ?? null,
+    // live rotation health (cooldown expiry, strikes) — null when nothing to show
+    health: health ? {
+      state: health.state, openUntil: health.openUntil,
+      strikes: health.failures, lastError: health.lastError,
+    } : null,
   };
+}
+
+/** Connections carry live rotation state, so every view of one needs the store. */
+function connectionViewWith(repos, c) {
+  return connectionView(c, connectionState(repos, c.id));
 }
 
 // ── probes (diagnostics — see core/probe.mjs; they never touch usage/breakers) ──
@@ -549,7 +565,13 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   // a response body or in the dashboard's state.
   const publicSettings = () => {
     const { passwordHash, ...rest } = repos.settings.all();
-    return { ...rest, passwordIsDefault: !passwordHash };
+    return {
+      // Defaults live here, not in the UI: an unset key must render as its effective
+      // value, not as a blank that silently means "5 minutes".
+      keyCooldownMs: CONNECTION_COOLDOWN_MS,
+      ...rest,
+      passwordIsDefault: !passwordHash,
+    };
   };
 
   route("GET", /^\/api\/settings$/, (req, res) => json(res, 200, publicSettings()));
@@ -557,6 +579,13 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const patch = JSON.parse((await readBody(req)).toString("utf8"));
     if (patch.logLevel !== undefined && !["debug", "info", "warn", "error"].includes(patch.logLevel)) {
       return json(res, 400, { error: { message: "bad_request", detail: "logLevel must be debug | info | warn | error" } });
+    }
+    if (patch.keyCooldownMs !== undefined) {
+      const v = Number(patch.keyCooldownMs);
+      if (!Number.isFinite(v) || v < 10_000 || v > 3_600_000) {
+        return json(res, 400, { error: { message: "bad_request", detail: "keyCooldownMs must be between 10s and 1h" } });
+      }
+      patch.keyCooldownMs = Math.round(v);
     }
     // A plaintext password in, a hash stored. Six characters is the floor: the default
     // is 123456, and a shorter one would be a downgrade dressed as a setting.
@@ -762,12 +791,24 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
 
   // connections (per-node key management; masked)
   route("GET", /^\/api\/nodes\/(?<id>[^/]+)\/connections$/, (req, res, p) => {
-    json(res, 200, repos.connections.list(p.id).map(connectionView));
+    json(res, 200, repos.connections.list(p.id).map((c) => connectionViewWith(repos, c)));
   });
   route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/connections$/, async (req, res, p) => {
     const input = JSON.parse((await readBody(req)).toString("utf8"));
-    const conn = repos.connections.create({ nodeId: p.id, name: input.name || "key", credentials: { apiKey: input.apiKey } });
-    json(res, 201, connectionView(conn));
+    // Auto-name server-side rather than "key": two unnamed singles must never render
+    // as two identical rows in the UI and two identical lines in the failure logs.
+    // Numbering continues past the highest existing auto-number, so a deleted key's
+    // number is never reused on a different key (logs would stop meaning anything).
+    let name = input.name;
+    if (!name) {
+      const base = repos.nodes.get(p.id)?.name || "key";
+      const used = new Set(repos.connections.list(p.id).map((c) => c.name));
+      let n = 1;
+      while (used.has(`${base} key ${n}`)) n++;
+      name = `${base} key ${n}`;
+    }
+    const conn = repos.connections.create({ nodeId: p.id, name, credentials: { apiKey: input.apiKey } });
+    json(res, 201, connectionViewWith(repos, conn));
   });
   // batch key import — one POST, N connections under the same node.
   // Each entry may carry its own label; without one the key is auto-named.
@@ -800,7 +841,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     for (const f of ["name", "status", "priority"]) if (input[f] !== undefined) patch[f] = input[f];
     const conn = repos.connections.update(p.id, patch);
     if (!conn) return json(res, 404, { error: { message: "not_found" } });
-    json(res, 200, connectionView(conn));
+    json(res, 200, connectionViewWith(repos, conn));
   });
   route("DELETE", /^\/api\/connections\/(?<id>[^/]+)$/, (req, res, p) => noContent(res, repos.connections.delete(p.id)));
 

@@ -94,6 +94,63 @@ function SpendCard() {
 }
 
 /**
+ * Key rotation tuning. Rotation itself needs no setting — it is the point of having
+ * more than one key — but how long a throttled key sits out is provider-specific, so
+ * it is the one knob exposed. Values are minutes here, ms on the wire (the API
+ * validates 10s..1h).
+ */
+function KeyRotationCard() {
+  const toast = useToast();
+  const settings = useSettings();
+  const put = usePutSettings();
+
+  const minutes = Math.round((Number(settings.data?.keyCooldownMs) || 300_000) / 60_000);
+
+  const commit = (raw: string) => {
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value * 60_000 === minutes * 60_000) return;
+    if (value < 1 || value > 60) {
+      toast("Cooldown must be between 1 and 60 minutes", "error");
+      return;
+    }
+    put.mutate(
+      { keyCooldownMs: Math.round(value * 60_000) },
+      {
+        onSuccess: () => toast(`Key cooldown set to ${value} min`),
+        onError: (err) => toastApiError(toast, err, "Failed to save cooldown"),
+      },
+    );
+  };
+
+  return (
+    <Card padding="sm" className="flex flex-col gap-3">
+      <div>
+        <h3 className="text-sm font-semibold text-text-main">Key rotation</h3>
+        <p className="text-[11px] text-text-muted">
+          Requests round-robin across a provider&apos;s keys. A key that is rate-limited sits out for the
+          cooldown; one rejected as invalid or out of credit twice in an hour is disabled until you
+          re-enable it. Provider-wide limits are passed straight back to the client — keys are never
+          punished for those.
+        </p>
+      </div>
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-text-muted">Cooldown for a rate-limited key (minutes)</span>
+        <input
+          key={minutes}
+          type="number"
+          min={1}
+          max={60}
+          step="1"
+          defaultValue={String(minutes)}
+          disabled={put.isPending}
+          onBlur={(e) => commit(e.target.value)}
+          className="w-32 rounded-[6px] border border-border-subtle bg-bg px-2 py-1 font-mono text-xs text-text-main"
+        />
+      </label>
+    </Card>
+  );
+}
+/**
  * Update checking is the only outbound call routy makes that is not to a provider
  * the user configured, so it is a visible, reversible setting rather than something
  * that happens quietly. Off means no request is made at all — not a cached answer.
@@ -312,6 +369,8 @@ export function Settings() {
           </>
         )}
       </Card>
+
+      <KeyRotationCard />
 
       <SpendCard />
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   useAddConnection,
@@ -56,6 +56,40 @@ function fmtAgo(iso: string): string {
   if (s < 3600) return `${Math.round(s / 60)}m ago`;
   if (s < 86400) return `${Math.round(s / 3600)}h ago`;
   return `${Math.round(s / 86400)}d ago`;
+}
+/**
+ * Live rotation status of one key, next to the DB status: a rate-limited key shows its
+ * cooldown counting down, a twice-failed key shows it is out until re-enabled. Ticks
+ * only while some key is actually cooling — a per-second interval for every row would
+ * be waste.
+ */
+function KeyStatusBadge({ conn }: { conn: NodeConnection }) {
+  const cooling = conn.health?.state === "cooldown" && conn.health.openUntil;
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!cooling) return;
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [cooling]);
+
+  if (cooling) {
+    const msLeft = Math.max(0, Date.parse(conn.health!.openUntil!) - Date.now());
+    const m = Math.floor(msLeft / 60_000);
+    const s = Math.floor((msLeft % 60_000) / 1000);
+    return (
+      <span title={conn.health?.lastError ?? "rate-limited by the provider"}>
+        <Badge variant="warning" size="sm">cooldown {m > 0 ? `${m}m ` : ""}{s}s</Badge>
+      </span>
+    );
+  }
+  if (conn.health?.state === "disabled") {
+    return (
+      <span title={conn.health.lastError ?? "disabled after repeated failures"}>
+        <Badge variant="error" size="sm">disabled · {conn.health.strikes ?? 2} strikes</Badge>
+      </span>
+    );
+  }
+  return <Badge variant={conn.status === "active" ? "success" : "default"} size="sm">{conn.status ?? "active"}</Badge>;
 }
 
 /** Probe outcome cell — "never" is distinct from "failed". */
@@ -575,10 +609,12 @@ function KeysTab({ node }: { node: UpstreamNode }) {
             ) : (
               conns.map((c) => (
                 <tr key={c.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-2/40">
-                  <td className={TD}>{c.name || "key"}</td>
+                  <td className={TD}>
+                    <span className="block max-w-[22ch] truncate sm:max-w-none" title={c.name || "key"}>{c.name || "key"}</span>
+                  </td>
                   <td className={cn(TD, "hidden md:table-cell font-mono text-xs text-text-muted")}>{c.keyMasked}</td>
                   <td className={TD}>
-                    <Badge variant={c.status === "active" ? "success" : "default"} size="sm">{c.status ?? "active"}</Badge>
+                    <KeyStatusBadge conn={c} />
                   </td>
                   <td className={cn(TD, "hidden md:table-cell")}>
                     <TestCell at={c.lastTestAt} ok={c.lastTestOk} ms={c.lastTestTtftMs} error={c.lastError} />

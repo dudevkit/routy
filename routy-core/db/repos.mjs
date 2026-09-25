@@ -482,10 +482,11 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
      * Upsert a breaker. Fields left undefined keep their current value;
      * `failures` sets an absolute count, `failureDelta` adjusts relatively.
      */
-    record(scope, { state, openUntil, failureDelta = 0, failures, lastError } = {}) {
+    record(scope, { state, openUntil, failureDelta = 0, failures, lastError, ...extra } = {}) {
       const cur = breakerRam.get(scope) || { scope, state: "closed", openUntil: null, failures: 0, lastError: null, updatedAt: "" };
       const next = {
         ...cur,
+        ...extra,
         state: state ?? cur.state,
         openUntil: openUntil === undefined ? cur.openUntil : openUntil,
         failures: failures === undefined ? Math.max(0, cur.failures + failureDelta) : Math.max(0, failures),
