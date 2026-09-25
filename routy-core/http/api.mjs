@@ -20,6 +20,7 @@ import { checkForUpdate, updateState } from "../core/updates.mjs";
 import { RESTART_FOR_UPDATE, applyUpdate } from "../core/update-apply.mjs";
 import { getDispatcher, undiciFetch } from "../core/executors/pool.mjs";
 import { connectionState } from "../core/key-health.mjs";
+import { testProxyUrl, poolUrl, resolveNodeProxy } from "../core/proxy.mjs";
 import { CONNECTION_COOLDOWN_MS } from "../core/limits.mjs";
 import { allStatuses, connectTool, disconnectTool, findAdapter, toolStatus } from "../core/cli-tools.mjs";
 
@@ -184,6 +185,8 @@ function connectionView(c, health = null) {
   return {
     id: c.id, name: c.name, status: c.status, priority: c.priority,
     keyMasked: maskKey(c.credentials?.apiKey), lastError: c.lastError,
+    // per-key proxy override; null means "use the provider's proxy setting"
+    proxyPoolId: c.credentials?.proxyPoolId ?? null,
     // per-key probe result (P6) — diagnostics, never derived from traffic
     lastTestAt: c.lastTestAt ?? null,
     lastTestOk: c.lastTestOk ?? null,
@@ -381,7 +384,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const conn = (input.connectionId && conns.find((c) => c.id === input.connectionId)) || conns[0] || null;
     if (!conn) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
 
-    const result = await probeKey(node, conn, { log });
+    const result = await probeKey(node, conn, { log, proxy: resolveNodeProxy(repos, node, conn) });
     if (!result.ok) return json(res, 502, { error: { message: "upstream_error", detail: result.error, latencyMs: result.latencyMs } });
     repos.connections.recordTest(conn.id, { ok: true, latencyMs: result.latencyMs });
     const summary = repos.nodeModels.import(node.id, result.models || []);
@@ -419,7 +422,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const conn = conns[0] || null;
     if (!conn) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
     const results = await mapLimit(rows, 4, async (row) => {
-      const r = await probeModel(node, row.model, conn, { log });
+      const r = await probeModel(node, row.model, conn, { log, proxy: resolveNodeProxy(repos, node, conn) });
       repos.nodeModels.recordTest(row.id, r);
       return { modelId: row.id, model: row.model, ok: r.ok, ttftMs: r.ttftMs, error: r.error };
     });
@@ -462,7 +465,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (!node) return json(res, 404, { error: { message: "not_found" } });
     const active = repos.connections.list(node.id).filter((c) => c.status === "active");
     const results = await mapLimit(active, 4, async (conn) => {
-      const r = await probeKey(node, conn, { log });
+      const r = await probeKey(node, conn, { log, proxy: resolveNodeProxy(repos, node, conn) });
       repos.connections.recordTest(conn.id, { ok: r.ok, latencyMs: r.latencyMs, error: r.ok ? null : r.error });
       return { connectionId: conn.id, name: conn.name, ok: r.ok, latencyMs: r.latencyMs, modelCount: r.modelCount ?? 0, error: r.error ?? null };
     });
@@ -719,33 +722,80 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   });
   route("DELETE", /^\/api\/aliases\/(?<alias>[^/]+)$/, (req, res, p) => noContent(res, repos.aliases.delete(p.alias)));
 
-  // proxy pools
-  route("GET", /^\/api\/proxy-pools$/, (req, res) => json(res, 200, repos.proxyPools.list()));
+  // proxy pools — one proxy URL per pool (see core/proxy.mjs for why). `strict` decides
+  // whether a failed proxy may fall back to a direct request; it defaults to on, because
+  // a silent direct fallback defeats the reason a proxy is bound in the first place.
+  const poolInput = (body) => {
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    const url = typeof body?.config?.url === "string" ? body.config.url.trim() : "";
+    if (!name) return { error: "name is required" };
+    if (!url) return { error: "a proxy url is required" };
+    if (!/^(https?|socks[45]?):\/\//i.test(url)) {
+      return { error: "proxy url must start with http://, https://, socks4:// or socks5://" };
+    }
+    return { name, config: { url, strict: body?.config?.strict !== false } };
+  };
+
+  route("GET", /^\/api\/proxy-pools$/, (req, res) => {
+    // boundConnectionCount: how many keys point at each pool, so the UI can say which
+    // pools are live before they are deleted out from under a provider.
+    const counts = new Map();
+    for (const node of repos.nodes.list()) {
+      for (const c of repos.connections.list(node.id)) {
+        const id = c.credentials?.proxyPoolId;
+        if (id) counts.set(id, (counts.get(id) || 0) + 1);
+      }
+    }
+    for (const node of repos.nodes.list()) {
+      for (const id of node.data?.proxy?.poolIds ?? []) counts.set(id, (counts.get(id) || 0) + 1);
+    }
+    json(res, 200, repos.proxyPools.list().map((p) => ({ ...p, boundCount: counts.get(p.id) || 0 })));
+  });
   route("POST", /^\/api\/proxy-pools$/, async (req, res) => {
-    const input = JSON.parse((await readBody(req)).toString("utf8"));
-    json(res, 201, repos.proxyPools.create(input));
+    const body = JSON.parse((await readBody(req)).toString("utf8"));
+    const parsed = poolInput(body);
+    if (parsed.error) return json(res, 400, { error: { message: "bad_request", detail: parsed.error } });
+    json(res, 201, repos.proxyPools.create({ name: parsed.name, kind: body.kind || "static", config: parsed.config, enabled: body.enabled }));
   });
   route("PUT", /^\/api\/proxy-pools\/(?<id>[^/]+)$/, async (req, res, p) => {
-    const patch = JSON.parse((await readBody(req)).toString("utf8"));
+    const body = JSON.parse((await readBody(req)).toString("utf8"));
+    const existing = repos.proxyPools.get(p.id);
+    if (!existing) return json(res, 404, { error: { message: "not_found" } });
+    const patch = {};
+    if (body.name !== undefined) patch.name = String(body.name).trim();
+    if (body.enabled !== undefined) patch.enabled = body.enabled !== false;
+    if (body.kind !== undefined) patch.kind = body.kind;
+    if (body.config !== undefined) {
+      const parsed = poolInput({ name: patch.name ?? existing.name, config: body.config });
+      if (parsed.error) return json(res, 400, { error: { message: "bad_request", detail: parsed.error } });
+      patch.config = parsed.config;
+      patch.testStatus = null; // the verdict belonged to the old URL
+      patch.lastError = null;
+    }
     json(res, 200, repos.proxyPools.update(p.id, patch));
   });
   route("DELETE", /^\/api\/proxy-pools\/(?<id>[^/]+)$/, (req, res, p) => noContent(res, repos.proxyPools.delete(p.id)));
   route("POST", /^\/api\/proxy-pools\/(?<id>[^/]+)\/test$/, async (req, res, p) => {
+    if (!sameOriginAction(req, res, cfg)) return;
     const pool = repos.proxyPools.get(p.id);
     if (!pool) return json(res, 404, { error: { message: "not_found" } });
-    const urls = pool.config?.urls || [];
-    const results = [];
-    for (const u of urls) {
-      const t0 = Date.now();
-      const probeUrl = typeof u === "string" ? u : u.url;
-      try {
-        const r = await fetch(probeUrl, { signal: AbortSignal.timeout(5000) });
-        results.push({ url: probeUrl, ok: r.ok, latencyMs: Date.now() - t0 });
-      } catch (err) {
-        results.push({ url: probeUrl, ok: false, error: String(err?.message || err).slice(0, 120) });
-      }
+    // Optional target, the same knob 9Router exposes: a proxy that can reach one host but
+    // not another is a real situation, and "which host did it reach" belongs in the
+    // answer. Restricted to http(s) so this cannot be turned into a file:// read.
+    const body = JSON.parse((await readBody(req).catch(() => Buffer.from("{}"))).toString("utf8") || "{}");
+    const testUrl = typeof body?.testUrl === "string" ? body.testUrl.trim() : "";
+    if (testUrl && !/^https?:\/\//i.test(testUrl)) {
+      return json(res, 400, { error: { message: "bad_request", detail: "testUrl must be http(s)" } });
     }
-    json(res, 200, { ok: results.some((r) => r.ok), results });
+    // The check runs THROUGH the proxy and the verdict is stored on the pool, so the list
+    // shows health instead of a button that has to be pressed again.
+    const result = await testProxyUrl(poolUrl(pool), testUrl ? { testUrl } : {});
+    const saved = repos.proxyPools.recordTest(pool.id, { ok: result.ok, error: result.error });
+    log.info("PROXY", `health check ${pool.name}: ${result.ok ? "ok" : "failed"}`, {
+      poolId: pool.id, target: result.testUrl ?? null, status: result.status ?? null,
+      elapsedMs: result.elapsedMs ?? null, error: result.error ?? null,
+    });
+    json(res, 200, { ...result, pool: saved });
   });
 
   // breakers
@@ -837,8 +887,21 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   });
   route("PUT", /^\/api\/connections\/(?<id>[^/]+)$/, async (req, res, p) => {
     const input = JSON.parse((await readBody(req)).toString("utf8"));
+    const existing = repos.connections.get(p.id);
+    if (!existing) return json(res, 404, { error: { message: "not_found" } });
     const patch = {};
     for (const f of ["name", "status", "priority"]) if (input[f] !== undefined) patch[f] = input[f];
+    // Per-key proxy override. null / "__none__" clears it, so the key falls back to the
+    // provider's proxy setting; a pool id binds this key (only this key) to that pool.
+    if (input.proxyPoolId !== undefined) {
+      const raw = input.proxyPoolId;
+      const poolId = raw === null || raw === "" || raw === "__none__" ? null : String(raw);
+      if (poolId && !repos.proxyPools.get(poolId)) {
+        return json(res, 400, { error: { message: "bad_request", detail: "proxy pool not found" } });
+      }
+      const { proxyPoolId: _drop, ...rest } = existing.credentials || {};
+      patch.credentials = poolId ? { ...rest, proxyPoolId: poolId } : rest;
+    }
     const conn = repos.connections.update(p.id, patch);
     if (!conn) return json(res, 404, { error: { message: "not_found" } });
     json(res, 200, connectionViewWith(repos, conn));

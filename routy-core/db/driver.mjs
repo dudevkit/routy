@@ -56,6 +56,9 @@ export function migrate(db) {
     db.exec("BEGIN");
     try {
       db.exec(m.up);
+      // Data half, for the reshapes SQL cannot express (e.g. splitting a JSON column
+      // into rows). Same transaction: a failed data step rolls the schema back too.
+      if (typeof m.data === "function") m.data(db);
       db.prepare(`INSERT INTO meta (key, value) VALUES ('schema_version', ?)
                   ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(String(m.version));
       db.exec("COMMIT");

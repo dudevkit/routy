@@ -83,6 +83,8 @@ export interface NodeConnection {
   priority: number | null;
   keyMasked: string;
   lastError?: string | null;
+  /** per-key proxy override; null/absent means "use the provider's proxy setting" */
+  proxyPoolId?: string | null;
   /** last probe of this key alone (P6) — diagnostics, not traffic */
   lastTestAt?: string | null;
   lastTestOk?: boolean | null;
@@ -195,8 +197,15 @@ export interface ProxyPool {
   id: string;
   name: string;
   kind: string;
-  config: { urls?: (string | { url: string })[]; [k: string]: unknown };
+  /** one proxy per pool: `url` plus `strict` (may a failure fall back to direct?) */
+  config: { url?: string; strict?: boolean; urls?: (string | { url: string })[]; [k: string]: unknown };
   enabled: boolean;
+  /** health verdict from the last check: "active" | "error" | null when never tested */
+  testStatus?: string | null;
+  lastTestedAt?: string | null;
+  lastError?: string | null;
+  /** how many keys / providers point at this pool */
+  boundCount?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -208,10 +217,15 @@ export interface ProxyPoolInput {
   enabled?: boolean;
 }
 
-/** POST /api/proxy-pools/{id}/test — probes every url in config.urls */
+/** POST /api/proxy-pools/{id}/test — one health check, through the proxy to a known host */
 export interface PoolTestResult {
   ok: boolean;
-  results: { url: string; ok: boolean; latencyMs?: number; error?: string }[];
+  status?: number;
+  elapsedMs?: number;
+  error?: string;
+  testUrl?: string;
+  /** the pool after the verdict was stored on it */
+  pool?: ProxyPool;
 }
 
 /** Per-node model row (P6). `enabled`/`stale` affect discovery only — routing

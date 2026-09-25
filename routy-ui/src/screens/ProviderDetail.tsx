@@ -10,12 +10,14 @@ import {
   useImportModels,
   useNodeModels,
   useNodes,
+  usePools,
   useRemoveModel,
   useRemoveNode,
   useResetBreaker,
   useTestAllKeys,
   useTestKey,
   useTestModel,
+  useTestPool,
   useUpdateConnection,
   useUpdateModel,
   useUpdateNode,
@@ -37,6 +39,7 @@ import { Input } from "../components/ui/Input";
 import { Modal } from "../components/ui/Modal";
 import { Skeleton } from "../components/ui/Skeleton";
 import { Select } from "../components/ui/Select";
+import { StatusDot } from "../components/ui/StatusDot";
 import { Tabs } from "../components/ui/Tabs";
 import { Toggle } from "../components/ui/Toggle";
 import { useToast } from "../components/ui/Toast";
@@ -91,6 +94,106 @@ function KeyStatusBadge({ conn }: { conn: NodeConnection }) {
     );
   }
   return <Badge variant={conn.status === "active" ? "success" : "default"} size="sm">{conn.status ?? "active"}</Badge>;
+}
+
+/**
+ * Provider-level proxy: which pools this provider may egress through, and how it picks
+ * between them. A key can still override this in the key table below, which is what
+ * 9Router does — the provider setting is the default, the key setting is the exception.
+ */
+function ProxySetting({ node }: { node: UpstreamNode }) {
+  const toast = useToast();
+  const pools = usePools();
+  const updateNode = useUpdateNode();
+  const testPool = useTestPool();
+  const cfg = (node.data?.proxy ?? {}) as { poolIds?: string[]; strategy?: string; strict?: boolean };
+  const selected = cfg.poolIds ?? [];
+  const strategy = cfg.strategy ?? "none";
+  const strict = cfg.strict !== false;
+  const active = (pools.data ?? []).filter((p) => p.enabled !== false);
+
+  const save = (next: { poolIds?: string[]; strategy?: string; strict?: boolean }) =>
+    updateNode.mutate(
+      { id: node.id, patch: { data: { ...node.data, proxy: { poolIds: selected, strategy, strict, ...next } } } },
+      { onError: (err) => toastApiError(toast, err, "Failed to save proxy setting") },
+    );
+
+  const togglePool = (id: string) =>
+    save({ poolIds: selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id] });
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Select
+          className="max-w-[13rem]"
+          value={strategy}
+          options={[
+            { value: "none", label: "Fixed — no rotation" },
+            { value: "round-robin", label: "Round-robin across pools" },
+            { value: "random", label: "Random pool" },
+          ]}
+          disabled={updateNode.isPending}
+          onChange={(e) => save({ strategy: e.target.value })}
+        />
+        <span className="text-[11px] text-text-muted">
+          {selected.length === 0
+            ? active.length
+              ? "no pool picked — every enabled pool is eligible"
+              : "no pools yet"
+            : `${selected.length} pool${selected.length > 1 ? "s" : ""} selected`}
+        </span>
+      </div>
+
+      {active.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {active.map((p) => {
+            const on = selected.includes(p.id);
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => togglePool(p.id)}
+                className={
+                  "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition-colors " +
+                  (on ? "border-brand-500/40 bg-brand-500/10 text-brand-400" : "border-border text-text-muted hover:text-text-main")
+                }
+                title={p.lastError ?? (p.testStatus === "active" ? "last check: reachable" : "not checked yet")}
+              >
+                <StatusDot tone={p.testStatus === "active" ? "green" : p.testStatus === "error" ? "red" : "gray"} className="size-1.5" />
+                {p.name}
+                {p.config?.strict === false && <span className="text-warning">·not strict</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Toggle label="Strict" checked={strict} onChange={(v) => save({ strict: v })} />
+        <span className="text-[11px] text-text-muted">
+          {strict
+            ? "a request that cannot go through the proxy fails rather than revealing your address"
+            : "falls back to a direct request when the proxy fails"}
+        </span>
+        {selected.length === 1 && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<WifiHigh size={12} />}
+            loading={testPool.isPending}
+            onClick={() =>
+              testPool.mutate(selected[0], {
+                onSuccess: (r) => toast(r.ok ? `Pool reachable · ${r.elapsedMs ?? "?"}ms` : `Pool failed: ${r.error ?? "unknown"}`, r.ok ? "success" : "error"),
+                onError: (err) => toastApiError(toast, err, "Test failed"),
+              })
+            }
+          >
+            Test pool
+          </Button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /** Probe outcome cell — "never" is distinct from "failed". */
@@ -481,6 +584,7 @@ function KeysTab({ node }: { node: UpstreamNode }) {
   const batchAdd = useBatchAddConnections();
   const deleteConnection = useDeleteConnection();
   const updateConnection = useUpdateConnection();
+  const pools = usePools();
   const testKey = useTestKey();
   const testAll = useTestAllKeys();
   const [single, setSingle] = useState("");
@@ -596,15 +700,16 @@ function KeysTab({ node }: { node: UpstreamNode }) {
               <th className={TH}>Label</th>
               <th className={cn(TH, "hidden md:table-cell")}>Key</th>
               <th className={TH}>Status</th>
+              <th className={cn(TH, "hidden md:table-cell")}>Proxy</th>
               <th className={cn(TH, "hidden md:table-cell")}>Last test</th>
               <th className={`${TH} text-right`}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {connections.isLoading ? (
-              <EmptyRow colSpan={5}><Skeleton rows={2} /></EmptyRow>
+              <EmptyRow colSpan={6}><Skeleton rows={2} /></EmptyRow>
             ) : conns.length === 0 ? (
-              <EmptyRow colSpan={5}>
+              <EmptyRow colSpan={6}>
                 No API keys yet. Add one, or paste a list with “Add bulk” (one per line, <span className="font-mono">label,key</span>).
               </EmptyRow>
             ) : (
@@ -616,6 +721,29 @@ function KeysTab({ node }: { node: UpstreamNode }) {
                   <td className={cn(TD, "hidden md:table-cell font-mono text-xs text-text-muted")}>{c.keyMasked}</td>
                   <td className={TD}>
                     <KeyStatusBadge conn={c} />
+                  </td>
+                  <td className={cn(TD, "hidden md:table-cell")}>
+                    {/* The provider setting is the default; this is the exception, for one
+                        key that must egress differently (a banned IP, a separate account). */}
+                    <select
+                      value={c.proxyPoolId ?? "__provider__"}
+                      disabled={updateConnection.isPending}
+                      onChange={(e) =>
+                        updateConnection.mutate(
+                          { id: c.id, patch: { proxyPoolId: e.target.value === "__provider__" ? null : e.target.value } },
+                          {
+                            onSuccess: () => toast(e.target.value === "__provider__" ? "Key uses the provider proxy setting" : "Key bound to its own pool"),
+                            onError: (err) => toastApiError(toast, err, "Failed to bind pool"),
+                          },
+                        )
+                      }
+                      className="max-w-[12rem] rounded-[8px] border border-border-subtle bg-surface-2 px-2 py-1 text-xs text-text-main"
+                    >
+                      <option value="__provider__">Provider default</option>
+                      {pools.data?.filter((p) => p.enabled !== false).map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
                   </td>
                   <td className={cn(TD, "hidden md:table-cell")}>
                     <TestCell at={c.lastTestAt} ok={c.lastTestOk} ms={c.lastTestTtftMs} error={c.lastError} />
@@ -784,6 +912,7 @@ function SettingsTab({ node }: { node: UpstreamNode }) {
               </span>
             </div>,
           )}
+          {row("Proxy", <ProxySetting node={node} />)}
         </div>
       </Card>
 

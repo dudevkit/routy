@@ -83,10 +83,37 @@ on update, so editing one field never drops the others.
 | `probeTimeoutMs` | Budget for a model probe; default 45000. Reasoning models on free tiers routinely need 5-30s to a first token |
 | `pool` | Upstream connection pool: `connections` (64), `pipelining` (1), `keepAliveTimeoutMs` (60000), `keepAliveMaxTimeoutMs` (600000), `noDelay` (true) |
 | `retry` | Per-status retry overrides, e.g. `{ "503": { "attempts": 0 } }`. Defaults mirror upstream 9Router: 502 → 3×3s, 503 → 3×2s, 429 → no retry (fall back instead); `Retry-After` is honoured |
+| `proxy` | Which pools this provider may egress through: `{ "poolIds": ["<pool id>", …], "strategy": "none" \| "round-robin" \| "random", "strict": true }`. Empty `poolIds` means every enabled pool; `strategy: "none"` with one pool is a fixed proxy |
 
 The model list used to live in this blob; it has its own table now — see **Models**.
 A provider is addressed as `<prefix>/<model>`; see **Models** and **Probes** for the
 per-model and per-key testing surface.
+
+### Outbound proxies
+
+A **proxy pool** carries one URL — `http://user:pass@host:8080` is fine, credentials
+included (`socks4://` and `socks5://` work too). One proxy per pool, because rotation
+has to be able to say *which* proxy failed: a pool holding five URLs has nowhere to
+record that.
+
+Bind pools **per provider** (`data.proxy` above) and, when one key needs to leave by a
+different address, **per key** — `PUT /api/connections/{id}` with
+`{ "proxyPoolId": "<pool id>" }`, or `null` to fall back to the provider setting. The
+key's pool wins.
+
+`strict` (default **on**) decides what happens when the proxy fails: on, the request
+fails with `proxy_failed` and the reason (`ECONNREFUSED`, `Proxy Authentication
+Required (407)`); off, the request is retried **directly**. Off is a deliberate choice —
+a direct request reveals the address the proxy exists to hide — so it is opt-in per pool.
+
+Proxies apply to **everything outbound**: chat, model-list imports, and the key/model
+probes. A probe sent from the address the provider is blocking reports a failure that
+the real traffic path never hits.
+
+`POST /api/proxy-pools/{id}/test` checks a pool by sending a request **through** it
+(default target `https://www.google.com/`, or `{ "testUrl": "https://…" }`), and stores
+the verdict on the pool (`testStatus`, `lastTestedAt`, `lastError`) so the dashboard
+shows health without re-running the check.
 
 ### Connection pooling
 

@@ -14,6 +14,7 @@
 import { randomUUID } from "node:crypto";
 import diagnostics_channel from "node:diagnostics_channel";
 import { getDispatcher, originOf, undiciFetch } from "./executors/pool.mjs";
+import { getProxyAgent } from "./proxy.mjs";
 
 /**
  * Socket-level truth for a probe, via undici's diagnostics channels.
@@ -109,15 +110,25 @@ function shapeError(err) {
  * success, { ok:false, latencyMs, error } otherwise. An endpoint that answers
  * without a JSON body still counts as reachable (modelCount 0).
  */
-export async function probeNode(baseUrl, apiKey = null, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+export async function probeNode(baseUrl, apiKey = null, { timeoutMs = DEFAULT_TIMEOUT_MS, proxy = null } = {}) {
   const t0 = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${trimBase(baseUrl)}/models`, {
-      headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
-      signal: controller.signal,
-    });
+    // A probe from the caller's own address answers a different question than the
+    // request path does when a proxy is bound: the provider sees the proxy's IP, so a
+    // direct probe can pass while real traffic is blocked (or the reverse).
+    const agent = proxy?.url ? getProxyAgent(proxy.url) : null;
+    const res = agent
+      ? await undiciFetch(`${trimBase(baseUrl)}/models`, {
+          headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+          signal: controller.signal,
+          dispatcher: agent,
+        })
+      : await fetch(`${trimBase(baseUrl)}/models`, {
+          headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+          signal: controller.signal,
+        });
     const latencyMs = Date.now() - t0;
     if (!res.ok) return { ok: false, latencyMs, error: `HTTP ${res.status}` };
     let modelCount = 0;
@@ -154,7 +165,7 @@ export async function probeKey(node, connection, opts = {}) {
  * Every attempt logs `PROBE` lines at info: a probe the user triggered must never
  * fail silently. `log` is optional so the module stays usable from tests.
  */
-export async function probeModel(node, model, connection = null, { timeoutMs, log = null } = {}) {
+export async function probeModel(node, model, connection = null, { timeoutMs, log = null, proxy = null } = {}) {
   const budget = timeoutMs ?? node?.data?.probeTimeoutMs ?? MODEL_PROBE_TIMEOUT_MS;
   const t0 = Date.now();
   const controller = new AbortController();
@@ -198,7 +209,7 @@ export async function probeModel(node, model, connection = null, { timeoutMs, lo
       },
       body: payload,
       signal: controller.signal,
-      dispatcher: getDispatcher(node),
+      dispatcher: proxy?.url ? (getProxyAgent(proxy.url) || getDispatcher(node)) : getDispatcher(node),
     });
 
     if (!res.ok) {

@@ -276,7 +276,7 @@ export const api = {
   listConnections: (id: string): Promise<NodeConnection[]> => getJson<NodeConnection[]>(`/api/nodes/${enc(id)}/connections`),
   addConnection: (id: string, input: NewConnectionInput): Promise<NodeConnection> =>
     postJson<NodeConnection>(`/api/nodes/${enc(id)}/connections`, input),
-  updateConnection: (id: string, patch: { name?: string; status?: string; priority?: number }): Promise<NodeConnection> =>
+  updateConnection: (id: string, patch: { name?: string; status?: string; priority?: number; proxyPoolId?: string | null }): Promise<NodeConnection> =>
     putJson<NodeConnection>(`/api/connections/${enc(id)}`, patch),
   deleteConnection: (id: string): Promise<void> => deleteJson(`/api/connections/${enc(id)}`),
   batchAddConnections: (id: string, input: BatchConnectionInput): Promise<BatchConnectionResult> =>

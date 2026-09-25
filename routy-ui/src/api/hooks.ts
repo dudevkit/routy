@@ -172,7 +172,7 @@ export const useAddConnection = () =>
     onSuccess: useInvalidator(CONNECTIONS, NODES),
   });
 export const useUpdateConnection = () =>
-  useMutation({ mutationFn: ({ id, patch }: { id: string; patch: { name?: string; status?: string; priority?: number } }) => api.updateConnection(id, patch), onSuccess: useInvalidator(CONNECTIONS, NODES) });
+  useMutation({ mutationFn: ({ id, patch }: { id: string; patch: { name?: string; status?: string; priority?: number; proxyPoolId?: string | null } }) => api.updateConnection(id, patch), onSuccess: useInvalidator(CONNECTIONS, NODES) });
 export const useDeleteConnection = () =>
   useMutation({ mutationFn: api.deleteConnection, onSuccess: useInvalidator(CONNECTIONS, NODES) });
 export interface BatchAddConnectionsInput {

@@ -409,10 +409,10 @@ export const api = {
     state.pools = state.pools.filter((p) => p.id !== id);
   },
   async testPool(_id: string): Promise<PoolTestResult> {
-    const urls: string[] = [];
     return {
       ok: false,
-      results: urls.map((url) => ({ url, ok: false, error: "mock transport — no egress" })),
+      status: 0,
+      error: "mock transport — no egress",
     };
   },
 };

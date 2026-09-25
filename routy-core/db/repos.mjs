@@ -441,10 +441,32 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
         .run(merged.name, merged.kind, JSON.stringify(merged.config), merged.enabled ? 1 : 0, merged.updatedAt, id);
       return proxyPools.get(id);
     },
+    /** Record a health-check verdict on the pool (see core/proxy.mjs testProxyUrl). */
+    recordTest(id, { ok, error = null }) {
+      const now = new Date().toISOString();
+      db.prepare(`UPDATE proxy_pools SET test_status=?, last_tested_at=?, last_error=?, updated_at=? WHERE id=?`)
+        .run(ok ? "active" : "error", now, ok ? null : (error || "failed").slice(0, 200), now, id);
+      return proxyPools.get(id);
+    },
     delete(id) { return db.prepare(`DELETE FROM proxy_pools WHERE id = ?`).run(id).changes > 0; },
   };
   function rowToPool(r) {
-    return { id: r.id, name: r.name, kind: r.kind, config: safeJson(r.config), enabled: !!r.enabled, createdAt: r.created_at, updatedAt: r.updated_at };
+    const config = safeJson(r.config) || {};
+    // A pool written before migration 4 holds `urls: [...]`. Migration 4 splits those
+    // into one pool per URL; this keeps a read working for anything that slips through
+    // (an older row in a database restored from backup, a pool created by an old API
+    // call in the same process).
+    if (typeof config.url !== "string" && Array.isArray(config.urls)) {
+      const first = config.urls.map((u) => (typeof u === "string" ? u : u?.url)).find((u) => typeof u === "string" && u.trim());
+      if (first) config.url = first.trim();
+    }
+    return {
+      id: r.id, name: r.name, kind: r.kind, config, enabled: !!r.enabled,
+      testStatus: r.test_status ?? null,
+      lastTestedAt: r.last_tested_at ?? null,
+      lastError: r.last_error ?? null,
+      createdAt: r.created_at, updatedAt: r.updated_at,
+    };
   }
 
   // ── breakers (RAM-first, debounced persist) ───────────────────────────────

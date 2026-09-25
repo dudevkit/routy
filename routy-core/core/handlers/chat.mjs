@@ -11,6 +11,7 @@ import {
 } from "../key-health.mjs";
 import { observeTtft } from "../latency.mjs";
 import { maskKey } from "../../lib/mask.mjs";
+import { resolveNodeProxy } from "../proxy.mjs";
 import { costOf, isMetered } from "../pricing.mjs";
 import { addSpend, budgetState } from "../budget.mjs";
 import { DefaultExecutor } from "../executors/default.mjs";
@@ -184,6 +185,10 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       const cooledHere = []; // cooldowns applied during this node's attempt, for rollback
 
       for (const connection of keys) {
+        // Which proxy this attempt egresses through: the key's own pool when it has one,
+        // else the provider's rotation. Resolved per attempt so a rotation to another
+        // key can also rotate its proxy.
+        const proxy = resolveNodeProxy(repos, r.node, connection);
         const targetFormat = targetFormatForNode(r.node);
         const translate = needsTranslation(sourceFormat, targetFormat);
 
@@ -216,7 +221,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           if (rtkStats?.hits?.length) log.debug("RTK", formatRtkLog(rtkStats));
         }
 
-        const executor = new DefaultExecutor(r.node, connection);
+        const executor = new DefaultExecutor(r.node, connection, { proxy });
         // Per-node stall budget; 0 disables the watchdog.
         const idleTimeoutMs = r.node.data?.streamIdleTimeoutMs ?? globalIdleTimeoutMs;
         attempts++;
@@ -363,6 +368,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             durationMs: Date.now() - t0,
             apiKeyId,
             attempts,
+            pool: proxy?.poolName ?? null,
           });
           saveDetail(repos, { usageEventId, request: body, responseText: logBuffer, truncated: logBuffer.truncated });
           return;
@@ -411,7 +417,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         res.writeHead(result.response.status, { "content-type": "application/json" });
         res.end(JSON.stringify(parsed ?? text));
         recordSuccess(repos, r.node);
-        const usageEventId = recordUsage(repos, log, r, connection, body.model, { status: "ok", usage, durationMs: Date.now() - t0, apiKeyId, attempts });
+        const usageEventId = recordUsage(repos, log, r, connection, body.model, { status: "ok", usage, durationMs: Date.now() - t0, apiKeyId, attempts, pool: proxy?.poolName ?? null });
         saveDetail(repos, { usageEventId, request: body, responseText: new LogBuffer(), truncated: false });
         return;
       }
@@ -545,7 +551,7 @@ function recordSuccess(repos, node) {
   repos.breakers.record(`node:${node.id}`, { state: "closed", failures: 0, openUntil: null, lastError: null });
 }
 
-function recordUsage(repos, log, route, connection, clientModel, { status, usage, durationMs, apiKeyId, attempts = 1 }) {
+function recordUsage(repos, log, route, connection, clientModel, { status, usage, durationMs, apiKeyId, attempts = 1, pool = null }) {
   // Metered nodes carry pricing config; unmetered ones record null and can never
   // consume budget. Latency memory is fed here so routing has one write path.
   const costUsd = costOf(route.node, { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens });
@@ -582,6 +588,9 @@ function recordUsage(repos, log, route, connection, clientModel, { status, usage
     nodeId: route.node.id,
     connectionId: connection.id,
     key: `${connection.name} (${maskKey(connection.credentials?.apiKey)})`,
+    // Which proxy egressed this request — the same question the key answers, for the
+    // other half of "how did this request leave the building".
+    pool,
     status,
     attempts,
     ttftMs: usage.ttftMs ?? null,

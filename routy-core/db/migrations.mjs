@@ -1,4 +1,6 @@
 // routy schema v1 — mirrors docs/db-design.md §2.
+import crypto from "node:crypto";
+
 export const MIGRATIONS = [
   {
     version: 1,
@@ -148,5 +150,46 @@ export const MIGRATIONS = [
     up: `
       ALTER TABLE api_keys ADD COLUMN key_plain TEXT;
     `,
+  },
+  {
+    // Proxy pools become one URL per pool, with a health verdict, so a pool can be
+    // rotated against its siblings and can say which one failed. Pools created under
+    // the old multi-URL shape are split into one pool per URL (see data below): the
+    // config JSON cannot be reshaped in SQL, and silently keeping only the first URL
+    // would drop proxies the user believed were in use.
+    version: 4,
+    up: `
+      ALTER TABLE proxy_pools ADD COLUMN test_status TEXT;
+      ALTER TABLE proxy_pools ADD COLUMN last_tested_at TEXT;
+      ALTER TABLE proxy_pools ADD COLUMN last_error TEXT;
+    `,
+    /** Data half of migration 4 — runs in the same transaction as `up`. */
+    data(db) {
+      const rows = db.prepare(`SELECT * FROM proxy_pools`).all();
+      const now = new Date().toISOString();
+      const insert = db.prepare(
+        `INSERT INTO proxy_pools (id, name, kind, config, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      );
+      const updateConfig = db.prepare(`UPDATE proxy_pools SET config = ?, updated_at = ? WHERE id = ?`);
+
+      for (const row of rows) {
+        let config = {};
+        try { config = JSON.parse(row.config || "{}"); } catch { config = {}; }
+        if (typeof config.url === "string" && config.url.trim()) continue; // already fine
+
+        const urls = Array.isArray(config.urls)
+          ? config.urls.map((u) => (typeof u === "string" ? u : u?.url)).filter((u) => typeof u === "string" && u.trim())
+          : [];
+        if (urls.length === 0) continue;
+
+        const { urls: _dropped, ...rest } = config;
+        // the original pool keeps the first URL and keeps its identity (bindings point at it)
+        updateConfig.run(JSON.stringify({ ...rest, url: urls[0].trim() }), now, row.id);
+        for (let i = 1; i < urls.length; i++) {
+          const id = crypto.randomUUID();
+          insert.run(id, `${row.name} ${i + 1}`, row.kind, JSON.stringify({ ...rest, url: urls[i].trim() }), row.enabled, now, now);
+        }
+      }
+    },
   },
 ];
