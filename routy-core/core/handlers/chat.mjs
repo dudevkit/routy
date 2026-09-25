@@ -127,6 +127,11 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       return json(res, 503, { error: { message: "all_unavailable", detail: "all routes have open breakers", retryAfterMs } });
     }
 
+    // How many upstream attempts this request needed. 1 is the healthy path; higher
+    // means rotation or combo fallback earned its keep, which is invisible in a
+    // successful response otherwise.
+    let attempts = 0;
+
     // Round-robin per request within a node, then combo-fallback across nodes. The key
     // loop lives inside the node loop: a key problem rotates to the node's next key, a
     // node problem advances to the next node — the two failure domains must not blur.
@@ -209,6 +214,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         const executor = new DefaultExecutor(r.node, connection);
         // Per-node stall budget; 0 disables the watchdog.
         const idleTimeoutMs = r.node.data?.streamIdleTimeoutMs ?? globalIdleTimeoutMs;
+        attempts++;
         const result = await executor.execute({ model: r.model, body: outbound, stream, signal: clientAbort.signal, log });
 
         if (!result.ok) {
@@ -351,6 +357,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             usage: { promptTokens, completionTokens, ttftMs: usage.ttftMs },
             durationMs: Date.now() - t0,
             apiKeyId,
+            attempts,
           });
           saveDetail(repos, { usageEventId, request: body, responseText: logBuffer, truncated: logBuffer.truncated });
           return;
@@ -399,7 +406,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         res.writeHead(result.response.status, { "content-type": "application/json" });
         res.end(JSON.stringify(parsed ?? text));
         recordSuccess(repos, r.node);
-        const usageEventId = recordUsage(repos, log, r, connection, body.model, { status: "ok", usage, durationMs: Date.now() - t0, apiKeyId });
+        const usageEventId = recordUsage(repos, log, r, connection, body.model, { status: "ok", usage, durationMs: Date.now() - t0, apiKeyId, attempts });
         saveDetail(repos, { usageEventId, request: body, responseText: new LogBuffer(), truncated: false });
         return;
       }
@@ -507,7 +514,7 @@ function recordSuccess(repos, node) {
   repos.breakers.record(`node:${node.id}`, { state: "closed", failures: 0, openUntil: null, lastError: null });
 }
 
-function recordUsage(repos, log, route, connection, clientModel, { status, usage, durationMs, apiKeyId }) {
+function recordUsage(repos, log, route, connection, clientModel, { status, usage, durationMs, apiKeyId, attempts = 1 }) {
   // Metered nodes carry pricing config; unmetered ones record null and can never
   // consume budget. Latency memory is fed here so routing has one write path.
   const costUsd = costOf(route.node, { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens });
@@ -526,16 +533,31 @@ function recordUsage(repos, log, route, connection, clientModel, { status, usage
     durationMs,
     costUsd: Number.isFinite(costUsd) ? costUsd : null,
   });
-  // Console visibility on the healthy path (ui-ux contract round 2, item 5a)
+  // Console visibility on the healthy path (ui-ux contract round 2, item 5a).
+  // The key label belongs here as much as on the failure lines: with rotation live,
+  // "which key served this?" is the question a successful line otherwise cannot answer.
+  const genMs = Number.isFinite(usage.ttftMs) ? durationMs - usage.ttftMs : durationMs;
+  // A generation window this short cannot measure a rate: an upstream that answers in
+  // one burst leaves a 1ms window, and dividing 544 tokens by it reports half a million
+  // tokens per second. Below the threshold the honest answer is "no rate", not a
+  // spectacular one.
+  const RATE_WINDOW_MIN_MS = 250;
+  const tokensPerSec = usage.completionTokens > 0 && genMs >= RATE_WINDOW_MIN_MS
+    ? Number((usage.completionTokens / (genMs / 1000)).toFixed(1))
+    : null;
   log.info("REQ", `${route.node.prefix} ← ${status}`, {
     requestId: event.id,
     model: clientModel,
     nodeId: route.node.id,
+    connectionId: connection.id,
+    key: `${connection.name} (${maskKey(connection.credentials?.apiKey)})`,
     status,
+    attempts,
     ttftMs: usage.ttftMs ?? null,
     durationMs,
     promptTokens: usage.promptTokens ?? null,
     completionTokens: usage.completionTokens ?? null,
+    tokensPerSec,
     costUsd: Number.isFinite(costUsd) ? Number(costUsd.toFixed(6)) : null,
   });
   return event.id;

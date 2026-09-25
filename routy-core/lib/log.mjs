@@ -6,8 +6,13 @@ export function setLogLevel(name) {
   currentLevel = LEVELS[name] ?? LEVELS.info;
 }
 
-// Redact secrets in values destined for logs. Keys matched case-insensitively.
-const REDACT_KEYS = /authorization|apikey|api_key|api-key|secret|token|password/i;
+// Redact secrets in values destined for logs. Whole-name match only: the previous
+// unanchored /token|secret|…/ also swallowed promptTokens, completionTokens,
+// tokensPerSec and tokenField — the usage numbers and provenance labels the console
+// exists to show — because "…Tokens" contains "token". Anchored, `apiKey` nested in a
+// credentials object still redacts while a token *count* no longer does.
+const REDACT_KEYS =
+  /^(authorization|proxy-authorization|bearer|api[-_]?key|apikey|secret|password|passwd|token|access[-_]?token|refresh[-_]?token|auth[-_]?token|session[-_]?token|id[-_]?token)$/i;
 export function redact(obj, depth = 0) {
   if (depth > 6 || obj === null || typeof obj !== "object") return obj;
   if (Array.isArray(obj)) return obj.map((v) => redact(v, depth + 1));

@@ -13,6 +13,7 @@ import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
 import { createChatHandler } from "../core/handlers/chat.mjs";
 import { connectionState } from "../core/key-health.mjs";
+import { subscribeLog } from "../lib/log.mjs";
 
 let tmp, db, repos, handlerServer, handlerPort, stubServer, stubPort, stubState;
 let keyA, keyB;
@@ -186,5 +187,82 @@ describe("key rotation through the chat handler", () => {
     expect(err.retryAfterMs).toBeGreaterThan(0);
     expect(connectionState(repos, keyA.id).state).toBe("cooldown");
     expect(connectionState(repos, keyB.id).state).toBe("cooldown");
+  }, 15_000);
+});
+
+// The console is the only place a user can see which key served a request, so the
+// healthy line has to carry it. Asserted through the real log subscription rather than
+// by reading the source: the redaction pass sits between the call and the console, and
+// it is exactly what used to scrub these numbers.
+describe("REQ console line", () => {
+  it("names the serving key and the attempt count on the healthy path", async () => {
+    // two keys, the first broken: the success comes from key 2 after a fallover
+    stubState.handler = (req, res) => {
+      if (whichKey(req.headers.authorization) === keyA.id) {
+        res.writeHead(401, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ error: { message: "invalid api key" } }));
+      }
+      sse(res, "served");
+    };
+
+    const seen = [];
+    // subscribers receive the serialized line (the same text the console shows)
+    const stop = subscribeLog((text) => seen.push(JSON.parse(text)));
+    try {
+      const r = await chat();
+      expect(r.status).toBe(200);
+    } finally {
+      stop();
+    }
+
+    const req = seen.find((l) => l.tag === "REQ" && String(l.msg).includes("ok"));
+    expect(req, "a REQ line was logged").toBeTruthy();
+    expect(req.data.key).toContain("k2");
+    expect(req.data.key).toMatch(/(.+)/); // name plus mask
+    expect(req.data.connectionId).toBe(keyB.id);
+    expect(req.data.attempts).toBe(2); // the broken key was tried first
+    expect(req.data.promptTokens).not.toBe("[REDACTED]");
+    expect(req.data.completionTokens).not.toBe("[REDACTED]");
+    // this stub answers in one burst, so the window is ~1ms: the guard reports no rate
+    // rather than the six-figure tok/s that dividing by 1ms would produce
+    expect(req.data.tokensPerSec).toBeNull();
+  }, 15_000);
+});
+
+describe("REQ console line: generation rate", () => {
+  it("reports a plausible tok/s when the response actually streams", async () => {
+    // spread the chunks over ~400ms so the generation window can measure something
+    stubState.handler = (req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      let n = 0;
+      const tick = setInterval(() => {
+        if (n++ < 8) {
+          return res.write(`data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"w\"},\"finish_reason\":null}]}
+
+`);
+        }
+        clearInterval(tick);
+        res.write(`data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":40}}
+
+`);
+        res.write("data: [DONE]\n\n");
+        res.end();
+      }, 50);
+    };
+
+    const seen = [];
+    const stop = subscribeLog((text) => seen.push(JSON.parse(text)));
+    try {
+      const r = await chat();
+      expect(r.status).toBe(200);
+    } finally {
+      stop();
+    }
+
+    const req = seen.find((l) => l.tag === "REQ" && String(l.msg).includes("ok"));
+    expect(req.data.completionTokens).toBe(40);
+    // 40 tokens over a ~400ms window is tens per second, not hundreds of thousands
+    expect(req.data.tokensPerSec).toBeGreaterThan(1);
+    expect(req.data.tokensPerSec).toBeLessThan(5000);
   }, 15_000);
 });
