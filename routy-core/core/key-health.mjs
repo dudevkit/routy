@@ -51,6 +51,12 @@ export function classifyConnectionError(err, { connection, recent429 } = {}) {
   if (status === 402 || (status === 403 && CREDIT_BODY.test(body))) {
     return { verdict: "strike", reason: status === 402 ? "out of credit" : "credit body", disable: true };
   }
+  // Some providers (b.ai, etc.) return HTTP 400 with a credit body instead of 402/403.
+  // Without this, "credit insufficient balance" on a 400 is misclassified as a node-level
+  // failure, so the gateway burns the whole node breaker and never rolls to the next key.
+  if (status === 400 && CREDIT_BODY.test(body)) {
+    return { verdict: "strike", reason: "credit body", disable: true };
+  }
   if (status === 429) {
     // Strongest signal first: a body that plainly names the caller's credential is
     // per-key no matter what anything else says.
