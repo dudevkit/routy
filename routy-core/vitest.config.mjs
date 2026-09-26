@@ -15,6 +15,11 @@ import { defineConfig } from "vitest/config";
  *   4 workers              ~43s, stable
  *   8 workers              ~34s, stable   ← this setting
  *
+ * "Stable" assumes the host is otherwise idle. On a dev box also running a browser, a
+ * gateway and whatever else, 8 workers can starve and tests fail on duration rather than
+ * on merit (13s for a test that takes 200ms). `--maxWorkers=4` is the escape hatch there;
+ * it is slower and it is honest.
+ *
  * teardownTimeout is the worker's RPC watchdog, and the default 10s is a CPU-bound
  * assumption this suite does not meet. Closing a worker means closing sqlite handles,
  * removing temp directories and closing the sockets its proxies held — and on a box also

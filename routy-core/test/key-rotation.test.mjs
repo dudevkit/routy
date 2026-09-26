@@ -305,4 +305,24 @@ describe("provider key strategy", () => {
     expect(r.status).toBe(200);
     expect(r.body).toContain("from-b");
   }, 20_000);
+
+  it("rolls past a key whose account is out of credit, without charging the node", async () => {
+    // A provider that answers 400 (not 402) for "out of credit" used to classify as a NODE
+    // failure, so the breaker tripped and the key loop broke before the healthy keys were
+    // tried. The classifier's verdict is pinned in key-health.test.mjs; this pins what the
+    // verdict is FOR: one empty account must not cost the request, or the provider.
+    stubState.handler = (req, res) => {
+      if (whichKey(req.headers.authorization) === keyA.id) {
+        res.writeHead(400, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ error: { message: "credit insufficient balance: balance=13604 required=15206" } }));
+      }
+      sse(res, "from-b");
+    };
+
+    const r = await chat();
+    expect(r.status).toBe(200); // the healthy key served it
+    expect(r.body).toContain("from-b");
+    const nodeId = repos.nodes.list()[0].id;
+    expect(repos.breakers.get(`node:${nodeId}`)?.failures ?? 0).toBe(0);
+  }, 20_000);
 });

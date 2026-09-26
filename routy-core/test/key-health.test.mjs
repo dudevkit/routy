@@ -46,8 +46,33 @@ describe("classifyConnectionError", () => {
   it("classifies credit-body 400 responses as strikes (b.ai style), not node failures", () => {
     expect(classifyConnectionError(err(400, "credit insufficient balance: balance=13604 required=15206")).verdict).toBe("strike");
     expect(classifyConnectionError(err(400, "Insufficient Quota")).verdict).toBe("strike");
+    expect(classifyConnectionError(err(400, "your account has no credits left")).verdict).toBe("strike");
     // a generic 400 (invalid request) must stay a node problem, not a key strike
     expect(classifyConnectionError(err(400, "invalid parameter: model")).verdict).toBe("node");
+  });
+
+  it("does not read a malformed REQUEST as an empty account", () => {
+    // These bodies carry a credit keyword but are describing the request. On a 400 the loose
+    // keyword list called all four "out of credit" — and two strikes within an hour disables
+    // the key, so a caller's bug would take a healthy credential out of service.
+    for (const body of [
+      "invalid parameter: quota must be positive",
+      "insufficient permissions for model gpt-x",
+      "billing address required for this model",
+      "balance parameter out of range",
+    ]) {
+      expect(classifyConnectionError(err(400, body)).verdict).toBe("node");
+    }
+  });
+
+  it("reports a credit problem on a 403 as credit, not as auth", () => {
+    // Both are strikes, so the verdict never differed — the reason did, and it is the line
+    // someone reads while working out why a key stopped serving.
+    const credit = classifyConnectionError(err(403, "insufficient credits for this team"));
+    expect(credit.verdict).toBe("strike");
+    expect(credit.reason).toBe("credit body");
+    expect(classifyConnectionError(err(403, "invalid api key")).reason).toBe("auth 403");
+    expect(classifyConnectionError(err(401)).reason).toBe("auth 401");
   });
 
   it("counts 5xx and network errors as the node's problem, never the key's", () => {

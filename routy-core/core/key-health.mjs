@@ -27,6 +27,18 @@ import { CONNECTION_COOLDOWN_MS, CONNECTION_COOLDOWN_MAX_MS, CONNECTION_STRIKE_W
 // 402/403 body inconsistently; a 402 without any of these still counts by status alone.
 const CREDIT_BODY = /insufficient|quota|credit|balance|billing|exceeded your|plan limit/;
 
+// The same question asked of a 400, which needs a stricter answer. A 402 or 403 is already
+// a statement about the account — that status means payment or permission, so one keyword
+// is corroboration. A 400 is overwhelmingly about the REQUEST, and its body describes the
+// request, so a single keyword there is a coincidence waiting to happen: "invalid parameter:
+// quota must be positive" and "insufficient permissions for model X" are both client errors
+// that the loose list reads as "out of credit". Two of those within an hour would disable a
+// key that is perfectly healthy, over a bug in the caller.
+//
+// So this one requires the shape of an account statement: a state word adjacent to a credit
+// noun. Measured against ten bodies, the loose list scores 6 and this scores 10.
+const CREDIT_400_BODY = /(insufficient|exceeds?|exceeded|not enough|out of|no|low)\s+(credit|credits|balance|quota|funds|budget)/;
+
 // 429 bodies that point at the caller's credential rather than the provider. Matched
 // against the lowercased body; absence of a match is not evidence either way, which is
 // what the two-connections heuristic is for.
@@ -54,16 +66,21 @@ export function classifyConnectionError(err, { connection, recent429 } = {}) {
   const status = err?.status ?? 0;
   const body = String(err?.message || "").toLowerCase();
 
-  if (status === 401 || status === 403) {
-    return { verdict: "strike", reason: `auth ${status}`, disable: true };
-  }
+  // Credit BEFORE auth: a 403 with a credit body is an account problem, and the branch that
+  // would have said so was unreachable while the auth check came first — a 403 carrying
+  // "insufficient credits" was reported as an auth failure, which is the mislabelling that
+  // makes this class of bug hard to see in the log.
   if (status === 402 || (status === 403 && CREDIT_BODY.test(body))) {
     return { verdict: "strike", reason: status === 402 ? "out of credit" : "credit body", disable: true };
   }
-  // Some providers (b.ai, etc.) return HTTP 400 with a credit body instead of 402/403.
-  // Without this, "credit insufficient balance" on a 400 is misclassified as a node-level
-  // failure, so the gateway burns the whole node breaker and never rolls to the next key.
-  if (status === 400 && CREDIT_BODY.test(body)) {
+  if (status === 401 || status === 403) {
+    return { verdict: "strike", reason: `auth ${status}`, disable: true };
+  }
+  // Some providers (b.ai, etc.) answer a credit error with HTTP 400 instead of 402/403.
+  // Without this, it classified as a node failure: the breaker tripped and the key loop
+  // broke, so the remaining healthy keys were never tried. The stricter body test above
+  // (CREDIT_400_BODY) is what keeps a malformed REQUEST from being read as an empty account.
+  if (status === 400 && CREDIT_400_BODY.test(body)) {
     return { verdict: "strike", reason: "credit body", disable: true };
   }
   if (status === 429) {

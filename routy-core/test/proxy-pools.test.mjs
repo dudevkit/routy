@@ -351,26 +351,35 @@ describe("deleting a pool", () => {
 });
 
 describe("migrations", () => {
-  const buildLegacy = async (version, rows) => {
-    const { DatabaseSync } = await import("node:sqlite");
+  /**
+   * A database as an older release left it. The schema comes from the real migrations up to
+   * `version`, not from a hand-written fixture: a fixture that drifts is a test that passes
+   * while the upgrade path it claims to cover is broken.
+   *
+   * These two are the only tests in the file that build databases ON DISK, and disk is what
+   * the suite contends for — 4.6s alone measured 27s under eight workers, which blew the
+   * original 20s budget and failed a green change. The generous timeout is for the box, not
+   * for the assertions: nothing here gets slower on a healthy machine.
+   */
+  const buildLegacy = (version, rows) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), `proxy-legacy-${version}-`));
     const legacy = new DatabaseSync(path.join(dir, "routy.db"));
     legacy.exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
     for (const m of MIGRATIONS.filter((x) => x.version <= version)) legacy.exec(m.up);
     legacy.prepare(`INSERT INTO meta (key, value) VALUES ('schema_version', ?)`).run(String(version));
     const now = new Date().toISOString();
+    const insert = legacy.prepare(`INSERT INTO proxy_pools (id, name, kind, config, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`);
     for (const row of rows) {
-      legacy.prepare(`INSERT INTO proxy_pools (id, name, kind, config, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-        .run(row.id, row.name, "static", JSON.stringify(row.config), 1, now, now);
+      insert.run(row.id, row.name, "static", JSON.stringify(row.config), 1, now, now);
     }
     legacy.close();
     return dir;
   };
 
-  it("splits a v3 multi-url pool into pools, and gives each one an exit", async () => {
+  it("splits a v3 multi-url pool into pools, and gives each one an exit", () => {
     // v4 split the pool; v5 has to hand each of those pools the URL it was split around, or
     // every binding resolves to nothing.
-    const dir = await buildLegacy(3, [{ id: "pool-legacy", name: "old", config: { urls: ["http://a.example:1", "http://b.example:2"] } }]);
+    const dir = buildLegacy(3, [{ id: "pool-legacy", name: "old", config: { urls: ["http://a.example:1", "http://b.example:2"] } }]);
     const reopened = openDatabase(dir);
     const pools = reopened.prepare(`SELECT id, name, config FROM proxy_pools ORDER BY name`).all();
     expect(pools).toHaveLength(2);
@@ -380,16 +389,16 @@ describe("migrations", () => {
     expect(new Set(entries.map((e) => e.pool_id))).toEqual(new Set(pools.map((p) => p.id)));
     reopened.close();
     fs.rmSync(dir, { recursive: true, force: true });
-  }, 20_000);
+  }, 60_000);
 
-  it("gives a v4 one-url pool its exit", async () => {
-    const dir = await buildLegacy(4, [{ id: "pool-v4", name: "solo", config: { url: "http://user:pass@proxy.example:8080", strict: true } }]);
+  it("gives a v4 one-url pool its exit", () => {
+    const dir = buildLegacy(4, [{ id: "pool-v4", name: "solo", config: { url: "http://user:pass@proxy.example:8080", strict: true } }]);
     const reopened = openDatabase(dir);
     const entries = reopened.prepare(`SELECT pool_id, url, enabled FROM proxy_pool_entries`).all();
     expect(entries).toEqual([{ pool_id: "pool-v4", url: "http://user:pass@proxy.example:8080", enabled: 1 }]);
     reopened.close();
     fs.rmSync(dir, { recursive: true, force: true });
-  }, 20_000);
+  }, 60_000);
 });
 
 describe("exit identity", () => {
