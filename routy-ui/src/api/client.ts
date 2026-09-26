@@ -29,9 +29,12 @@ import type {
   NewNodeInput,
   NodeConnection,
   NodeModel,
+  AddEntriesResult,
+  EntryTestOutcome,
   PoolTestResult,
   ProbeResult,
   ProxyPool,
+  ProxyPoolEntry,
   ProxyPoolInput,
   RecentFailure,
   RequestDetail,
@@ -313,13 +316,24 @@ export const api = {
     putJson<{ alias: string; target: string }>(`/api/aliases/${enc(input.alias)}`, { target: input.target }),
   deleteAlias: (alias: string): Promise<void> => deleteJson(`/api/aliases/${enc(alias)}`),
 
-  /* proxy pools */
+  /* proxy pools — a pool is a fleet of exits (see the type for the shape) */
   listPools: (): Promise<ProxyPool[]> => getJson<ProxyPool[]>("/api/proxy-pools"),
   createPool: (input: ProxyPoolInput): Promise<ProxyPool> => postJson<ProxyPool>("/api/proxy-pools", input),
   updatePool: (id: string, patch: Partial<ProxyPoolInput>): Promise<ProxyPool> =>
     putJson<ProxyPool>(`/api/proxy-pools/${enc(id)}`, patch),
   deletePool: (id: string): Promise<void> => deleteJson(`/api/proxy-pools/${enc(id)}`),
   testPool: (id: string): Promise<PoolTestResult> => postJson<PoolTestResult>(`/api/proxy-pools/${enc(id)}/test`),
+  /** exits: `urls` accepts the paste box's text as well as an array */
+  addPoolEntries: (id: string, urls: string | string[]): Promise<AddEntriesResult> =>
+    postJson<AddEntriesResult>(`/api/proxy-pools/${enc(id)}/entries`, { urls }),
+  updatePoolEntry: (id: string, patch: { url?: string; enabled?: boolean }): Promise<ProxyPoolEntry> =>
+    putJson<ProxyPoolEntry>(`/api/proxy-pool-entries/${enc(id)}`, patch),
+  deletePoolEntry: (id: string): Promise<void> => deleteJson(`/api/proxy-pool-entries/${enc(id)}`),
+  testPoolEntry: (id: string): Promise<EntryTestOutcome> => postJson<EntryTestOutcome>(`/api/proxy-pool-entries/${enc(id)}/test`),
+  mergePools: (targetId: string, poolIds: string[]): Promise<ProxyPool> =>
+    postJson<ProxyPool>("/api/proxy-pools/merge", { targetId, poolIds }),
+  resetPoolHealth: (id: string): Promise<{ cleared: number; pool: ProxyPool }> =>
+    postJson<{ cleared: number; pool: ProxyPool }>(`/api/proxy-pools/${enc(id)}/reset-health`),
 
   /* cli tools */
   listCliTools: (): Promise<{ tools: CliTool[] }> => getJson<{ tools: CliTool[] }>("/api/cli-tools"),

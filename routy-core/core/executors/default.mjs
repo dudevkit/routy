@@ -5,8 +5,14 @@
 // AbortSignal.any connect timeout, structured error results.
 // Retry defaults = upstream parity (runtimeConfig.js:78-84): 502→3×3s, 503→3×2s,
 // 429→no retry (caller falls back to next connection/node), Retry-After honored.
+//
+// A proxied request additionally FAILS OVER: the plan carries an ordered list of exits,
+// and one that cannot serve hands the request to the next instead of failing outright.
+// Only failures that are evidence about the address rotate (see core/proxy.mjs) — a 5xx
+// is the provider's, and rotating exits over it would burn the fleet for nothing.
 import { getDispatcher, undiciFetch } from "./pool.mjs";
-import { getProxyAgent } from "../proxy.mjs";
+import { classifyProxyFailure, getProxyAgent } from "../proxy.mjs";
+import { PROXY_MAX_ATTEMPTS, PROXY_MAX_RATE_LIMIT_ATTEMPTS } from "../limits.mjs";
 export const DEFAULT_RETRY_CONFIG = {
   429: { attempts: 0, delayMs: 0 },
   502: { attempts: 3, delayMs: 3000 },
@@ -16,14 +22,47 @@ export const CONNECT_TIMEOUT_MS = 60_000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** A bound proxy that cannot serve at all (no exits, or every exit cooling). */
+function proxyUnavailable(plan) {
+  return {
+    ok: false,
+    status: plan.retryAfterMs ? 429 : 502,
+    errorCode: plan.retryAfterMs ? "proxy_exhausted" : "proxy_failed",
+    retryAfterMs: plan.retryAfterMs ?? null,
+    // Whether this binding came from the provider (every key of the node is behind it) or
+    // from one key's own override. The caller uses it to decide whether rotating keys can
+    // possibly help.
+    proxySource: plan.source ?? null,
+    message: `proxy "${plan.target}": ${plan.reason || "no usable exits"}`,
+  };
+}
+
+/** Every exit failed. `strict` decides whether the caller hears about it or goes direct. */
+function proxyFailed(plan, failures) {
+  const rateLimited = failures.length > 0 && failures.every((f) => f.rotate.kind === "rate_limit");
+  const detail = [...new Set(failures.map((f) => f.rotate.detail).filter(Boolean))].slice(-3).join(" · ");
+  return {
+    ok: false,
+    // A fleet that answered 429 everywhere is a rate-limit answer, not a gateway failure:
+    // saying so lets the caller honour Retry-After instead of hammering the next provider.
+    status: rateLimited ? 429 : 502,
+    errorCode: rateLimited ? "proxy_exhausted" : "proxy_failed",
+    retryAfterMs: rateLimited ? (failures[failures.length - 1]?.rotate?.retryAfterMs ?? null) : null,
+    proxySource: plan.source ?? null,
+    message: `proxy "${plan.target}": tried ${failures.length} exit(s) — ${detail || "no detail"} (strict: not retrying directly)`,
+  };
+}
+
 export class DefaultExecutor {
   /**
    * @param {object} node        provider_nodes row (apiType, baseUrl, data)
    * @param {object} connection  connections row (credentials.apiKey)
    * @param {object} [opts]
-   * @param {object} [opts.proxy] resolved proxy ({ url, strict, poolId, poolName }), or
-   *                              null for a direct connection. Resolved by the caller,
-   *                              which is where repos is in scope.
+   * @param {object} [opts.proxy] resolved proxy plan ({ candidates: [{ url, poolName,
+   *                              strict, entryId }], directAllowed, onFailed, onSucceeded }),
+   *                              or null for a direct connection. Resolved by the caller,
+   *                              which is where repos is in scope — the executor holds no
+   *                              repos and never writes health itself.
    */
   constructor(node, connection, { proxy = null } = {}) {
     this.node = node;
@@ -37,9 +76,9 @@ export class DefaultExecutor {
    * The dispatcher for one attempt. A proxy replaces the per-origin agent entirely:
    * ProxyAgent owns its own connection pool to the proxy, so the two cannot combine.
    */
-  #dispatcher(proxy) {
-    if (!proxy?.url) return getDispatcher(this.node);
-    return getProxyAgent(proxy.url) || getDispatcher(this.node);
+  #dispatcher(exit) {
+    if (!exit?.url) return getDispatcher(this.node);
+    return getProxyAgent(exit.url) || getDispatcher(this.node);
   }
 
   buildUrl() {
@@ -55,27 +94,15 @@ export class DefaultExecutor {
     return headers;
   }
 
-  /**
-   * A proxy-level failure — unreachable, or rejecting our credentials. Retry directly
-   * when the pool allows it, otherwise fail with a message that NAMES the proxy: "proxy
-   * railway-1 failed: connect ECONNREFUSED" is actionable, "network_error" is not, and
-   * a silent direct request would leak the address the proxy exists to hide.
-   */
-  #onProxyFailure(proxy, detail, log) {
-    if (proxy.strict === false) {
-      log?.warn?.("PROXY", `pool "${proxy.poolName ?? proxy.poolId}" failed — retrying directly (strict is off)`, {
-        node: this.node.prefix, error: String(detail).slice(0, 160),
-      });
-      return { retryDirect: true };
-    }
+  /** A failure that belongs to the exit, packaged so the orchestrator can rotate it. */
+  #exitFailure(exit, rotate) {
     return {
-      error: {
-        ok: false,
-        status: 502,
-        errorCode: "proxy_failed",
-        retryAfterMs: null,
-        message: `proxy ${proxy.poolName ?? proxy.poolId} failed: ${String(detail).slice(0, 200)}`,
-      },
+      ok: false,
+      status: rotate.kind === "rate_limit" ? 429 : 502,
+      errorCode: "proxy_failed",
+      retryAfterMs: rotate.retryAfterMs ?? null,
+      message: `proxy ${exit.poolName}: ${rotate.detail}`,
+      rotate,
     };
   }
 
@@ -86,14 +113,58 @@ export class DefaultExecutor {
    */
   async execute({ model, body, stream, signal, log = null }) {
     const url = this.buildUrl();
-    // A proxied request already failed through the proxy is retried directly once,
-    // unless the pool is strict — a silent direct request would leak the caller's real
-    // address, which is the thing the proxy exists to avoid.
-    let proxy = this.proxy;
-    let proxyTried = false;
+    const plan = this.proxy;
     // stringify ONCE per logical request (upstream re-stringified per retry attempt)
     const bodyStr = JSON.stringify({ ...body, model, stream });
 
+    // A bound proxy that cannot serve fails the request rather than quietly going direct: a
+    // binding is a routing decision, and silently dropping it is the one outcome a proxy
+    // exists to prevent.
+    if (plan && plan.candidates.length === 0) return proxyUnavailable(plan);
+
+    const exits = plan ? plan.candidates : [null]; // null = the direct connection
+    const failures = [];
+    let rateLimited = 0;
+
+    for (let i = 0; i < exits.length && i < PROXY_MAX_ATTEMPTS; i++) {
+      const exit = exits[i];
+      const result = await this.#attempt({ url, exit, bodyStr, model, stream, signal, log });
+      if (result.ok) {
+        plan?.onSucceeded?.(exit);
+        return result;
+      }
+      // A provider failure is not the exit's fault: hand it back untouched so the caller's
+      // own retry and credential-fallback rules apply exactly as they would without a proxy.
+      if (!result.rotate) return result;
+
+      failures.push({ exit, rotate: result.rotate });
+      plan?.onFailed?.(exit, result.rotate);
+      if (result.rotate.kind === "rate_limit") rateLimited++;
+
+      const left = exits.length - i - 1;
+      log?.warn?.("PROXY", `exit ${exit.poolName} ${result.rotate.kind} failure — ${left ? `${left} exit(s) left` : "no exits left"}`, {
+        node: this.node.prefix,
+        entryId: exit.entryId,
+        detail: String(result.rotate.detail).slice(0, 140),
+      });
+      // Rotating after a rate-limit failure bets that the limit is per address. The cap is
+      // what stops that bet from costing one request per exit when it is per account.
+      if (rateLimited >= PROXY_MAX_RATE_LIMIT_ATTEMPTS) break;
+    }
+
+    if (!plan) return failures.length ? proxyFailed({ target: "direct" }, failures) : { ok: false, status: 502, errorCode: "network_error", retryAfterMs: null, message: "no attempt was made" };
+    if (!plan.directAllowed) return proxyFailed(plan, failures);
+
+    log?.warn?.("PROXY", `all ${failures.length} exit(s) of "${plan.target}" failed — retrying directly (strict is off)`, { node: this.node.prefix });
+    return this.#attempt({ url, exit: null, bodyStr, model, stream, signal, log });
+  }
+
+  /**
+   * One upstream attempt path, bound to one exit (or none), including its own retry budget.
+   * `rotate` on the result means "this failure was the exit's, try another" — it is only
+   * ever set when an exit is in use, so a direct connection behaves exactly as before.
+   */
+  async #attempt({ url, exit, bodyStr, model, stream, signal, log }) {
     const perUrl = {};
     for (let attemptPhase = 0; ; attemptPhase++) {
       const controller = new AbortController();
@@ -105,7 +176,7 @@ export class DefaultExecutor {
       const attempt = attemptPhase === 0 ? "" : ` (retry ${attemptPhase})`;
       log?.debug?.("UPSTREAM", `→ POST ${this.node.prefix} ${url}`, {
         model, stream, attempt: attemptPhase, bytes: bodyStr.length, timeoutMs: this.connectTimeoutMs,
-        pool: proxy?.poolName ?? null,
+        pool: exit?.poolName ?? null, entry: exit?.entryId ?? null,
       });
       try {
         const response = await undiciFetch(url, {
@@ -113,7 +184,7 @@ export class DefaultExecutor {
           headers: this.buildHeaders(),
           body: bodyStr,
           signal: merged,
-          dispatcher: this.#dispatcher(proxy),
+          dispatcher: this.#dispatcher(exit),
         });
         clearTimeout(timer);
         log?.debug?.("UPSTREAM", `← ${response.status} ${this.node.prefix}${attempt}`, {
@@ -124,17 +195,29 @@ export class DefaultExecutor {
 
         if (response.ok) return { ok: true, response, url, abort: (reason) => controller.abort(reason) };
 
-        // 407 is the proxy telling us the credentials are wrong — a proxy failure, not a
-        // provider one, and not something worth retrying three times with a delay. A 5xx
-        // is left to the provider: a working proxy can legitimately carry one.
-        if (proxy && !proxyTried && response.status === 407) {
-          proxyTried = true;
-          const outcome = this.#onProxyFailure(proxy, "rejected the credentials (HTTP 407)", log);
-          if (outcome.retryDirect) { proxy = null; continue; }
-          return outcome.error;
+        // 407 is the exit telling us its credentials are wrong — evidence about the exit,
+        // not the provider, and not worth three delayed retries.
+        if (exit && response.status === 407) {
+          return this.#exitFailure(exit, {
+            kind: "auth",
+            reason: "rejected our credentials (407)",
+            detail: "rejected our credentials (HTTP 407)",
+          });
         }
 
         const err = await this.#classify(response, log);
+        // A 429 on a proxied request is the signature of a per-address limit — the thing a
+        // fleet exists to spread across. A body naming the provider is the exception: no
+        // address can fix it, so it is reported like any other upstream failure.
+        if (exit && err.status === 429 && classifyProxyFailure(err) === "exit") {
+          return this.#exitFailure(exit, {
+            kind: "rate_limit",
+            reason: "rate limited this address",
+            detail: `rate limited (HTTP 429)${err.message && err.message !== "HTTP 429" ? `: ${String(err.message).slice(0, 120)}` : ""}`,
+            retryAfterMs: err.retryAfterMs,
+          });
+        }
+
         if (await this.#maybeRetry(err, perUrl, log)) continue;
         return err;
       } catch (error) {
@@ -152,14 +235,12 @@ export class DefaultExecutor {
           ? "connect timeout"
           : [String(error?.message || error), cause?.code, cause?.message].filter(Boolean).join(" · ");
 
-        // The proxy itself is the suspect: a connect-level failure through a proxy says
-        // nothing about the provider, so it gets the strict/fallback treatment rather
-        // than being charged to the node's health.
-        if (proxy && !proxyTried && !isTimeout) {
-          proxyTried = true;
-          const outcome = this.#onProxyFailure(proxy, message, log);
-          if (outcome.retryDirect) { proxy = null; continue; }
-          return outcome.error;
+        // A thrown fetch error through a proxy means the proxy path broke before the
+        // provider answered — the exit could not be reached, or refused the CONNECT. Our own
+        // timeout is excluded: it may equally be a slow provider, and rotating would
+        // multiply the wait rather than shorten it.
+        if (exit && !isTimeout) {
+          return this.#exitFailure(exit, { kind: "connect", reason: "could not be reached", detail: message });
         }
 
         log?.debug?.("UPSTREAM", `✖ ${this.node.prefix} ${message}`, { afterMs: Date.now() - t0, connectTimeout: isTimeout });

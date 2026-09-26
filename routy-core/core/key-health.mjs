@@ -41,6 +41,15 @@ const GLOBAL_429 = /global|upstream|all (keys|clients|users)|try again later|cap
 // the cap — the same idea as the node breaker's exponential backoff.
 const COOLDOWN_STEP = 2;
 
+/**
+ * Does this 429 body name the provider rather than the caller? Shared with proxy-exit
+ * health, which asks the same question about an address: a limit that no address can fix
+ * must not take exits out of rotation, and rotating is exactly what a fleet would do.
+ */
+export function looksProviderWide(body) {
+  return GLOBAL_429.test(String(body || "").toLowerCase());
+}
+
 export function classifyConnectionError(err, { connection, recent429 } = {}) {
   const status = err?.status ?? 0;
   const body = String(err?.message || "").toLowerCase();

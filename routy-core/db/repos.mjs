@@ -448,6 +448,42 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
         .run(ok ? "active" : "error", now, ok ? null : (error || "failed").slice(0, 200), now, id);
       return proxyPools.get(id);
     },
+    /**
+     * Merge pools into one: exits move to the target and every binding that pointed at an
+     * absorbed pool is rewritten to point at the target (see `rebindPools`).
+     *
+     * All of it runs in one transaction, bindings included: a half-applied merge would
+     * leave a node naming a pool that no longer exists, and that resolves to a direct
+     * request rather than an error.
+     */
+    merge(targetId, sourceIds = []) {
+      const target = proxyPools.get(targetId);
+      if (!target) return null;
+      const sources = [...new Set(sourceIds)].filter((id) => id && id !== targetId && proxyPools.get(id));
+      if (sources.length === 0) return target;
+
+      const dropDuplicates = db.prepare(
+        `DELETE FROM proxy_pool_entries WHERE pool_id = ? AND url IN (SELECT url FROM proxy_pool_entries WHERE pool_id = ?)`,
+      );
+      const absorb = db.prepare(`UPDATE proxy_pool_entries SET pool_id = ?, updated_at = ? WHERE pool_id = ?`);
+      const now = new Date().toISOString();
+      db.exec("BEGIN");
+      try {
+        for (const id of sources) {
+          // The same address in both pools would violate UNIQUE(pool_id, url); keeping the
+          // target's row also keeps whatever health verdict that row had earned.
+          dropDuplicates.run(id, targetId);
+          absorb.run(targetId, now, id);
+          db.prepare(`DELETE FROM proxy_pools WHERE id = ?`).run(id);
+        }
+        rebindPools(targetId, sources);
+        db.exec("COMMIT");
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
+      }
+      return proxyPools.get(targetId);
+    },
     delete(id) { return db.prepare(`DELETE FROM proxy_pools WHERE id = ?`).run(id).changes > 0; },
   };
   function rowToPool(r) {
@@ -467,6 +503,111 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
       lastError: r.last_error ?? null,
       createdAt: r.created_at, updatedAt: r.updated_at,
     };
+  }
+
+  // ── proxy pool entries — one URL each, and the rotation/health unit ───────
+  function rowToEntry(r) {
+    return {
+      id: r.id, poolId: r.pool_id, url: r.url, enabled: !!r.enabled, position: r.position,
+      egressIp: r.egress_ip ?? null,
+      lastTestedAt: r.last_tested_at ?? null,
+      lastTestOk: r.last_test_ok === null || r.last_test_ok === undefined ? null : !!r.last_test_ok,
+      lastTestError: r.last_test_error ?? null,
+      createdAt: r.created_at, updatedAt: r.updated_at,
+    };
+  }
+
+  const proxyPoolEntries = {
+    listByPool: (poolId) =>
+      db.prepare(`SELECT * FROM proxy_pool_entries WHERE pool_id = ? ORDER BY position, created_at`).all(poolId).map(rowToEntry),
+    get: (id) => {
+      const r = db.prepare(`SELECT * FROM proxy_pool_entries WHERE id = ?`).get(id);
+      return r ? rowToEntry(r) : null;
+    },
+    /**
+     * Add exits to a pool. A URL already in the pool is skipped rather than refused: the
+     * dashboard's paste box is meant to be pasted into twice, and "already there" is an
+     * answer, not a failure. Returns the rows actually added.
+     */
+    addMany(poolId, urls = []) {
+      const existing = new Set(proxyPoolEntries.listByPool(poolId).map((e) => e.url));
+      const insert = db.prepare(
+        `INSERT INTO proxy_pool_entries (id, pool_id, url, enabled, position, created_at, updated_at)
+         VALUES (?, ?, ?, 1, ?, ?, ?)`,
+      );
+      const now = new Date().toISOString();
+      let position = existing.size;
+      const added = [];
+      db.exec("BEGIN");
+      try {
+        for (const raw of urls) {
+          const url = typeof raw === "string" ? raw.trim() : "";
+          if (!url || existing.has(url)) continue;
+          const id = uuid();
+          insert.run(id, poolId, url, position++, now, now);
+          existing.add(url);
+          added.push(id);
+        }
+        db.exec("COMMIT");
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
+      }
+      return added.map((id) => proxyPoolEntries.get(id));
+    },
+    update(id, patch = {}) {
+      const existing = proxyPoolEntries.get(id);
+      if (!existing) return null;
+      // A changed URL is a different exit: the old verdict and egress address describe the
+      // address it replaced, so they go with it instead of being shown against the new one.
+      const next = typeof patch.url === "string" && patch.url.trim() ? patch.url.trim() : existing.url;
+      const urlChanged = next !== existing.url;
+      const enabled = patch.enabled === undefined ? existing.enabled : patch.enabled !== false;
+      const now = new Date().toISOString();
+      db.prepare(`UPDATE proxy_pool_entries SET url=?, enabled=?, updated_at=? WHERE id=?`).run(next, enabled ? 1 : 0, now, id);
+      if (urlChanged) {
+        db.prepare(`UPDATE proxy_pool_entries SET egress_ip=NULL, last_tested_at=NULL, last_test_ok=NULL, last_test_error=NULL WHERE id=?`).run(id);
+      }
+      return proxyPoolEntries.get(id);
+    },
+    /** Record a check verdict, including the address the proxy appeared as upstream. */
+    recordTest(id, { ok, error = null, egressIp = null }) {
+      const now = new Date().toISOString();
+      // COALESCE: a check that could not report an address (custom testUrl, failed probe)
+      // must not erase the last address we did learn — the fleet's IP count is built from it.
+      db.prepare(
+        `UPDATE proxy_pool_entries SET last_tested_at=?, last_test_ok=?, last_test_error=?, egress_ip=COALESCE(?, egress_ip), updated_at=? WHERE id=?`,
+      ).run(now, ok ? 1 : 0, ok ? null : String(error || "failed").slice(0, 200), egressIp, now, id);
+      return proxyPoolEntries.get(id);
+    },
+    delete(id) { return db.prepare(`DELETE FROM proxy_pool_entries WHERE id = ?`).run(id).changes > 0; },
+    countAll: () => db.prepare(`SELECT COUNT(*) AS n FROM proxy_pool_entries`).get().n,
+  };
+
+  /**
+   * Point every binding at `targetId` that used to point at one of `absorbed`.
+   *
+   * This is the half of a merge that is easy to forget and expensive to get wrong: a node
+   * left holding a deleted pool id has no usable pool, and resolution then falls through
+   * to a DIRECT request — the exact outcome a proxy binding exists to prevent.
+   */
+  function rebindPools(targetId, absorbed) {
+    const dead = new Set(absorbed);
+    for (const node of nodes.list()) {
+      const ids = node.data?.proxy?.poolIds;
+      if (!Array.isArray(ids) || !ids.some((id) => dead.has(id))) continue;
+      // De-duplicate: a node bound to two pools that are now one would otherwise carry
+      // the target twice, which reads as "rotate between them" over a single fleet.
+      const next = [...new Set(ids.map((id) => (dead.has(id) ? targetId : id)))];
+      nodes.update(node.id, { data: { proxy: { ...node.data.proxy, poolIds: next } } });
+    }
+    for (const node of nodes.list()) {
+      for (const conn of connections.list(node.id)) {
+        if (dead.has(conn.credentials?.proxyPoolId)) {
+          connections.update(conn.id, { credentials: { ...conn.credentials, proxyPoolId: targetId } });
+        }
+      }
+    }
   }
 
   // ── breakers (RAM-first, debounced persist) ───────────────────────────────
@@ -500,6 +641,16 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
   const breakers = {
     all: () => [...breakerRam.values()],
     get: (scope) => breakerRam.get(scope) || null,
+    /**
+     * Drop a breaker outright, RAM and row. `record` cannot express this: it upserts, so a
+     * scope whose subject no longer exists would be written back on the next flush. Only for
+     * scopes that describe something deleted — a proxy exit, which lives in its own table.
+     */
+    drop(scope) {
+      const had = breakerRam.delete(scope);
+      db.prepare(`DELETE FROM breakers WHERE scope = ?`).run(scope);
+      return had;
+    },
     /**
      * Upsert a breaker. Fields left undefined keep their current value;
      * `failures` sets an absolute count, `failureDelta` adjusts relatively.
@@ -614,7 +765,7 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
   };
 
   return {
-    settings, nodes, connections, apiKeys, combos, aliases, proxyPools, breakers, usage, requestDetails, nodeModels, stats,
+    settings, nodes, connections, apiKeys, combos, aliases, proxyPools, proxyPoolEntries, breakers, usage, requestDetails, nodeModels, stats,
     close() {
       persistBreakers();
     },

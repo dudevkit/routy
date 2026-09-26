@@ -14,7 +14,7 @@
 import { randomUUID } from "node:crypto";
 import diagnostics_channel from "node:diagnostics_channel";
 import { getDispatcher, originOf, undiciFetch } from "./executors/pool.mjs";
-import { getProxyAgent } from "./proxy.mjs";
+import { getProxyAgent, primaryProxyUrl } from "./proxy.mjs";
 
 /**
  * Socket-level truth for a probe, via undici's diagnostics channels.
@@ -118,7 +118,11 @@ export async function probeNode(baseUrl, apiKey = null, { timeoutMs = DEFAULT_TI
     // A probe from the caller's own address answers a different question than the
     // request path does when a proxy is bound: the provider sees the proxy's IP, so a
     // direct probe can pass while real traffic is blocked (or the reverse).
-    const agent = proxy?.url ? getProxyAgent(proxy.url) : null;
+    //
+    // One exit, deliberately: a probe reports what ONE address does, and a failover would
+    // hide which one answered. The caller resolves includeCooling so that an exit sitting in
+    // a traffic cooldown can still be probed — that is exactly when a user wants to know.
+    const agent = getProxyAgent(primaryProxyUrl(proxy));
     const res = agent
       ? await undiciFetch(`${trimBase(baseUrl)}/models`, {
           headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
@@ -209,7 +213,7 @@ export async function probeModel(node, model, connection = null, { timeoutMs, lo
       },
       body: payload,
       signal: controller.signal,
-      dispatcher: proxy?.url ? (getProxyAgent(proxy.url) || getDispatcher(node)) : getDispatcher(node),
+      dispatcher: getProxyAgent(primaryProxyUrl(proxy)) || getDispatcher(node),
     });
 
     if (!res.ok) {

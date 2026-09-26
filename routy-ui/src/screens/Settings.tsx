@@ -150,6 +150,86 @@ function KeyRotationCard() {
     </Card>
   );
 }
+
+/**
+ * Proxy-fleet behaviour the user may need to tune to match their provider's limit window:
+ * how long a bad exit sits out, and what "reachable" is measured against.
+ */
+function ProxyFleetCard() {
+  const toast = useToast();
+  const settings = useSettings();
+  const put = usePutSettings();
+
+  const seconds = Math.round((Number(settings.data?.proxyCooldownMs) || 60_000) / 1000);
+  const testUrl = String(settings.data?.proxyTestUrl ?? "");
+
+  const commitCooldown = (raw: string) => {
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value === seconds) return;
+    if (value < 5 || value > 1800) {
+      toast("Exit cooldown must be between 5 and 1800 seconds", "error");
+      return;
+    }
+    put.mutate({ proxyCooldownMs: Math.round(value * 1000) }, {
+      onSuccess: () => toast(`Exit cooldown set to ${value}s`),
+      onError: (err) => toastApiError(toast, err, "Failed to save cooldown"),
+    });
+  };
+
+  const commitTarget = (raw: string) => {
+    const value = raw.trim();
+    if (value === testUrl) return;
+    if (value && !/^https?:\/\//i.test(value)) {
+      toast("The check target must be an http(s) URL", "error");
+      return;
+    }
+    put.mutate({ proxyTestUrl: value }, {
+      onSuccess: () => toast(value ? "Health check target set" : "Back to the default target"),
+      onError: (err) => toastApiError(toast, err, "Failed to save target"),
+    });
+  };
+
+  return (
+    <Card padding="sm" className="flex flex-col gap-3">
+      <div>
+        <h3 className="text-sm font-semibold text-text-main">Proxy fleet</h3>
+        <p className="text-[11px] text-text-muted">
+          An exit that cannot be reached, is refused, or comes back rate-limited leaves the rotation for a
+          while and doubles that window on repeat. A provider&apos;s own <span className="font-mono">Retry-After</span> always
+          wins over these defaults.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-end gap-4">
+        <label className="flex flex-col gap-1">
+          <span className="text-[11px] text-text-muted">First cooldown for an exit (seconds)</span>
+          <input
+            key={seconds}
+            type="number"
+            min={5}
+            max={1800}
+            step="5"
+            defaultValue={String(seconds)}
+            disabled={put.isPending}
+            onBlur={(e) => commitCooldown(e.target.value)}
+            className="w-32 rounded-[6px] border border-border-subtle bg-bg px-2 py-1 font-mono text-xs text-text-main"
+          />
+        </label>
+        <label className="flex min-w-64 flex-1 flex-col gap-1">
+          <span className="text-[11px] text-text-muted">Health-check target (an IP echo answers with its address)</span>
+          <input
+            key={testUrl}
+            type="text"
+            defaultValue={testUrl}
+            placeholder="https://api.ipify.org?format=json"
+            disabled={put.isPending}
+            onBlur={(e) => commitTarget(e.target.value)}
+            className="w-full rounded-[6px] border border-border-subtle bg-bg px-2 py-1 font-mono text-xs text-text-main"
+          />
+        </label>
+      </div>
+    </Card>
+  );
+}
 /**
  * Update checking is the only outbound call routy makes that is not to a provider
  * the user configured, so it is a visible, reversible setting rather than something
@@ -371,6 +451,7 @@ export function Settings() {
       </Card>
 
       <KeyRotationCard />
+      <ProxyFleetCard />
 
       <SpendCard />
 

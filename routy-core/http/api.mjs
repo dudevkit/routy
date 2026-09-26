@@ -20,8 +20,8 @@ import { checkForUpdate, updateState } from "../core/updates.mjs";
 import { RESTART_FOR_UPDATE, applyUpdate } from "../core/update-apply.mjs";
 import { getDispatcher, undiciFetch } from "../core/executors/pool.mjs";
 import { connectionState } from "../core/key-health.mjs";
-import { testProxyUrl, poolUrl, resolveNodeProxy } from "../core/proxy.mjs";
-import { CONNECTION_COOLDOWN_MS } from "../core/limits.mjs";
+import { DEFAULT_PROXY_TEST_URL, forgetExitHealth, poolExits, proxyIdentity, resetPoolHealth, resolveNodeProxy, testProxyUrl } from "../core/proxy.mjs";
+import { CONNECTION_COOLDOWN_MS, PROXY_COOLDOWN_MS } from "../core/limits.mjs";
 import { allStatuses, connectTool, disconnectTool, findAdapter, toolStatus } from "../core/cli-tools.mjs";
 
 const uuid = () => crypto.randomUUID();
@@ -384,7 +384,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const conn = (input.connectionId && conns.find((c) => c.id === input.connectionId)) || conns[0] || null;
     if (!conn) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
 
-    const result = await probeKey(node, conn, { log, proxy: resolveNodeProxy(repos, node, conn) });
+    const result = await probeKey(node, conn, { log, proxy: resolveNodeProxy(repos, node, conn, { includeCooling: true, recordHealth: false }) });
     if (!result.ok) return json(res, 502, { error: { message: "upstream_error", detail: result.error, latencyMs: result.latencyMs } });
     repos.connections.recordTest(conn.id, { ok: true, latencyMs: result.latencyMs });
     const summary = repos.nodeModels.import(node.id, result.models || []);
@@ -422,7 +422,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const conn = conns[0] || null;
     if (!conn) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
     const results = await mapLimit(rows, 4, async (row) => {
-      const r = await probeModel(node, row.model, conn, { log, proxy: resolveNodeProxy(repos, node, conn) });
+      const r = await probeModel(node, row.model, conn, { log, proxy: resolveNodeProxy(repos, node, conn, { includeCooling: true, recordHealth: false }) });
       repos.nodeModels.recordTest(row.id, r);
       return { modelId: row.id, model: row.model, ok: r.ok, ttftMs: r.ttftMs, error: r.error };
     });
@@ -465,7 +465,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (!node) return json(res, 404, { error: { message: "not_found" } });
     const active = repos.connections.list(node.id).filter((c) => c.status === "active");
     const results = await mapLimit(active, 4, async (conn) => {
-      const r = await probeKey(node, conn, { log, proxy: resolveNodeProxy(repos, node, conn) });
+      const r = await probeKey(node, conn, { log, proxy: resolveNodeProxy(repos, node, conn, { includeCooling: true, recordHealth: false }) });
       repos.connections.recordTest(conn.id, { ok: r.ok, latencyMs: r.latencyMs, error: r.ok ? null : r.error });
       return { connectionId: conn.id, name: conn.name, ok: r.ok, latencyMs: r.latencyMs, modelCount: r.modelCount ?? 0, error: r.error ?? null };
     });
@@ -572,6 +572,8 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       // Defaults live here, not in the UI: an unset key must render as its effective
       // value, not as a blank that silently means "5 minutes".
       keyCooldownMs: CONNECTION_COOLDOWN_MS,
+      proxyCooldownMs: PROXY_COOLDOWN_MS,
+      proxyTestUrl: DEFAULT_PROXY_TEST_URL,
       ...rest,
       passwordIsDefault: !passwordHash,
     };
@@ -589,6 +591,22 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
         return json(res, 400, { error: { message: "bad_request", detail: "keyCooldownMs must be between 10s and 1h" } });
       }
       patch.keyCooldownMs = Math.round(v);
+    }
+    if (patch.proxyCooldownMs !== undefined) {
+      const v = Number(patch.proxyCooldownMs);
+      // 5s floor: below that, a rate-limited exit is re-probed so fast the cooldown is
+      // decoration. 30m cap: past that the escalation ladder is the tool for the job.
+      if (!Number.isFinite(v) || v < 5_000 || v > 30 * 60_000) {
+        return json(res, 400, { error: { message: "bad_request", detail: "proxyCooldownMs must be between 5s and 30m" } });
+      }
+      patch.proxyCooldownMs = Math.round(v);
+    }
+    if (patch.proxyTestUrl !== undefined) {
+      const v = String(patch.proxyTestUrl || "").trim();
+      if (v && !/^https?:\/\//i.test(v)) {
+        return json(res, 400, { error: { message: "bad_request", detail: "proxyTestUrl must be http(s)" } });
+      }
+      patch.proxyTestUrl = v;
     }
     // A plaintext password in, a hash stored. Six characters is the floor: the default
     // is 123456, and a shorter one would be a downgrade dressed as a setting.
@@ -722,40 +740,124 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   });
   route("DELETE", /^\/api\/aliases\/(?<alias>[^/]+)$/, (req, res, p) => noContent(res, repos.aliases.delete(p.alias)));
 
-  // proxy pools — one proxy URL per pool (see core/proxy.mjs for why). `strict` decides
-  // whether a failed proxy may fall back to a direct request; it defaults to on, because
-  // a silent direct fallback defeats the reason a proxy is bound in the first place.
-  const poolInput = (body) => {
-    const name = typeof body?.name === "string" ? body.name.trim() : "";
-    const url = typeof body?.config?.url === "string" ? body.config.url.trim() : "";
-    if (!name) return { error: "name is required" };
-    if (!url) return { error: "a proxy url is required" };
-    if (!/^(https?|socks[45]?):\/\//i.test(url)) {
-      return { error: "proxy url must start with http://, https://, socks4:// or socks5://" };
+  // proxy pools — a pool is a FLEET of exits (one proxy URL each). Rotation spreads requests
+  // across the exits so the upstream sees many addresses instead of one, and an exit that
+  // fails or is rate-limited leaves the rotation for a cooldown. See core/proxy.mjs for the
+  // model, and for why `strict` (may a failed proxy fall back to a direct request?) is on.
+  const PROXY_URL_RE = /^(https?|socks[45]?):\/\//i;
+
+  /**
+   * Exit URLs from a paste: an array, or the textarea's newline/comma-separated text.
+   * Returns the good ones (de-duplicated) plus the rejected ones, because "3 of 50 were not
+   * URLs" is the answer the user needs — silently dropping them is not.
+   */
+  const parseProxyUrls = (input) => {
+    const raw = Array.isArray(input) ? input : typeof input === "string" ? input.split(/[\r\n,]+/) : [];
+    const urls = [];
+    const rejected = [];
+    const seen = new Set();
+    for (const item of raw) {
+      const url = typeof item === "string" ? item.trim() : "";
+      if (!url) continue;
+      if (!PROXY_URL_RE.test(url)) { rejected.push(url.slice(0, 120)); continue; }
+      // Compared by identity, not by text: a list that reaches the same host twice (with and
+      // without a path) is one exit, and counting it twice would double the fleet on paper.
+      const identity = proxyIdentity(url);
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      urls.push(url);
     }
-    return { name, config: { url, strict: body?.config?.strict !== false } };
+    return { urls, rejected };
+  };
+
+  /** The urls a pool does not already carry, comparing by proxy identity. */
+  const freshExits = (poolId, urls) => {
+    const have = new Set(repos.proxyPoolEntries.listByPool(poolId).map((e) => proxyIdentity(e.url)));
+    return urls.filter((u) => {
+      const identity = proxyIdentity(u);
+      if (have.has(identity)) return false;
+      have.add(identity);
+      return true;
+    });
+  };
+
+  const nodePrefixes = () => new Map(repos.nodes.list().map((n) => [n.id, n.prefix]));
+
+  /**
+   * An exit as the dashboard sees it: its test verdict plus its LIVE health per provider.
+   *
+   * Health is per (exit, provider), so it is reported keyed by node — "cooling on opencode,
+   * fine elsewhere" is the fact that matters, and one aggregate badge would hide it.
+   */
+  const entryView = (entry, prefixes) => {
+    const health = [];
+    for (const b of repos.breakers.all()) {
+      const parts = String(b.scope || "").split(":");
+      if (parts[0] !== "proxy" || parts[1] !== entry.id) continue;
+      health.push({
+        nodeId: parts[2] ?? null,
+        node: prefixes.get(parts[2]) ?? null,
+        state: b.state,
+        openUntil: b.openUntil ?? null,
+        lastError: b.lastError ?? null,
+        failures: b.failures ?? 0,
+      });
+    }
+    return { ...entry, health };
+  };
+
+  const poolView = (pool, { counts = null, prefixes = new Map() } = {}) => {
+    if (!pool) return pool;
+    const now = Date.now();
+    const entries = repos.proxyPoolEntries.listByPool(pool.id).map((e) => entryView(e, prefixes));
+    const cooling = (e) => e.health.some((h) => h.state === "cooldown" && h.openUntil && Date.parse(h.openUntil) > now);
+    return {
+      ...pool,
+      entries,
+      exitCount: entries.length,
+      enabledCount: entries.filter((e) => e.enabled).length,
+      coolingCount: entries.filter(cooling).length,
+      // Distinct addresses, from each exit's last check: the fleet's real size. Fifty entries
+      // behind one address are one address's allowance.
+      egressIpCount: new Set(entries.map((e) => e.egressIp).filter(Boolean)).size,
+      ...(counts ? { boundCount: counts.get(pool.id) || 0 } : {}),
+    };
   };
 
   route("GET", /^\/api\/proxy-pools$/, (req, res) => {
-    // boundConnectionCount: how many keys point at each pool, so the UI can say which
-    // pools are live before they are deleted out from under a provider.
+    // boundCount: how many keys and providers point at each pool, so the UI can say which
+    // pools are live before they are deleted out from under a binding.
     const counts = new Map();
     for (const node of repos.nodes.list()) {
       for (const c of repos.connections.list(node.id)) {
         const id = c.credentials?.proxyPoolId;
         if (id) counts.set(id, (counts.get(id) || 0) + 1);
       }
-    }
-    for (const node of repos.nodes.list()) {
       for (const id of node.data?.proxy?.poolIds ?? []) counts.set(id, (counts.get(id) || 0) + 1);
     }
-    json(res, 200, repos.proxyPools.list().map((p) => ({ ...p, boundCount: counts.get(p.id) || 0 })));
+    const prefixes = nodePrefixes();
+    json(res, 200, repos.proxyPools.list().map((p) => poolView(p, { counts, prefixes })));
   });
   route("POST", /^\/api\/proxy-pools$/, async (req, res) => {
     const body = JSON.parse((await readBody(req)).toString("utf8"));
-    const parsed = poolInput(body);
-    if (parsed.error) return json(res, 400, { error: { message: "bad_request", detail: parsed.error } });
-    json(res, 201, repos.proxyPools.create({ name: parsed.name, kind: body.kind || "static", config: parsed.config, enabled: body.enabled }));
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    if (!name) return json(res, 400, { error: { message: "bad_request", detail: "name is required" } });
+    // Exits can come in with the pool (the paste box creates and fills in one step). A pool
+    // with none is allowed — it is bound and then filled — but resolution fails such a
+    // request rather than quietly sending it direct.
+    const { urls, rejected } = parseProxyUrls(body?.urls ?? body?.config?.url ?? []);
+    const pool = repos.proxyPools.create({
+      name,
+      kind: body.kind || "static",
+      config: { strict: body?.config?.strict !== false },
+      enabled: body.enabled,
+    });
+    const fresh = freshExits(pool.id, urls);
+    if (fresh.length) repos.proxyPoolEntries.addMany(pool.id, fresh);
+    if (rejected.length) {
+      log.warn("PROXY", `pool "${name}": ${rejected.length} entry/entries were not proxy urls`, { rejected: rejected.slice(0, 3) });
+    }
+    json(res, 201, { ...poolView(repos.proxyPools.get(pool.id), { prefixes: nodePrefixes() }), rejected, skipped: urls.length - fresh.length });
   });
   route("PUT", /^\/api\/proxy-pools\/(?<id>[^/]+)$/, async (req, res, p) => {
     const body = JSON.parse((await readBody(req)).toString("utf8"));
@@ -766,15 +868,25 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (body.enabled !== undefined) patch.enabled = body.enabled !== false;
     if (body.kind !== undefined) patch.kind = body.kind;
     if (body.config !== undefined) {
-      const parsed = poolInput({ name: patch.name ?? existing.name, config: body.config });
-      if (parsed.error) return json(res, 400, { error: { message: "bad_request", detail: parsed.error } });
-      patch.config = parsed.config;
-      patch.testStatus = null; // the verdict belonged to the old URL
-      patch.lastError = null;
+      // Exits are rows now, not a URL in the config. Say so rather than accept a field that
+      // would be stored and never used.
+      if (body.config.url !== undefined || body.config.urls !== undefined) {
+        return json(res, 400, {
+          error: { message: "bad_request", detail: "exit urls are managed via /api/proxy-pools/:id/entries" },
+        });
+      }
+      patch.config = { ...existing.config, strict: body.config.strict !== false };
     }
-    json(res, 200, repos.proxyPools.update(p.id, patch));
+    json(res, 200, poolView(repos.proxyPools.update(p.id, patch), { prefixes: nodePrefixes() }));
   });
-  route("DELETE", /^\/api\/proxy-pools\/(?<id>[^/]+)$/, (req, res, p) => noContent(res, repos.proxyPools.delete(p.id)));
+  route("DELETE", /^\/api\/proxy-pools\/(?<id>[^/]+)$/, (req, res, p) => {
+    // Capture the exits before the delete: they cascade with the pool, and their health
+    // scopes have to be forgotten by id afterwards.
+    const entryIds = repos.proxyPoolEntries.listByPool(p.id).map((e) => e.id);
+    const removed = repos.proxyPools.delete(p.id);
+    if (removed) forgetExitHealth(repos, entryIds);
+    noContent(res, removed);
+  });
   route("POST", /^\/api\/proxy-pools\/(?<id>[^/]+)\/test$/, async (req, res, p) => {
     if (!sameOriginAction(req, res, cfg)) return;
     const pool = repos.proxyPools.get(p.id);
@@ -783,19 +895,149 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     // not another is a real situation, and "which host did it reach" belongs in the
     // answer. Restricted to http(s) so this cannot be turned into a file:// read.
     const body = JSON.parse((await readBody(req).catch(() => Buffer.from("{}"))).toString("utf8") || "{}");
-    const testUrl = typeof body?.testUrl === "string" ? body.testUrl.trim() : "";
-    if (testUrl && !/^https?:\/\//i.test(testUrl)) {
+    const explicit = typeof body?.testUrl === "string" ? body.testUrl.trim() : "";
+    if (explicit && !/^https?:\/\//i.test(explicit)) {
       return json(res, 400, { error: { message: "bad_request", detail: "testUrl must be http(s)" } });
     }
-    // The check runs THROUGH the proxy and the verdict is stored on the pool, so the list
-    // shows health instead of a button that has to be pressed again.
-    const result = await testProxyUrl(poolUrl(pool), testUrl ? { testUrl } : {});
-    const saved = repos.proxyPools.recordTest(pool.id, { ok: result.ok, error: result.error });
-    log.info("PROXY", `health check ${pool.name}: ${result.ok ? "ok" : "failed"}`, {
-      poolId: pool.id, target: result.testUrl ?? null, status: result.status ?? null,
-      elapsedMs: result.elapsedMs ?? null, error: result.error ?? null,
+    // Explicit target → gateway setting → built-in default. The setting is what makes the
+    // button usable on a box whose exits cannot reach an external echo service.
+    const testUrl = explicit || String(repos.settings.get("proxyTestUrl", "") || "").trim();
+    const exits = poolExits(repos, pool);
+    // A fleet is checked exit by exit — the pool verdict is only ever a summary of that, and
+    // "3 of 50 work" is the number that matters. Bounded concurrency: fifty simultaneous
+    // proxy handshakes is a burst the proxy provider notices.
+    const results = await mapLimit(exits, 4, async (entry) => {
+      const r = await testProxyUrl(entry.url, testUrl ? { testUrl } : {});
+      repos.proxyPoolEntries.recordTest(entry.id, { ok: r.ok, error: r.error, egressIp: r.egressIp });
+      return {
+        entryId: entry.id, url: entry.url, ok: r.ok, status: r.status ?? null,
+        elapsedMs: r.elapsedMs ?? null, error: r.error ?? null, egressIp: r.egressIp ?? null,
+      };
     });
-    json(res, 200, { ...result, pool: saved });
+    const healthy = results.filter((r) => r.ok).length;
+    const saved = repos.proxyPools.recordTest(pool.id, {
+      ok: healthy > 0,
+      error: healthy === 0 ? (results.find((r) => r.error)?.error ?? "no exit reachable") : null,
+    });
+    log.info("PROXY", `health check ${pool.name}: ${healthy}/${results.length} exit(s) reachable`, {
+      poolId: pool.id, target: testUrl || null, healthy, tested: results.length,
+      distinctIps: new Set(results.map((r) => r.egressIp).filter(Boolean)).size,
+    });
+    json(res, 200, {
+      ok: results.length > 0 && healthy === results.length,
+      tested: results.length,
+      healthy,
+      entries: results,
+      pool: poolView(saved, { prefixes: nodePrefixes() }),
+    });
+  });
+
+  // One exit, for the button on a single row.
+  route("POST", /^\/api\/proxy-pool-entries\/(?<id>[^/]+)\/test$/, async (req, res, p) => {
+    if (!sameOriginAction(req, res, cfg)) return;
+    const entry = repos.proxyPoolEntries.get(p.id);
+    if (!entry) return json(res, 404, { error: { message: "not_found" } });
+    const body = JSON.parse((await readBody(req).catch(() => Buffer.from("{}"))).toString("utf8") || "{}");
+    const explicit = typeof body?.testUrl === "string" ? body.testUrl.trim() : "";
+    if (explicit && !/^https?:\/\//i.test(explicit)) {
+      return json(res, 400, { error: { message: "bad_request", detail: "testUrl must be http(s)" } });
+    }
+    const testUrl = explicit || String(repos.settings.get("proxyTestUrl", "") || "").trim();
+    const result = await testProxyUrl(entry.url, testUrl ? { testUrl } : {});
+    const saved = repos.proxyPoolEntries.recordTest(entry.id, { ok: result.ok, error: result.error, egressIp: result.egressIp });
+    json(res, 200, { ...result, entry: entryView(saved, nodePrefixes()) });
+  });
+
+  // The exits of a pool: the paste box, and per-row enable/edit/delete afterwards.
+  route("POST", /^\/api\/proxy-pools\/(?<id>[^/]+)\/entries$/, async (req, res, p) => {
+    if (!sameOriginAction(req, res, cfg)) return;
+    const pool = repos.proxyPools.get(p.id);
+    if (!pool) return json(res, 404, { error: { message: "not_found" } });
+    const body = JSON.parse((await readBody(req)).toString("utf8"));
+    const { urls, rejected } = parseProxyUrls(body?.urls ?? body?.url ?? []);
+    if (urls.length === 0) {
+      return json(res, 400, {
+        error: { message: "bad_request", detail: rejected.length ? "no valid proxy urls in the request" : "urls is required" },
+      });
+    }
+    const added = repos.proxyPoolEntries.addMany(pool.id, freshExits(pool.id, urls));
+    log.info("PROXY", `pool "${pool.name}": added ${added.length} exit(s)`, { poolId: pool.id, rejected: rejected.length });
+    json(res, 201, {
+      added: added.length,
+      // Duplicates are skipped, not refused — report how many landed, so a paste of 50 that
+      // adds 3 does not read as a success.
+      skipped: urls.length - added.length,
+      rejected,
+      pool: poolView(repos.proxyPools.get(pool.id), { prefixes: nodePrefixes() }),
+    });
+  });
+  route("PUT", /^\/api\/proxy-pool-entries\/(?<id>[^/]+)$/, async (req, res, p) => {
+    if (!sameOriginAction(req, res, cfg)) return;
+    const entry = repos.proxyPoolEntries.get(p.id);
+    if (!entry) return json(res, 404, { error: { message: "not_found" } });
+    const body = JSON.parse((await readBody(req)).toString("utf8"));
+    const patch = {};
+    if (body.url !== undefined) {
+      const url = String(body.url).trim();
+      if (!PROXY_URL_RE.test(url)) {
+        return json(res, 400, { error: { message: "bad_request", detail: "proxy url must start with http://, https://, socks4:// or socks5://" } });
+      }
+      // The same endpoint edited in twice would route to one address twice; say so here
+      // rather than leaving the pool with a duplicate the rotation cannot tell apart.
+      const clash = repos.proxyPoolEntries
+        .listByPool(entry.poolId)
+        .some((e) => e.id !== entry.id && proxyIdentity(e.url) === proxyIdentity(url));
+      if (clash) return json(res, 400, { error: { message: "bad_request", detail: "that exit is already in this pool" } });
+      patch.url = url;
+    }
+    if (body.enabled !== undefined) patch.enabled = body.enabled !== false;
+    const updated = repos.proxyPoolEntries.update(entry.id, patch);
+    // A changed URL is a different address: what the old one earned (a cooldown, a failing
+    // verdict) must not follow it, or the replacement starts life out of rotation.
+    if (patch.url && patch.url !== entry.url) forgetExitHealth(repos, [entry.id]);
+    json(res, 200, entryView(updated, nodePrefixes()));
+  });
+  route("DELETE", /^\/api\/proxy-pool-entries\/(?<id>[^/]+)$/, (req, res, p) => {
+    const removed = repos.proxyPoolEntries.delete(p.id);
+    if (removed) forgetExitHealth(repos, [p.id]);
+    noContent(res, removed);
+  });
+
+  // Merge fleets: exits move to the target and every binding that named an absorbed pool is
+  // rewritten, so nothing silently resolves to a direct request.
+  route("POST", /^\/api\/proxy-pools\/merge$/, async (req, res) => {
+    if (!sameOriginAction(req, res, cfg)) return;
+    const body = JSON.parse((await readBody(req)).toString("utf8"));
+    const targetId = typeof body?.targetId === "string" ? body.targetId : "";
+    const sources = Array.isArray(body?.poolIds) ? body.poolIds.filter((id) => typeof id === "string") : [];
+    // A source row that reaches the same endpoint as one the target already has is the same
+    // exit: keep the target's row (with the health it has earned) and drop the copy, or the
+    // merged fleet would route to one address twice and count it as two.
+    const target = repos.proxyPools.get(targetId);
+    if (target) {
+      const have = new Set(repos.proxyPoolEntries.listByPool(target.id).map((e) => proxyIdentity(e.url)));
+      for (const id of sources) {
+        if (id === targetId) continue;
+        for (const entry of repos.proxyPoolEntries.listByPool(id)) {
+          if (!have.has(proxyIdentity(entry.url))) continue;
+          repos.proxyPoolEntries.delete(entry.id);
+          forgetExitHealth(repos, [entry.id]);
+        }
+      }
+    }
+    const merged = repos.proxyPools.merge(targetId, sources);
+    if (!merged) return json(res, 404, { error: { message: "not_found" } });
+    log.info("PROXY", `merged ${sources.length} pool(s) into "${merged.name}"`, { poolId: merged.id, absorbed: sources.length });
+    json(res, 200, poolView(repos.proxyPools.get(merged.id), { prefixes: nodePrefixes() }));
+  });
+
+  // Put a fleet back in rotation: the manual answer to a cooldown that outlived its limit.
+  route("POST", /^\/api\/proxy-pools\/(?<id>[^/]+)\/reset-health$/, (req, res, p) => {
+    if (!sameOriginAction(req, res, cfg)) return;
+    const pool = repos.proxyPools.get(p.id);
+    if (!pool) return json(res, 404, { error: { message: "not_found" } });
+    const cleared = resetPoolHealth(repos, pool.id);
+    json(res, 200, { cleared, pool: poolView(repos.proxyPools.get(pool.id), { prefixes: nodePrefixes() }) });
   });
 
   // breakers

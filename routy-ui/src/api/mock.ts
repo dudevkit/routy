@@ -22,9 +22,13 @@ import type {
   ModelImportResult,
   NodeConnection,
   NodeModel,
+  AddEntriesResult,
+  EntryTestOutcome,
+  EntryTestResult,
   PoolTestResult,
   ProbeResult,
   ProxyPool,
+  ProxyPoolEntry,
   ProxyPoolInput,
   RecentFailure,
   RequestDetail,
@@ -71,6 +75,46 @@ const probeUnavailable = (): TestResult => ({
   latencyMs: 0,
   error: "mock transport — no upstream is reachable",
 });
+
+/* ── proxy fleet helpers: the same derivations the API's pool view performs ── */
+
+/** The paste box's text, or an array; both are accepted by the real endpoint. */
+function splitUrls(input: string | string[] | undefined): string[] {
+  const raw = typeof input === "string" ? input.split(/[\r\n,]+/) : input ?? [];
+  return raw.map((u) => String(u).trim()).filter(Boolean);
+}
+
+function makeEntries(poolId: string, urls: string[], from: number): ProxyPoolEntry[] {
+  return urls.map((url, i) => ({ id: uuid(), poolId, url, enabled: true, position: from + i, health: [] }));
+}
+
+const findPool = (id: string): ProxyPool => {
+  const pool = state.pools.find((p) => p.id === id);
+  if (!pool) throw new Error("not_found");
+  return pool;
+};
+
+const findEntry = (id: string): ProxyPoolEntry => {
+  for (const pool of state.pools) {
+    const entry = pool.entries.find((e) => e.id === id);
+    if (entry) return entry;
+  }
+  throw new Error("not_found");
+};
+
+/** Counts are derived, exactly as in the API's pool view — the cards read them directly. */
+function poolShape(pool: ProxyPool): ProxyPool {
+  const now = Date.now();
+  return {
+    ...pool,
+    exitCount: pool.entries.length,
+    enabledCount: pool.entries.filter((e) => e.enabled).length,
+    coolingCount: pool.entries.filter((e) =>
+      (e.health ?? []).some((h) => h.state === "cooldown" && h.openUntil && Date.parse(h.openUntil) > now),
+    ).length,
+    egressIpCount: new Set(pool.entries.map((e) => e.egressIp).filter(Boolean)).size,
+  };
+}
 
 export const api = {
   /* logs — round-2 parity (no server ring to clear in mock) */
@@ -382,9 +426,9 @@ export const api = {
     delete state.aliases[alias];
   },
 
-  /* proxy pools */
+  /* proxy pools — the mock keeps exits in memory; it has no egress, so no check passes */
   async listPools(): Promise<ProxyPool[]> {
-    return [...state.pools];
+    return state.pools.map(poolShape);
   },
   async createPool(input: ProxyPoolInput): Promise<ProxyPool> {
     const pool: ProxyPool = {
@@ -393,27 +437,81 @@ export const api = {
       kind: input.kind ?? "static",
       config: input.config ?? {},
       enabled: input.enabled !== false,
+      entries: [],
+      exitCount: 0,
+      enabledCount: 0,
+      coolingCount: 0,
+      egressIpCount: 0,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
+    pool.entries = makeEntries(pool.id, splitUrls(input.urls), 0);
     state.pools.push(pool);
-    return { ...pool };
+    return poolShape(pool);
   },
   async updatePool(id: string, patch: Partial<ProxyPoolInput>): Promise<ProxyPool> {
-    const pool = state.pools.find((p) => p.id === id);
-    if (!pool) throw new Error("not_found");
+    const pool = findPool(id);
     Object.assign(pool, patch, { updatedAt: nowIso() });
-    return { ...pool };
+    return poolShape(pool);
   },
   async deletePool(id: string): Promise<void> {
     state.pools = state.pools.filter((p) => p.id !== id);
   },
-  async testPool(_id: string): Promise<PoolTestResult> {
+  async testPool(id: string): Promise<PoolTestResult> {
+    const pool = findPool(id);
+    const entries: EntryTestResult[] = pool.entries
+      .filter((e) => e.enabled)
+      .map((e) => ({ entryId: e.id, url: e.url, ok: false, error: "mock transport — no egress" }));
+    return { ok: false, tested: entries.length, healthy: 0, entries };
+  },
+  async addPoolEntries(id: string, urls: string | string[]): Promise<AddEntriesResult> {
+    const pool = findPool(id);
+    const incoming = splitUrls(urls);
+    const known = new Set(pool.entries.map((e) => e.url));
+    const fresh = [...new Set(incoming.filter((u) => !known.has(u)))];
+    pool.entries = pool.entries.concat(makeEntries(pool.id, fresh, pool.entries.length));
     return {
-      ok: false,
-      status: 0,
-      error: "mock transport — no egress",
+      added: fresh.length,
+      skipped: incoming.length - fresh.length,
+      rejected: [],
+      pool: poolShape(pool),
     };
+  },
+  async updatePoolEntry(id: string, patch: { url?: string; enabled?: boolean }): Promise<ProxyPoolEntry> {
+    const entry = findEntry(id);
+    Object.assign(entry, patch);
+    // a new URL is a new address: its old verdict and cooldown go with it
+    if (patch.url) { entry.egressIp = null; entry.lastTestOk = null; entry.lastTestedAt = null; entry.health = []; }
+    return { ...entry };
+  },
+  async deletePoolEntry(id: string): Promise<void> {
+    const pool = state.pools.find((p) => p.entries.some((e) => e.id === id));
+    if (pool) pool.entries = pool.entries.filter((e) => e.id !== id);
+  },
+  async testPoolEntry(id: string): Promise<EntryTestOutcome> {
+    const entry = findEntry(id);
+    return { ok: false, error: "mock transport — no egress", entry: { ...entry } };
+  },
+  async mergePools(targetId: string, poolIds: string[]): Promise<ProxyPool> {
+    const target = findPool(targetId);
+    const known = new Set(target.entries.map((e) => e.url));
+    for (const id of poolIds) {
+      const source = state.pools.find((p) => p.id === id);
+      if (!source || source.id === targetId) continue;
+      for (const e of source.entries) {
+        if (known.has(e.url)) continue;
+        known.add(e.url);
+        target.entries.push({ ...e, poolId: target.id });
+      }
+      state.pools = state.pools.filter((p) => p.id !== source.id);
+    }
+    return poolShape(target);
+  },
+  async resetPoolHealth(id: string): Promise<{ cleared: number; pool: ProxyPool }> {
+    const pool = findPool(id);
+    const cleared = pool.entries.filter((e) => (e.health ?? []).length > 0).length;
+    for (const e of pool.entries) e.health = [];
+    return { cleared, pool: poolShape(pool) };
   },
 };
 

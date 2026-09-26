@@ -188,7 +188,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         // Which proxy this attempt egresses through: the key's own pool when it has one,
         // else the provider's rotation. Resolved per attempt so a rotation to another
         // key can also rotate its proxy.
-        const proxy = resolveNodeProxy(repos, r.node, connection);
+        const proxy = resolveNodeProxy(repos, r.node, connection, { settings });
         const targetFormat = targetFormatForNode(r.node);
         const translate = needsTranslation(sourceFormat, targetFormat);
 
@@ -235,6 +235,23 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             log.info("CHAT", `client aborted ${r.node.prefix}`, { afterMs: Date.now() - t0 });
             lastError = result;
             return json(res, 499, { error: { message: "client_aborted", detail: "client aborted the request" } });
+          }
+
+          // A failure of OUR OWN egress path says nothing about the provider OR the key: the
+          // exits were unreachable, rejected our credentials, or are all sitting in a
+          // cooldown. Charge it to neither — otherwise three dead proxies open a healthy
+          // node's breaker, and every key gets cooled against a provider that is fine.
+          if (result.errorCode === "proxy_failed" || result.errorCode === "proxy_exhausted") {
+            lastError = result;
+            log.warn("CHAT", `node ${r.node.prefix}: ${result.errorCode} — ${result.message}`, { retryAfterMs: result.retryAfterMs ?? null });
+            // A provider-level binding covers every key of this node, so rotating keys against
+            // it only multiplies the failure by the key count — advance to the next node. A
+            // KEY-level pool belongs to one key, and the next key may be behind a working fleet.
+            if (result.proxySource === "provider") {
+              nodeDied = true;
+              break;
+            }
+            continue;
           }
 
           const verdict = recordConnectionFailure(repos, connection, result, settings, Date.now(), recent429For(recent429, r.node.id));

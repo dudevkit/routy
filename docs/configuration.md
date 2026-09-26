@@ -53,6 +53,8 @@ runs at boot and hourly.
 | `rtkEnabled` | `true` | RTK token saver: compresses large `tool_result` payloads (diffs, build output, file listings) before dispatch |
 | `budgetUsdPerDay` | `0` | Hard daily ceiling on **metered** spend. `0` = unlimited |
 | `logLevel` | `info` | What the gateway records: `debug` adds every upstream dispatch/response/retry/stream-end. Applied live and persisted |
+| `proxyCooldownMs` | `60000` | First cooldown for a proxy exit that failed or was rate-limited; doubles per repeat. A provider `Retry-After` overrides it |
+| `proxyTestUrl` | `https://api.ipify.org?format=json` | What a proxy health check reaches for. Point it at an echo service and each exit reports the address the provider would see |
 
 ### Budget behaviour
 
@@ -91,29 +93,59 @@ per-model and per-key testing surface.
 
 ### Outbound proxies
 
-A **proxy pool** carries one URL — `http://user:pass@host:8080` is fine, credentials
-included (`socks4://` and `socks5://` work too). One proxy per pool, because rotation
-has to be able to say *which* proxy failed: a pool holding five URLs has nowhere to
-record that.
+A **pool** is a fleet of **exits**, and an exit is one proxy URL — `http://user:pass@host:8080`
+with credentials is fine, as are `socks4://` and `socks5://`. Paste a provider's whole list into
+the dashboard (one per line) and routy rotates across it. The exit, not the pool, is the unit
+of health: rotation, cooldown and failover all name a single address, which is only meaningful
+if each address is a row.
 
-Bind pools **per provider** (`data.proxy` above) and, when one key needs to leave by a
-different address, **per key** — `PUT /api/connections/{id}` with
-`{ "proxyPoolId": "<pool id>" }`, or `null` to fall back to the provider setting. The
-key's pool wins.
+Bind pools **per provider** (`data.proxy` above) and, when one key must leave by a different
+address, **per key** — `PUT /api/connections/{id}` with `{ "proxyPoolId": "<pool id>" }`, or
+`null` for the provider setting. The key's pool wins. A key whose pool has been deleted,
+disabled or emptied falls back to the provider's route rather than failing: the fallback is
+still proxied, so nothing leaks.
 
-`strict` (default **on**) decides what happens when the proxy fails: on, the request
-fails with `proxy_failed` and the reason (`ECONNREFUSED`, `Proxy Authentication
-Required (407)`); off, the request is retried **directly**. Off is a deliberate choice —
-a direct request reveals the address the proxy exists to hide — so it is opt-in per pool.
+**Failover.** A request tries exits in rotation order. When one fails *as an address* — it
+cannot be reached, it answers 407, or it comes back 429 — the request is retried through the
+next exit. Nothing else rotates: a 5xx is the provider's, and burning the fleet over it would
+punish good addresses for a bad upstream. Attempts are capped (5 exits per request; rate-limit
+rotations stop at 3, because a 429 that answers from several exits is a limit no address can
+dodge) — so a pathological fleet costs a bounded amount instead of one request per exit.
 
-Proxies apply to **everything outbound**: chat, model-list imports, and the key/model
-probes. A probe sent from the address the provider is blocking reports a failure that
-the real traffic path never hits.
+**Cooldown.** A failed exit leaves the rotation instead of being offered again next cycle.
+The window starts at `proxyCooldownMs` (default 60s, since the limits worth rotating around
+are per-minute ones) and doubles per repeat to a 15-minute cap. A `Retry-After` from the
+provider overrides all of it — that is the case where the upstream says exactly when the
+address is spendable again, including per-hour and per-day quotas. Success clears the streak.
+When *every* exit is cooling, the request fails with `proxy_exhausted`, a 429 and a
+`retryAfterMs`; routy does not probe a cooling exit, because a guaranteed failure would
+doubling-into-itself lock the whole fleet out.
 
-`POST /api/proxy-pools/{id}/test` checks a pool by sending a request **through** it
-(default target `https://www.google.com/`, or `{ "testUrl": "https://…" }`), and stores
-the verdict on the pool (`testStatus`, `lastTestedAt`, `lastError`) so the dashboard
-shows health without re-running the check.
+**Strict** (default **on**) decides what happens when the fleet is exhausted: on, the request
+fails naming the proxy and the underlying cause (`proxy railway-1 failed: fetch failed ·
+ECONNREFUSED · connect ECONNREFUSED host:port`); off, it is retried **directly**. Off is
+opt-in per pool, because a direct request reveals the address the proxy exists to hide. A
+binding that covers several pools allows the direct fallback only if *none* of them is strict.
+
+Proxies apply to **everything outbound**: chat, model-list imports, and the key/model probes.
+A probe sent from the address the provider is blocking reports a failure the real traffic path
+never hits. Probes use one exit and record no health, so testing an address that is sitting in
+a cooldown neither hides it nor extends it.
+
+`POST /api/proxy-pools/{id}/test` checks **every exit** by sending a request *through* it, and
+stores the verdict per exit plus a summary on the pool (`testStatus`, `lastTestedAt`,
+`lastError`). The target defaults to `https://api.ipify.org?format=json` and is configurable
+per call (`{ "testUrl": … }`) or gateway-wide (`proxyTestUrl`) — a fleet that cannot reach an
+external host is still checkable against one it can. An echo target is worth preferring: the
+reply carries the address the provider saw, so the dashboard can count **distinct** egress
+addresses. Fifty exits behind one IP are one IP's allowance, and that is invisible until you
+ask each exit what it looks like.
+
+`POST /api/proxy-pools/{id}/reset-health` puts a fleet back in rotation — for a limit that
+reset sooner than the cooldown promised, or a proxy you have just fixed. Pools merge with
+`POST /api/proxy-pools/merge`: exits move to the target and every provider and key that named
+an absorbed pool is rewritten to the target, because a dangling pool id resolves to a direct
+request — a merge that silently dropped a route would be worse than no merge at all.
 
 ### Connection pooling
 

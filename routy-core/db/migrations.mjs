@@ -192,4 +192,56 @@ export const MIGRATIONS = [
       }
     },
   },
+  {
+    // v5 — a pool holds many exits again, each with its own identity.
+    //
+    // v4 narrowed a pool to one URL so that a failure could name the proxy that failed.
+    // That was the right unit for *health* and the wrong unit for the *container*: the
+    // reason to keep several proxies is to multiply whatever the upstream meters per
+    // address, and nobody wants fifty pools to do it. So exits (one URL each) become
+    // rows and stay the health unit — `proxy:<entry id>:<node id>` in the breaker store —
+    // while the pool goes back to being the fleet the user binds to a provider.
+    //
+    // Every existing pool keeps working: the data half gives it its single URL back as
+    // its first exit, so bindings and rotation resolve to exactly what they did before.
+    //
+    // Pools that v4 split out of an old multi-URL pool stay split. There is no
+    // provenance to rejoin them by, and guessing (name suffix plus config equality)
+    // would as easily merge two pools the user meant to keep apart. The dashboard has a
+    // merge action instead — an explicit act, on rows the user can see.
+    version: 5,
+    up: `
+      CREATE TABLE proxy_pool_entries (
+        id              TEXT PRIMARY KEY,
+        pool_id         TEXT NOT NULL REFERENCES proxy_pools(id) ON DELETE CASCADE,
+        url             TEXT NOT NULL,
+        enabled         INTEGER NOT NULL DEFAULT 1,
+        position        INTEGER NOT NULL DEFAULT 0,
+        egress_ip       TEXT,
+        last_tested_at  TEXT,
+        last_test_ok    INTEGER,
+        last_test_error TEXT,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        UNIQUE(pool_id, url)
+      );
+      CREATE INDEX idx_proxy_entries_pool ON proxy_pool_entries(pool_id, enabled);
+    `,
+    /** Data half of migration 5 — runs in the same transaction as `up`. */
+    data(db) {
+      const rows = db.prepare(`SELECT id, config, created_at FROM proxy_pools`).all();
+      const insert = db.prepare(
+        `INSERT INTO proxy_pool_entries (id, pool_id, url, enabled, position, created_at, updated_at)
+         VALUES (?, ?, ?, 1, 0, ?, ?)`,
+      );
+      const now = new Date().toISOString();
+      for (const row of rows) {
+        let config = {};
+        try { config = JSON.parse(row.config || "{}"); } catch { config = {}; }
+        const url = typeof config.url === "string" ? config.url.trim() : "";
+        if (!url) continue;
+        insert.run(crypto.randomUUID(), row.id, url, row.created_at || now, now);
+      }
+    },
+  },
 ];

@@ -250,7 +250,28 @@ export interface PoolPatch {
 export const useUpdatePool = () =>
   useMutation({ mutationFn: ({ id, patch }: PoolPatch) => api.updatePool(id, patch), onSuccess: useInvalidator(POOLS) });
 export const useDeletePool = () => useMutation({ mutationFn: api.deletePool, onSuccess: useInvalidator(POOLS) });
-export const useTestPool = () => useMutation({ mutationFn: api.testPool });
+// A check writes verdicts on the exits, so the list must reload: the badge is stored state,
+// not this mutation's response.
+export const useTestPool = () => useMutation({ mutationFn: api.testPool, onSuccess: useInvalidator(POOLS) });
+export const useAddPoolEntries = () =>
+  useMutation({
+    mutationFn: ({ id, urls }: { id: string; urls: string | string[] }) => api.addPoolEntries(id, urls),
+    onSuccess: useInvalidator(POOLS),
+  });
+export const useUpdatePoolEntry = () =>
+  useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: { url?: string; enabled?: boolean } }) => api.updatePoolEntry(id, patch),
+    onSuccess: useInvalidator(POOLS),
+  });
+export const useDeletePoolEntry = () => useMutation({ mutationFn: api.deletePoolEntry, onSuccess: useInvalidator(POOLS) });
+export const useTestPoolEntry = () => useMutation({ mutationFn: api.testPoolEntry, onSuccess: useInvalidator(POOLS) });
+export const useMergePools = () =>
+  useMutation({
+    mutationFn: ({ targetId, poolIds }: { targetId: string; poolIds: string[] }) => api.mergePools(targetId, poolIds),
+    onSuccess: useInvalidator(POOLS),
+  });
+export const useResetPoolHealth = () =>
+  useMutation({ mutationFn: api.resetPoolHealth, onSuccess: useInvalidator(POOLS) });
 /** server-side ring clear — every open console receives the `clear` event */
 export const useClearLogs = () => useMutation({ mutationFn: () => api.clearLogs() });
 

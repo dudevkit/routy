@@ -14,11 +14,20 @@ import { defineConfig } from "vitest/config";
  *   uncapped (15 workers)  ~33s, flaky — 1 failure in 3 runs
  *   4 workers              ~43s, stable
  *   8 workers              ~34s, stable   ← this setting
+ *
+ * teardownTimeout is the worker's RPC watchdog, and the default 10s is a CPU-bound
+ * assumption this suite does not meet. Closing a worker means closing sqlite handles,
+ * removing temp directories and closing the sockets its proxies held — and on a box also
+ * running a gateway and a browser, that can take longer than 10s while every test has
+ * already passed. Vitest then reports "Timeout calling onTaskUpdate" as an unhandled
+ * error and exits non-zero, so a green suite looked broken. 30s of slack costs nothing
+ * when teardown is quick and removes a signal that was never about the code.
  */
 export default defineConfig({
   test: {
     maxWorkers: 8,
     minWorkers: 1,
+    teardownTimeout: 30_000,
     // --expose-gc so a test can measure RETAINED memory instead of whatever the
     // collector had not yet reclaimed. The bounded-buffer test asserts that a 2MB
     // stream is not retained; sampling `heapUsed` without collecting first made it a

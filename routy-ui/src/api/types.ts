@@ -193,17 +193,51 @@ export interface ComboInput {
 export type AliasMap = Record<string, string>;
 
 /* ── infra: proxy pools ────────────────────────────────────────────────────── */
+/** One exit of a pool: a single proxy URL, and the unit rotation and health work on. */
+export interface ProxyPoolEntry {
+  id: string;
+  poolId: string;
+  url: string;
+  enabled: boolean;
+  position: number;
+  /** the address the provider saw when this exit was last checked */
+  egressIp?: string | null;
+  lastTestedAt?: string | null;
+  lastTestOk?: boolean | null;
+  lastTestError?: string | null;
+  /** live cooldown state, per provider — an exit exhausted on one upstream is fine on another */
+  health?: ExitHealth[];
+}
+
+/** An exit's health for one provider: "cooling on opencode, fine elsewhere" is the fact. */
+export interface ExitHealth {
+  nodeId: string | null;
+  node: string | null;
+  state: string;
+  openUntil?: string | null;
+  lastError?: string | null;
+  failures: number;
+}
+
+/** A pool is a FLEET: many exits, rotated across, bound to providers or keys as one. */
 export interface ProxyPool {
   id: string;
   name: string;
   kind: string;
-  /** one proxy per pool: `url` plus `strict` (may a failure fall back to direct?) */
-  config: { url?: string; strict?: boolean; urls?: (string | { url: string })[]; [k: string]: unknown };
+  /** `strict`: may a failed proxy fall back to a direct request? */
+  config: { strict?: boolean; url?: string; urls?: (string | { url: string })[]; [k: string]: unknown };
   enabled: boolean;
-  /** health verdict from the last check: "active" | "error" | null when never tested */
+  /** summary of the last check: "active" | "error" | null when never tested */
   testStatus?: string | null;
   lastTestedAt?: string | null;
   lastError?: string | null;
+  entries: ProxyPoolEntry[];
+  exitCount: number;
+  enabledCount: number;
+  /** exits currently out of rotation (rate limited or unreachable, per provider) */
+  coolingCount: number;
+  /** distinct addresses behind the fleet — fifty exits sharing one IP are one allowance */
+  egressIpCount: number;
   /** how many keys / providers point at this pool */
   boundCount?: number;
   createdAt: string;
@@ -215,17 +249,47 @@ export interface ProxyPoolInput {
   kind?: string;
   config?: ProxyPool["config"];
   enabled?: boolean;
+  /** the paste box's text, or an array of proxy URLs */
+  urls?: string | string[];
 }
 
-/** POST /api/proxy-pools/{id}/test — one health check, through the proxy to a known host */
+/** POST /api/proxy-pools/{id}/test — every exit checked through its own proxy */
 export interface PoolTestResult {
   ok: boolean;
-  status?: number;
-  elapsedMs?: number;
-  error?: string;
-  testUrl?: string;
-  /** the pool after the verdict was stored on it */
+  tested: number;
+  healthy: number;
+  entries: EntryTestResult[];
   pool?: ProxyPool;
+}
+
+/** One exit's verdict inside a pool check. */
+export interface EntryTestResult {
+  entryId: string;
+  url: string;
+  ok: boolean;
+  status?: number | null;
+  elapsedMs?: number | null;
+  error?: string | null;
+  egressIp?: string | null;
+}
+
+/** POST /api/proxy-pool-entries/{id}/test — one exit, its address included */
+export interface EntryTestOutcome {
+  ok: boolean;
+  status?: number | null;
+  elapsedMs?: number | null;
+  error?: string | null;
+  testUrl?: string;
+  egressIp?: string | null;
+  entry?: ProxyPoolEntry;
+}
+
+/** POST /api/proxy-pools/{id}/entries — the paste lands, duplicates are skipped */
+export interface AddEntriesResult {
+  added: number;
+  skipped: number;
+  rejected: string[];
+  pool: ProxyPool;
 }
 
 /** Per-node model row (P6). `enabled`/`stale` affect discovery only — routing
@@ -299,6 +363,10 @@ export interface Settings {
   rtkEnabled?: boolean;
   /** per-key cooldown before a rate-limited key rejoins rotation */
   keyCooldownMs?: number;
+  /** first cooldown for a proxy exit that failed or was rate-limited; Retry-After wins */
+  proxyCooldownMs?: number;
+  /** what a proxy health check reaches for; an IP echo answers with the exit's address */
+  proxyTestUrl?: string;
   /** how much the gateway records: debug | info | warn | error (live, survives restart) */
   logLevel?: string;
   /** daily ceiling on metered upstream spend; 0 or absent = unlimited */

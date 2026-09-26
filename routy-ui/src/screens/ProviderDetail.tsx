@@ -183,7 +183,13 @@ function ProxySetting({ node }: { node: UpstreamNode }) {
             loading={testPool.isPending}
             onClick={() =>
               testPool.mutate(selected[0], {
-                onSuccess: (r) => toast(r.ok ? `Pool reachable · ${r.elapsedMs ?? "?"}ms` : `Pool failed: ${r.error ?? "unknown"}`, r.ok ? "success" : "error"),
+                onSuccess: (r) =>
+                  toast(
+                    r.healthy > 0
+                      ? `${r.healthy}/${r.tested} exit(s) reachable`
+                      : `no exit reachable: ${r.entries[0]?.error ?? "unknown"}`,
+                    r.healthy > 0 ? "success" : "error",
+                  ),
                 onError: (err) => toastApiError(toast, err, "Test failed"),
               })
             }
