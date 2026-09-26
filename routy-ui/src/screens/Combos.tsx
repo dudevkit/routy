@@ -88,11 +88,25 @@ function useRoutableModels(): ModelsState {
   return state;
 }
 
+// Every strategy the core implements. Offering only three of the five meant `fastest` and
+// `cheapest` existed, were tested, and could not be selected from the dashboard.
 const STRATEGIES = [
   { value: "fallback", label: "Fallback (in order)" },
   { value: "round-robin", label: "Round robin" },
   { value: "sticky", label: "Sticky until limit" },
+  { value: "cheapest", label: "Cheapest first" },
+  { value: "fastest", label: "Fastest first" },
 ];
+
+/** What the chosen strategy will actually do, in one sentence — the field that decides
+ *  behaviour should not need a doc to read. */
+const STRATEGY_HINT: Record<string, string> = {
+  fallback: "The first member carries every request until it fails, then the next is tried.",
+  "round-robin": "Each request starts at the next member, so traffic spreads across all of them.",
+  sticky: "Holds one member for the sticky limit, then moves on — keeps a conversation on one upstream.",
+  cheapest: "Cheapest member first; unmetered members sort ahead of metered ones.",
+  fastest: "Lowest recent time-to-first-token first; a member that has never answered leads once so it can be measured.",
+};
 
 function ModelRow({
   model,
@@ -163,16 +177,54 @@ function ComboCard({ combo, suggestions }: { combo: Combo; suggestions: string[]
   const toast = useToast();
   const update = useUpdateCombo();
   const remove = useDeleteCombo();
+  // Every control writes through on change — there is no Save button on purpose. A select
+  // that looks applied but is not is exactly how "I chose round-robin" became "it never
+  // rotates": the choice sat in local state behind a badge nobody pressed. If the write
+  // fails, the toast says so and the card keeps the stored value.
   const [draft, setDraft] = useState<string[]>(combo.models);
   const [strategy, setStrategy] = useState(combo.strategy);
   const [stickyLimit, setStickyLimit] = useState(String(combo.stickyLimit));
   const [adding, setAdding] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const dirty =
-    JSON.stringify(draft) !== JSON.stringify(combo.models) ||
-    strategy !== combo.strategy ||
-    Number(stickyLimit) !== combo.stickyLimit;
+  // The server is the source of truth: a successful write invalidates the query, and this
+  // re-syncs the controls to what is actually stored.
+  useEffect(() => {
+    setDraft(combo.models);
+    setStrategy(combo.strategy);
+    setStickyLimit(String(combo.stickyLimit));
+  }, [combo.models, combo.strategy, combo.stickyLimit]);
+
+  const put = (next: { models?: string[]; strategy?: string; stickyLimit?: number }, note: string) =>
+    update.mutate(
+      {
+        id: combo.id,
+        patch: {
+          models: next.models ?? draft,
+          strategy: next.strategy ?? strategy,
+          stickyLimit: Math.max(1, Number(next.stickyLimit ?? stickyLimit) || 1),
+        },
+      },
+      { onSuccess: () => toast(note), onError: (err) => toastApiError(toast, err, "Save failed") },
+    );
+
+  const changeStrategy = (value: string) => {
+    setStrategy(value);
+    put({ strategy: value }, `Strategy saved · ${STRATEGIES.find((s) => s.value === value)?.label ?? value}`);
+  };
+
+  const moveModel = (from: number, to: number) => {
+    const next = arrayMove(draft, from, to);
+    setDraft(next);
+    put({ models: next }, "Order saved");
+  };
+
+  const removeModel = (index: number) => {
+    const gone = draft[index];
+    const next = draft.filter((_, i) => i !== index);
+    setDraft(next);
+    put({ models: next }, `Removed ${gone}`);
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -187,23 +239,16 @@ function ComboCard({ combo, suggestions }: { combo: Combo; suggestions: string[]
     const from = keys.indexOf(String(active.id));
     const to = keys.indexOf(String(over.id));
     if (from < 0 || to < 0) return;
-    setDraft(arrayMove(draft, from, to));
+    moveModel(from, to);
   };
-
-  const commit = () =>
-    update.mutate(
-      { id: combo.id, patch: { models: draft, strategy, stickyLimit: Math.max(1, Number(stickyLimit) || 1) } },
-      {
-        onSuccess: () => toast("Combo saved"),
-        onError: (err) => toastApiError(toast, err, "Save failed"),
-      },
-    );
 
   const addModel = () => {
     const value = adding.trim();
     if (!value || draft.includes(value)) return;
-    setDraft([...draft, value]);
+    const next = [...draft, value];
+    setDraft(next);
     setAdding("");
+    put({ models: next }, `Added ${value}`);
   };
 
   return (
@@ -215,16 +260,15 @@ function ComboCard({ combo, suggestions }: { combo: Combo; suggestions: string[]
             <Badge variant="primary" size="sm">
               {combo.models.length} models
             </Badge>
-            {dirty && <Badge variant="warning" size="sm">unsaved</Badge>}
+            {/* The strategy is on the card, not only inside the select: whether a combo
+                spreads or pins its first member is the thing you need to see at rest. */}
+            <Badge variant="default" size="sm">
+              {combo.strategy === "sticky" ? `sticky · ${combo.stickyLimit}` : combo.strategy}
+            </Badge>
           </div>
           <p className="mt-0.5 text-[11px] text-text-subtle">updated {fmtDateTime(combo.updatedAt)}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          {dirty && (
-            <Button size="sm" variant="primary" loading={update.isPending} onClick={commit}>
-              Save
-            </Button>
-          )}
           <Button
             size="sm"
             variant="ghost"
@@ -236,17 +280,25 @@ function ComboCard({ combo, suggestions }: { combo: Combo; suggestions: string[]
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        <Select label="Strategy" value={strategy} options={STRATEGIES} onChange={(e) => setStrategy(e.target.value)} />
-        <Input
-          label="Sticky limit"
-          type="number"
-          min={1}
-          value={stickyLimit}
-          onChange={(e) => setStickyLimit(e.target.value)}
-          disabled={strategy !== "sticky"}
-          inputClassName="font-mono tabular"
-        />
+      <div className="flex flex-col gap-1.5">
+        <div className="grid grid-cols-2 gap-2">
+          <Select label="Strategy" value={strategy} options={STRATEGIES} onChange={(e) => changeStrategy(e.target.value)} />
+          <Input
+            label="Sticky limit"
+            type="number"
+            min={1}
+            value={stickyLimit}
+            onChange={(e) => setStickyLimit(e.target.value)}
+            onBlur={(e) => {
+              const value = Math.max(1, Number(e.target.value) || 1);
+              const stored = combo.stickyLimit ?? 1;
+              if (value !== stored) put({ stickyLimit: value }, `Sticky limit saved · ${value} per member`);
+            }}
+            disabled={strategy !== "sticky"}
+            inputClassName="font-mono tabular"
+          />
+        </div>
+        <p className="text-[11px] text-text-subtle">{STRATEGY_HINT[strategy] ?? ""}</p>
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -270,8 +322,8 @@ function ComboCard({ combo, suggestions }: { combo: Combo; suggestions: string[]
                     model={m}
                     index={i}
                     total={draft.length}
-                    onMove={(from, to) => setDraft(arrayMove(draft, from, to))}
-                    onRemove={() => setDraft(draft.filter((_, idx) => idx !== i))}
+                    onMove={moveModel}
+                    onRemove={() => removeModel(i)}
                   />
                 ))}
               </div>
@@ -341,6 +393,9 @@ function NewComboModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
   const toast = useToast();
   const create = useCreateCombo();
   const [name, setName] = useState("");
+  // The strategy is chosen here rather than inherited silently: a combo created as `fallback`
+  // and only configured later is a combo whose first request already behaved the old way.
+  const [strategy, setStrategy] = useState("fallback");
   const trimmed = name.trim();
   const valid = trimmed.length > 0 && /^[a-zA-Z0-9_.-]+$/.test(trimmed);
 
@@ -361,11 +416,12 @@ function NewComboModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
             loading={create.isPending}
             onClick={() =>
               create.mutate(
-                { name: trimmed, models: [], strategy: "fallback" },
+                { name: trimmed, models: [], strategy },
                 {
-                  onSuccess: () => {
-                    toast("Combo created");
+                  onSuccess: (combo) => {
+                    toast(`Combo created · ${combo?.strategy ?? strategy}`);
                     setName("");
+                    setStrategy("fallback");
                     onClose();
                   },
                   onError: (err) => toastApiError(toast, err, "Create failed"),
@@ -378,16 +434,22 @@ function NewComboModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
         </>
       }
     >
-      <Input
-        label="Name"
-        mono
-        autoFocus
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="dev-combo"
-        hint="Letters, digits, dot, dash, underscore — clients set model to this name (never name/model)"
-        error={trimmed.length > 0 && !valid ? "Invalid characters in name" : undefined}
-      />
+      <div className="flex flex-col gap-3">
+        <Input
+          label="Name"
+          mono
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="dev-combo"
+          hint="Letters, digits, dot, dash, underscore — clients set model to this name (never name/model)"
+          error={trimmed.length > 0 && !valid ? "Invalid characters in name" : undefined}
+        />
+        <div className="flex flex-col gap-1.5">
+          <Select label="Strategy" value={strategy} options={STRATEGIES} onChange={(e) => setStrategy(e.target.value)} />
+          <p className="text-[11px] text-text-subtle">{STRATEGY_HINT[strategy] ?? ""} Add models after creating.</p>
+        </div>
+      </div>
     </Modal>
   );
 }

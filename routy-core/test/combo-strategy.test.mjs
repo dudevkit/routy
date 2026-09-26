@@ -13,6 +13,7 @@ import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
 import { createChatHandler } from "../core/handlers/chat.mjs";
 import { orderRoutes, COMBO_STRATEGIES } from "../core/routing.mjs";
+import { subscribeLog } from "../lib/log.mjs";
 
 let tmp, db, repos, handlerServer, handlerPort, stubServer, stubPort, stubState;
 let nodeA, nodeB;
@@ -134,8 +135,10 @@ describe("combo strategy: sticky", () => {
 
 describe("combo strategy: acceptance", () => {
   it("accepts every strategy the editor offers", () => {
-    // The editor's own list, kept in step with the core by this assertion.
-    const offered = ["fallback", "round-robin", "sticky"];
+    // The editor's own list, kept in step with the core by this assertion. The editor offered
+    // only fallback/round-robin/sticky while the core implemented five, so `fastest` and
+    // `cheapest` were unreachable from the dashboard — this list is the guard against that.
+    const offered = ["fallback", "round-robin", "sticky", "cheapest", "fastest"];
     for (const s of offered) expect(COMBO_STRATEGIES, s).toContain(s);
   });
 
@@ -149,4 +152,67 @@ describe("combo strategy: acceptance", () => {
     expect(ordered.at(-1).node.id).toBe("a"); // unhealthy stays last, never rotated up
     expect(ordered.slice(0, 2).map((r) => r.node.id)).toEqual(["c", "b"]);
   });
+});
+
+describe("combo logging", () => {
+  const capture = () => {
+    const lines = [];
+    const stop = subscribeLog((text) => lines.push(JSON.parse(text)));
+    return { lines, stop };
+  };
+
+  it("acknowledges the combo, its strategy, and the member that served it", async () => {
+    // The log is the only place "which member, and why that one?" can be answered. A combo
+    // correctly stored as `fallback` and a broken `round-robin` are indistinguishable without
+    // it — which is exactly how a stored-as-fallback combo got reported as broken rotation.
+    repos.combos.update(repos.combos.byName("combo1").id, { strategy: "round-robin" });
+    const { lines, stop } = capture();
+    try {
+      for (let i = 0; i < 2; i++) expect((await chat()).status).toBe(200);
+    } finally {
+      stop();
+    }
+
+    const plans = lines.filter((l) => l.tag === "COMBO");
+    expect(plans).toHaveLength(2); // one plan per request, before dispatch
+    expect(plans[0].msg).toContain("combo1");
+    expect(plans[0].msg).toContain("round-robin");
+    expect(plans[0].data.order).toEqual(["na/m1", "nb/m1"]);
+    expect(plans[0].data.skipped).toEqual([]);
+    // Rotation is visible in the plan: the order the strategy produced differs per request.
+    expect(plans[0].data.order).not.toEqual(plans[1].data.order);
+
+    const reqs = lines.filter((l) => l.tag === "REQ");
+    expect(reqs).toHaveLength(2);
+    for (const r of reqs) {
+      expect(r.data.combo).toBe("combo1");
+      expect(r.data.strategy).toBe("round-robin");
+      expect(r.data.of).toBe(2);
+      expect(r.data.member).toMatch(/^n[ab]\/m1$/);
+      expect(r.msg).toContain("combo1");
+    }
+    // The member alternates, which is the evidence rotation worked...
+    expect(reqs[0].data.member).not.toBe(reqs[1].data.member);
+    // ...and `attempt` is a different fact: both were served by the member we tried FIRST.
+    // (Under round-robin the serving attempt is 1 either way; a 2 here would mean a failover.)
+    expect(reqs.map((r) => r.data.attempt)).toEqual([1, 1]);
+  }, 20_000);
+
+  it("names the members it skipped, and why", async () => {
+    // Health dominates order, and a skipped member must not vanish from the story: it is
+    // half of "what happened with my combo".
+    repos.breakers.record(`node:${nodeB.id}`, { state: "open", openUntil: new Date(Date.now() + 60_000).toISOString() });
+    const { lines, stop } = capture();
+    try {
+      expect((await chat()).status).toBe(200);
+    } finally {
+      stop();
+    }
+
+    const plan = lines.find((l) => l.tag === "COMBO");
+    expect(plan.data.order).toEqual(["na/m1"]);
+    expect(plan.data.skipped).toEqual([{ model: "nb/m1", why: expect.stringContaining("breaker open") }]);
+    expect(plan.msg).toContain("skipped");
+    expect(lines.find((l) => l.tag === "REQ").data.attempt).toBe(1);
+  }, 20_000);
 });
