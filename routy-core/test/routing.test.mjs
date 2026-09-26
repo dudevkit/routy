@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
-import { resolveRoute, stripContextMarker, listModels, isNodeHealthy } from "../core/routing.mjs";
+import { resolveRoute, stripContextMarker, listModels, toolModelIds, isNodeHealthy } from "../core/routing.mjs";
 
 let tmp, db, repos;
 
@@ -80,6 +80,29 @@ describe("resolveRoute", () => {
   it("returns null for unknown models", () => {
     expect(resolveRoute(repos, "nope/x")).toBeNull();
     expect(resolveRoute(repos, "alias-only-no-slash")).toBeNull();
+  });
+});
+
+describe("toolModelIds", () => {
+  it("offers what a tool can actually ask for, and not the wildcard", () => {
+    // The fixture's node has no models imported, so /v1/models advertises `mine/*` to keep the
+    // prefix discoverable. A wildcard is not a model id — a tool that stores it offers the
+    // user something that cannot answer.
+    expect(listModels(repos).data.map((m) => m.id)).toContain("mine/*");
+    const ids = toolModelIds(repos);
+    expect(ids).not.toContain("mine/*");
+    // aliases and combos ARE routable, so they stay
+    expect(ids).toContain("fast");
+    expect(ids).toContain("dev");
+    // a disabled node contributes nothing
+    expect(ids.some((id) => id.startsWith("down/"))).toBe(false);
+  });
+
+  it("passes through a real model once the node has one", () => {
+    const node = repos.nodes.list().find((n) => n.prefix === "mine");
+    repos.nodeModels.import(node.id, ["gpt-fast"]);
+    expect(toolModelIds(repos)).toContain("mine/gpt-fast");
+    expect(toolModelIds(repos)).not.toContain("mine/*");
   });
 });
 

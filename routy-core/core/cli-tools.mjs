@@ -376,14 +376,27 @@ export const ADAPTERS = [
     id: "pi",
     name: "pi",
     binaries: ["pi"],
-    note: "Registers routy as a provider in pi's model list.",
+    note: "Registers routy as a provider in pi's model list, with every model the gateway serves.",
     files: [
       {
         path: "~/.pi/agent/models.json",
         format: "jsonc",
         connectedWhen: "providers.routy.baseUrl",
-        patch: ({ baseUrl, apiKey }) => ({
-          "providers.routy": { name: "routy", baseUrl, apiKey: apiKey ?? "" },
+        // pi lists a provider's models from its own config, not from the provider's
+        // /v1/models. `baseUrl` alone is only enough to *redirect* a provider pi already
+        // knows: "when only baseUrl is provided, all existing models for that provider are
+        // preserved", and a provider pi has never heard of has none — which is why routy
+        // registered fine and pi's /model showed nothing. A custom provider needs `api` and
+        // an explicit `models` array, and only `id` is required per entry (pi defaults name,
+        // context window and pricing), so no numbers are invented here.
+        patch: ({ baseUrl, apiKey, availableModels = [] }) => ({
+          "providers.routy": {
+            name: "routy",
+            baseUrl,
+            apiKey: apiKey ?? "",
+            api: "openai-completions",
+            ...(availableModels.length ? { models: availableModels.map((id) => ({ id })) } : {}),
+          },
         }),
       },
     ],
@@ -585,7 +598,7 @@ export function toolStatus(repos, adapter, { home = os.homedir() } = {}) {
  * Every file is snapshotted before anything is written; if a later file fails the
  * earlier ones are put back, because a half-applied config is worse than none.
  */
-export function connectTool(repos, id, { baseUrl, apiKey = null, model = null, home } = {}) {
+export function connectTool(repos, id, { baseUrl, apiKey = null, model = null, availableModels = [], home } = {}) {
   const adapter = findAdapter(id);
   if (!adapter) return { ok: false, error: "unknown_tool", detail: `no adapter for "${id}"` };
   if (!adapter.files?.length) {
@@ -598,7 +611,11 @@ export function connectTool(repos, id, { baseUrl, apiKey = null, model = null, h
     baseUrlNoV1: baseUrl.replace(/\/v1\/?$/, ""),
     apiKey,
     model,
+    // `model` is the ONE model the user picked in the connect form — most adapters write it
+    // as the default. `availableModels` is everything the gateway serves, for adapters whose
+    // tool keeps its own list (pi) and has to be told all of it or it shows none.
     models: model ? [model] : [],
+    availableModels,
   };
 
   const planned = [];

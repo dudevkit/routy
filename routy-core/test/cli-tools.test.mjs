@@ -27,6 +27,7 @@ const claude = ADAPTERS.find((a) => a.id === "claude");
 const codex = ADAPTERS.find((a) => a.id === "codex");
 const claudePath = () => path.join(home, ".claude", "settings.json");
 const codexPath = () => path.join(home, ".codex", "config.toml");
+const piPath = () => path.join(home, ".pi", "agent", "models.json");
 
 function write(file, text) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -199,6 +200,57 @@ describe("codex (toml)", () => {
     expect(r.ok).toBe(true);
     expect(r.restored.length).toBeGreaterThan(0);
     expect(fs.readFileSync(codexPath(), "utf8")).toBe(ORIGINAL);
+  });
+});
+
+describe("pi (jsonc)", () => {
+  it("writes the models pi can offer, and leaves its other providers alone", () => {
+    // pi lists a provider's models from ITS OWN config, not from the provider's /v1/models.
+    // `baseUrl` alone only redirects a provider pi already knows — so routy registered as
+    // connected while pi's /model showed nothing at all.
+    write(piPath(), JSON.stringify({ providers: { other: { baseUrl: "https://example.test/v1", api: "openai-completions", models: [{ id: "keep-me" }] } } }, null, 2));
+
+    const r = connectTool(repos, "pi", {
+      baseUrl: "http://127.0.0.1:8010/v1",
+      apiKey: "sk-routy",
+      availableModels: ["bai/deepseek-v4.1-flash", "dev"],
+      home,
+    });
+    expect(r.ok).toBe(true);
+
+    const written = JSON.parse(fs.readFileSync(piPath(), "utf8"));
+    expect(written.providers.other.models).toEqual([{ id: "keep-me" }]);
+    expect(written.providers.routy).toEqual({
+      name: "routy",
+      baseUrl: "http://127.0.0.1:8010/v1",
+      apiKey: "sk-routy",
+      api: "openai-completions", // pi needs the API type for a provider it does not know
+      models: [{ id: "bai/deepseek-v4.1-flash" }, { id: "dev" }],
+    });
+  });
+
+  it("omits models rather than writing an empty list when the gateway has none", () => {
+    const r = connectTool(repos, "pi", { baseUrl: "http://127.0.0.1:8010/v1", apiKey: "sk", availableModels: [], home });
+    expect(r.ok).toBe(true);
+    const written = JSON.parse(fs.readFileSync(piPath(), "utf8"));
+    expect(written.providers.routy.baseUrl).toBe("http://127.0.0.1:8010/v1");
+    expect("models" in written.providers.routy).toBe(false);
+  });
+
+  it("restores every value on disconnect, leaving the other provider intact", () => {
+    // Values, not bytes: jsonc is parse → set → serialise, so a round trip normalises
+    // formatting (toml and yaml use text edits instead, for exactly that reason). What the
+    // engine promises is that every path it touched goes back to what it was and nothing else
+    // moves — asserted here as the same object plus no leftover provider.
+    const original = { providers: { other: { baseUrl: "https://example.test/v1", models: [{ id: "keep-me" }] } } };
+    write(piPath(), JSON.stringify(original));
+
+    connectTool(repos, "pi", { baseUrl: "http://127.0.0.1:8010/v1", apiKey: "sk", availableModels: ["a/b"], home });
+    expect(JSON.parse(fs.readFileSync(piPath(), "utf8")).providers.routy).toBeTruthy();
+
+    const r = disconnectTool(repos, "pi");
+    expect(r.ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(piPath(), "utf8"))).toEqual(original);
   });
 });
 

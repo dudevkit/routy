@@ -2,7 +2,7 @@
 // (the transport contract). Auth: loopback peers pass; non-loopback requires
 // the bootstrap token (Bearer) — the SPA is same-origin by design (P2.1).
 import { json, readBody } from "../lib/router.mjs";
-import { COMBO_STRATEGIES, listModels } from "../core/routing.mjs";
+import { COMBO_STRATEGIES, listModels, toolModelIds } from "../core/routing.mjs";
 import { budgetSpent } from "../core/budget.mjs";
 import { probeNode, probeKey, probeModel, mapLimit } from "../core/probe.mjs";
 import { clearLogs, log, recentLogs, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
@@ -685,7 +685,14 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     // 127.0.0.1 — a LAN address here would break the moment the network changes, and
     // would be written by a dashboard someone happened to open from their laptop.
     const baseUrl = input.baseUrl || `http://127.0.0.1:${cfg.port}/v1`;
-    const result = connectTool(repos, p.id, { baseUrl, apiKey: input.apiKey ?? null, model: input.model ?? null });
+    // The tool needs the whole list, not just the model picked in the form: pi keeps its own
+    // copy of a provider's models and shows only what it is told.
+    const result = connectTool(repos, p.id, {
+      baseUrl,
+      apiKey: input.apiKey ?? null,
+      model: input.model ?? null,
+      availableModels: toolModelIds(repos),
+    });
     if (!result.ok) return json(res, result.error === "unknown_tool" ? 404 : 400, { error: result });
     log.info("CLI", `connected ${p.id} → ${baseUrl}`);
     json(res, 200, { ...result, status: toolStatus(repos, findAdapter(p.id)) });

@@ -161,3 +161,16 @@ export function listModels(repos) {
   }
   return { object: "list", data };
 }
+
+/**
+ * The model ids to write into a CLI tool's own config — the same list `/v1/models` serves,
+ * minus the `prefix/*` wildcard entries.
+ *
+ * A wildcard is a discovery affordance for a provider whose model list has not been fetched
+ * yet; it is not a model id. A tool that stores it as one (pi lists whatever it is told, and
+ * Claude Code routes whatever string it is handed) would offer the user a model that cannot
+ * answer. Aliases and combos stay: those are real routable ids.
+ */
+export function toolModelIds(repos) {
+  return listModels(repos).data.map((m) => m.id).filter((id) => !id.endsWith("/*"));
+}
