@@ -43,6 +43,13 @@ describe("classifyConnectionError", () => {
     expect(classifyConnectionError(err(403, "insufficient credits for this team")).verdict).toBe("strike");
   });
 
+  it("classifies credit-body 400 responses as strikes (b.ai style), not node failures", () => {
+    expect(classifyConnectionError(err(400, "credit insufficient balance: balance=13604 required=15206")).verdict).toBe("strike");
+    expect(classifyConnectionError(err(400, "Insufficient Quota")).verdict).toBe("strike");
+    // a generic 400 (invalid request) must stay a node problem, not a key strike
+    expect(classifyConnectionError(err(400, "invalid parameter: model")).verdict).toBe("node");
+  });
+
   it("counts 5xx and network errors as the node's problem, never the key's", () => {
     for (const e of [err(500), err(502), err(503), err(504), err(0, "fetch failed")]) {
       expect(classifyConnectionError(e).verdict).toBe("node");
