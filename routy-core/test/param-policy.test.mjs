@@ -1,14 +1,14 @@
 // Provider param policy, end to end through the real chat handler, plus the classification that
 // keeps a rejected request from being charged to the node.
 //
-// Reported from a live setup: Hermes sends `reasoning_effort: "medium"` on every request, b.ai
-// answers 400 for that value (and for none/minimal; low/high/max are accepted), and the 400 was
-// recorded as a NODE failure — so three requests opened the provider's breaker and every later
-// request, for every model on it, came back 503 all_unavailable. "routy is broken" was one
-// unsupported parameter plus one misattribution.
+// The policy table shipped as dead code — exported, documented, and never called — so no test
+// covered it either. These pin the wiring with a rule whose behaviour is certain (Claude models
+// reject `temperature`), and pin that a provider with no rule gets its body untouched, because
+// the failure mode of a param policy is editing a request the provider would have accepted.
 //
-// Both halves are pinned here: what leaves for the provider, and what the provider's rejection
-// is allowed to cost.
+// The second half is the reported outage: b.ai 400s were recorded as NODE failures, so three
+// requests opened the provider's breaker and every later request — for every model on it — came
+// back 503 all_unavailable. "routy is broken" was one client-shaped error plus one misattribution.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import http from "node:http";
 import fs from "node:fs";
@@ -18,9 +18,10 @@ import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
 import { createChatHandler } from "../core/handlers/chat.mjs";
 import { applyParamValues, stripUnsupportedParams } from "../core/translate/concerns/paramSupport.js";
+import { subscribeLog } from "../lib/log.mjs";
 
 let tmp, db, repos, handlerServer, handlerPort, stubServer, stubPort, stubState;
-let bai, other;
+let claudeNode, plainNode;
 
 beforeEach(async () => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "param-policy-"));
@@ -59,12 +60,10 @@ beforeEach(async () => {
     handlerServer.listen(0, "127.0.0.1", () => resolve(handlerServer.address().port));
   });
 
-  // The provider key comes from the node's prefix when it is not set explicitly — which is how
-  // a node the user called "bai" gets b.ai's rules without any extra setup.
-  bai = repos.nodes.create({ name: "bai", prefix: "bai", apiType: "openai", baseUrl: `http://127.0.0.1:${stubPort}/bai/v1` });
-  other = repos.nodes.create({ name: "A", prefix: "a", apiType: "openai", baseUrl: `http://127.0.0.1:${stubPort}/a/v1` });
-  repos.connections.create({ nodeId: bai.id, name: "bai-key", credentials: { apiKey: "sk-bai" } });
-  repos.connections.create({ nodeId: other.id, name: "a-key", credentials: { apiKey: "sk-a" } });
+  claudeNode = repos.nodes.create({ name: "Claude", prefix: "anthropic", apiType: "openai", baseUrl: `http://127.0.0.1:${stubPort}/claude/v1` });
+  plainNode = repos.nodes.create({ name: "bai", prefix: "bai", apiType: "openai", baseUrl: `http://127.0.0.1:${stubPort}/bai/v1` });
+  repos.connections.create({ nodeId: claudeNode.id, name: "claude-key", credentials: { apiKey: "sk-claude" } });
+  repos.connections.create({ nodeId: plainNode.id, name: "bai-key", credentials: { apiKey: "sk-bai" } });
   repos.settings.update({ requireApiKey: false });
 });
 
@@ -91,30 +90,37 @@ const chat = (model, extra = {}) =>
 const lastBody = () => stubState.bodies.at(-1);
 
 describe("what leaves for the provider", () => {
-  it("drops a value the provider rejects, and passes the values it accepts", async () => {
-    // Measured against b.ai: medium/none/minimal → 400, low/high/max → 200, absent → 200.
-    expect((await chat("bai/m1", { reasoning_effort: "medium" })).status).toBe(200);
-    expect(lastBody()).not.toHaveProperty("reasoning_effort");
+  it("drops a param the matching rule names, and says so in the log", async () => {
+    // Claude rejects temperature (the rule the table was written for, and dead until now).
+    const lines = [];
+    const stop = subscribeLog((text) => lines.push(JSON.parse(text)));
+    try {
+      expect((await chat("anthropic/claude-3-5-sonnet", { temperature: 0.7, top_p: 0.9 })).status).toBe(200);
+    } finally {
+      stop();
+    }
+    expect(lastBody()).not.toHaveProperty("temperature");
+    expect(lastBody()).toMatchObject({ top_p: 0.9 }); // only what the rule names is touched
 
-    expect((await chat("bai/m1", { reasoning_effort: "none" })).status).toBe(200);
-    expect(lastBody()).not.toHaveProperty("reasoning_effort");
-
-    // the accepted values must survive — dropping the field outright would discard them too
-    expect((await chat("bai/m1", { reasoning_effort: "high" })).status).toBe(200);
-    expect(lastBody().reasoning_effort).toBe("high");
-    expect((await chat("bai/m1", { reasoning_effort: "max", temperature: 0.3 })).status).toBe(200);
-    expect(lastBody()).toMatchObject({ reasoning_effort: "max", temperature: 0.3 });
+    // A policy that edits a request invisibly cannot be audited — that is how a wrong rule
+    // (dropping a value the provider accepts) stays invisible.
+    const line = lines.find((l) => l.tag === "PARAM");
+    expect(line).toBeTruthy();
+    expect(line.msg).toContain("temperature");
+    expect(line.data).toMatchObject({ provider: "anthropic", model: "claude-3-5-sonnet" });
+    expect(line.data.changes).toEqual([{ param: "temperature", from: 0.7 }]);
   });
 
   it("leaves a provider with no rule alone", async () => {
-    expect((await chat("a/m1", { reasoning_effort: "medium" })).status).toBe(200);
+    // b.ai is deliberately absent from the table: on the reporting gateway its model accepts
+    // every reasoning_effort value, so a rule would discard a level the provider honours.
+    expect((await chat("bai/deepseek-v4.1-flash", { reasoning_effort: "medium" })).status).toBe(200);
     expect(lastBody().reasoning_effort).toBe("medium");
   });
 
-  it("still forwards everything else verbatim", async () => {
-    // The policy is a scalpel, not a rewrite: unknown params belong to the caller.
-    await chat("bai/m1", { reasoning_effort: "medium", seed: 7, top_p: 0.9, custom_thing: { a: 1 } });
-    expect(lastBody()).toMatchObject({ seed: 7, top_p: 0.9, custom_thing: { a: 1 } });
+  it("forwards everything else verbatim", async () => {
+    await chat("bai/deepseek-v4.1-flash", { reasoning_effort: "medium", seed: 7, top_p: 0.9, custom_thing: { a: 1 } });
+    expect(lastBody()).toMatchObject({ seed: 7, top_p: 0.9, custom_thing: { a: 1 }, reasoning_effort: "medium" });
   });
 });
 
@@ -123,56 +129,65 @@ describe("what a rejection is allowed to cost", () => {
     stubState.reject = (body) => (body?.reasoning_effort === "medium" ? { status: 400, message: "MaaS reject: reasoning_effort medium" } : null);
 
     for (let i = 0; i < 3; i++) {
-      const r = await chat("a/m1", { reasoning_effort: "medium" });
+      const r = await chat("bai/m1", { reasoning_effort: "medium" });
       expect(r.status).toBe(400); // the caller's error, reported as one
     }
     // Three of these used to open the node's breaker and 503 every later request.
-    const breaker = repos.breakers.get(`node:${other.id}`);
+    const breaker = repos.breakers.get(`node:${plainNode.id}`);
     expect(breaker?.failures ?? 0).toBe(0);
     expect(breaker?.openUntil ?? null).toBeNull();
 
     // and the node is still serving everything else
-    expect((await chat("a/m1", {})).status).toBe(200);
+    expect((await chat("bai/m1", {})).status).toBe(200);
   }, 20_000);
 });
 
 describe("the rule vocabulary", () => {
-  it("drops or replaces an unaccepted value, and keeps an accepted one", () => {
-    const dropped = applyParamValues({ reasoning_effort: "medium", top_p: 0.9 }, { reasoning_effort: { allow: ["low", "high", "max"], otherwise: null } });
+  it("drops or replaces an unaccepted value, keeps an accepted one, and reports each change", () => {
+    const spec = { reasoning_effort: { allow: ["low", "high", "max"], otherwise: null } };
+
+    const dropped = { reasoning_effort: "medium", top_p: 0.9 };
+    expect(applyParamValues(dropped, spec)).toEqual([{ param: "reasoning_effort", from: "medium", to: undefined }]);
     expect(dropped).not.toHaveProperty("reasoning_effort");
     expect(dropped.top_p).toBe(0.9); // only the named param is touched
 
-    // a string `otherwise` is the alternative to dropping: keep the field, change the value
-    const replaced = applyParamValues({ reasoning_effort: "medium" }, { reasoning_effort: { allow: ["low", "high", "max"], otherwise: "high" } });
+    // a string `otherwise` keeps the field and changes the value — the alternative to dropping
+    const replaced = { reasoning_effort: "medium" };
+    expect(applyParamValues(replaced, { reasoning_effort: { allow: ["low", "high"], otherwise: "high" } })).toEqual([{ param: "reasoning_effort", from: "medium", to: "high" }]);
     expect(replaced.reasoning_effort).toBe("high");
 
-    const kept = applyParamValues({ reasoning_effort: "low" }, { reasoning_effort: { allow: ["low", "high", "max"], otherwise: "high" } });
+    const kept = { reasoning_effort: "low" };
+    expect(applyParamValues(kept, spec)).toEqual([]);
     expect(kept.reasoning_effort).toBe("low");
   });
 
   it("leaves an absent value absent rather than writing one", () => {
     const empty = applyParamValues({}, { reasoning_effort: { allow: ["low"], otherwise: "high" } });
-    expect(empty).not.toHaveProperty("reasoning_effort");
+    expect(empty).toEqual([]);
     const nulled = applyParamValues({ reasoning_effort: null }, { reasoning_effort: { allow: ["low"], otherwise: "high" } });
-    expect(nulled.reasoning_effort).toBeNull();
+    expect(nulled).toEqual([]);
   });
 
   it("scopes a rule to its provider and its model match", () => {
     const untouched = { temperature: 1.1 };
-    stripUnsupportedParams("someone-else", "gpt-5.4", untouched);
+    expect(stripUnsupportedParams("someone-else", "gpt-5.4", untouched)).toEqual([]);
     expect(untouched.temperature).toBe(1.1);
 
-    // the pre-existing rule this table was written for: Claude rejects temperature
     const claude = { temperature: 1.1, top_p: 0.5 };
-    stripUnsupportedParams("anthropic", "claude-3-5-sonnet", claude);
+    expect(stripUnsupportedParams("anthropic", "claude-3-5-sonnet", claude)).toEqual([{ param: "temperature", from: 1.1, to: undefined }]);
     expect(claude).not.toHaveProperty("temperature");
-    expect(claude.top_p).toBe(0.5); // only what the rule names
+    expect(claude.top_p).toBe(0.5);
+
+    // the rule is matched on the model id, so a non-Claude model on the same provider is untouched
+    const other = { temperature: 1.1 };
+    expect(stripUnsupportedParams("anthropic", "some-other-model", other)).toEqual([]);
+    expect(other.temperature).toBe(1.1);
   });
 
-  it("ignores a body that cannot carry params", () => {
-    expect(() => stripUnsupportedParams("bai", "anything", undefined)).not.toThrow();
-    const noModel = { reasoning_effort: "medium" };
-    stripUnsupportedParams("bai", "", noModel);
-    expect(noModel.reasoning_effort).toBe("medium"); // no model → no rule
+  it("reports nothing for a body that cannot carry params", () => {
+    expect(stripUnsupportedParams("anthropic", "claude-3-5-sonnet", undefined)).toEqual([]);
+    const noModel = { temperature: 1.1 };
+    expect(stripUnsupportedParams("anthropic", "", noModel)).toEqual([]);
+    expect(noModel.temperature).toBe(1.1);
   });
 });

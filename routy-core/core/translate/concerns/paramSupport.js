@@ -24,12 +24,13 @@ const STRIP_RULES = [
   // "integer above maximum value, expected <= 32768". Pin an explicit endpoint cap;
   // min() with the model ceiling still applies if a variant's own limit is lower.
   { provider: "volcengine-ark", match: /kimi/i, maxOutputCap: 32768, clampToModelMaxOutput: true },
-  // b.ai rejects reasoning_effort values outside {low, high, max} with a 400 — medium, none and
-  // minimal all fail, deterministically, and the same request without the field succeeds.
-  // Unsupported values are DROPPED rather than remapped: dropping reproduces the one shape
-  // measured to work, while mapping medium→high would silently raise the reasoning budget (and
-  // the bill) of every request a client sent at medium. Accepted values pass through untouched.
-  { provider: "bai", paramValues: { reasoning_effort: { allow: ["low", "high", "max"], otherwise: null } } },
+  // Deliberately NO b.ai rule. `reasoning_effort` was reported to 400 on b.ai for every value
+  // outside low/high/max, but on this gateway's b.ai node *every* value is accepted —
+  // none/minimal/low/medium/high/max/absent all return 200, and `none` uses a third of the
+  // tokens the others do, so the provider is honouring the field rather than ignoring it. A rule
+  // here would silently discard a reasoning level the client asked for and the provider accepts.
+  // If a specific model is found to reject some values, scope a rule to it:
+  //   { provider: "bai", match: /<that model>/, paramValues: { reasoning_effort: { allow: [...], otherwise: null } } },
 ];
 
 // Test a rule's match (regex or predicate) against the model id.
@@ -48,39 +49,63 @@ function clampNumber(body, key, ceiling) {
  * Apply `paramValues` specs to a body. Exported because the vocabulary is the part worth
  * testing on its own: a rule says which values a provider accepts, and what an unaccepted one
  * becomes — dropped (`otherwise: null`, the provider's own default) or replaced (a string).
+ * Returns the changes it made, in the same shape `stripUnsupportedParams` reports.
  */
 export function applyParamValues(body, paramValues) {
+  const changes = [];
   for (const [key, spec] of Object.entries(paramValues || {})) {
     const value = body[key];
     if (value === undefined || value === null) continue;
     if (spec.allow?.includes(value)) continue;
-    if (spec.otherwise === null || spec.otherwise === undefined) delete body[key];
-    else body[key] = spec.otherwise;
+    if (spec.otherwise === null || spec.otherwise === undefined) {
+      changes.push({ param: key, from: value, to: undefined });
+      delete body[key];
+    } else {
+      changes.push({ param: key, from: value, to: spec.otherwise });
+      body[key] = spec.otherwise;
+    }
   }
-  return body;
+  return changes;
 }
 
-// Remove unsupported params from body in place; returns body.
+/**
+ * Remove unsupported params from body in place, and report what was changed.
+ *
+ * The report is the point: a policy that silently edits a caller's request is a policy nobody
+ * can audit. This function was dead code for its whole life precisely because nothing observed
+ * it, and the first rule I added to it turned out to be wrong for the provider it named —
+ * dropping a value that provider accepts. A log line per change is what makes the next such
+ * mistake visible instead of invisible.
+ *
+ * @returns {Array<{param: string, from: unknown, to: unknown}>} one entry per change, [] if none
+ */
 export function stripUnsupportedParams(provider, model, body) {
-  if (!model || !body || typeof body !== "object") return body;
+  const changes = [];
+  if (!model || !body || typeof body !== "object") return changes;
   for (const rule of STRIP_RULES) {
     if (rule.provider && rule.provider !== provider) continue;
     if (!matches(rule, model)) continue;
     for (const key of rule.drop || []) {
-      if (body[key] !== undefined) delete body[key];
+      if (body[key] !== undefined) {
+        changes.push({ param: key, from: body[key], to: undefined });
+        delete body[key];
+      }
     }
     // Values a provider accepts are a set, not "the field" — dropping the field outright would
     // also discard the values that work.
-    applyParamValues(body, rule.paramValues);
+    for (const change of applyParamValues(body, rule.paramValues)) changes.push(change);
     // CF Workers AI oneOf root schema only accepts content as plain string (#1926)
     if (rule.flattenContent && Array.isArray(body.messages)) {
+      let flattened = 0;
       for (const msg of body.messages) {
         if (msg && Array.isArray(msg.content)) {
           msg.content = msg.content
             .map(b => (b?.type === "text" && typeof b.text === "string") ? b.text : "")
             .join("");
+          flattened++;
         }
       }
+      if (flattened) changes.push({ param: "messages[].content", from: "content parts", to: "flattened string", count: flattened });
     }
     if (rule.clampToModelMaxOutput || Number.isFinite(rule.maxOutputCap)) {
       const modelCeiling = getCapabilitiesForModel(provider, model).maxOutput;
@@ -93,11 +118,13 @@ export function stripUnsupportedParams(provider, model, body) {
       }
       if (candidates.length > 0) {
         const ceiling = Math.min(...candidates);
-        clampNumber(body, "max_tokens", ceiling);
-        clampNumber(body, "max_completion_tokens", ceiling);
-        clampNumber(body, "max_output_tokens", ceiling);
+        for (const key of ["max_tokens", "max_completion_tokens", "max_output_tokens"]) {
+          const before = body[key];
+          clampNumber(body, key, ceiling);
+          if (before !== body[key]) changes.push({ param: key, from: before, to: body[key] });
+        }
       }
     }
   }
-  return body;
+  return changes;
 }

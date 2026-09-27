@@ -276,7 +276,16 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         // provider actually uses. This table existed and was never called from anywhere, so
         // every rule in it was dead: one unsupported client field reached its provider,
         // 400'd, and (before the verdict above) took the node's breaker with it.
-        stripUnsupportedParams(providerKeyFor(r.node), r.model, outbound);
+        //
+        // Anything it changes is logged. A policy that edits a caller's request invisibly is a
+        // policy nobody can audit — and the first rule added to this table was wrong for the
+        // provider it named, which only showed up because the effect was measured by hand.
+        const paramChanges = stripUnsupportedParams(providerKeyFor(r.node), r.model, outbound);
+        if (paramChanges.length > 0) {
+          log.info("PARAM", `${r.node.prefix} does not accept ${paramChanges.map((c) => c.param).join(", ")} — adjusted before dispatch`, {
+            provider: providerKeyFor(r.node), model: r.model, changes: paramChanges,
+          });
+        }
 
         const executor = new DefaultExecutor(r.node, connection, { proxy });
         // Per-node stall budget; 0 disables the watchdog.
