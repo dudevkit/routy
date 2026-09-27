@@ -4,6 +4,7 @@
 import { log } from "../lib/log.mjs";
 import { ttftOf } from "./latency.mjs";
 import { priceOf } from "./pricing.mjs";
+import { CHAT_KIND, MEDIA_KINDS, isMediaKind, mediaKindsOf, nodeServesKind, mediaUrlFor, authStyleFor, mediaConfigOf } from "./media.mjs";
 
 // Claude Code marks 1M-context requests as "<model>[1m]" (upstream parity,
 // 9router/src/sse/handlers/chat.js:51-55). Capability travels in headers, not the id.
@@ -35,8 +36,17 @@ export function isNodeHealthy(repos, node, now = Date.now()) {
  *   { kind: "node", node, model, marker, healthy }
  *   { kind: "combo", name, strategy, stickyLimit, routes: [{...nodeRoute, healthy}] }
  *   null (unresolvable)
+ *
+ * `options.kind` is which endpoint the request arrived on (`llm` by default). It is a
+ * filter, not a preference: a media kind may only reach a node that declares it, and a
+ * combo may only serve the kind it was created for. Without this an image request could
+ * resolve to a chat model and be answered by it — the gateway's job is to refuse that,
+ * not to guess.
+ *
+ * For kinds where the provider IS the model (`modelList: "none"`), a bare `<prefix>` with
+ * no slash resolves with `model: null`.
  */
-export function resolveRoute(repos, modelStr, { depth = 0 } = {}) {
+export function resolveRoute(repos, modelStr, { depth = 0, kind = CHAT_KIND } = {}) {
   if (typeof modelStr !== "string" || modelStr.length === 0 || depth > 3) return null;
 
   const { modelStr: stripped, marker } = stripContextMarker(modelStr);
@@ -44,17 +54,17 @@ export function resolveRoute(repos, modelStr, { depth = 0 } = {}) {
   // 1. alias → target (single recursion via depth guard)
   const aliasTarget = repos.aliases.map()[stripped];
   if (aliasTarget && aliasTarget !== stripped) {
-    const resolved = resolveRoute(repos, aliasTarget, { depth: depth + 1 });
+    const resolved = resolveRoute(repos, aliasTarget, { depth: depth + 1, kind });
     if (resolved) {
       return { ...resolved, marker: resolved.marker ?? marker };
     }
   }
 
-  // 2. combo by name
+  // 2. combo by name — only one that serves this kind
   const combo = repos.combos.byName(stripped);
-  if (combo) {
+  if (combo && (combo.kind || CHAT_KIND) === kind) {
     const routes = combo.models
-      .map((m) => resolveRoute(repos, m, { depth: depth + 1 }))
+      .map((m) => resolveRoute(repos, m, { depth: depth + 1, kind }))
       .filter(Boolean)
       .map((r) => ({ ...r, marker: r.marker ?? marker }));
     return {
@@ -74,15 +84,29 @@ export function resolveRoute(repos, modelStr, { depth = 0 } = {}) {
     const model = stripped.slice(slash + 1);
     if (model.length > 0) {
       const node = repos.nodes.byPrefix(prefix);
-      if (node) {
+      if (node && servesKind(node, kind)) {
         const healthy = node.enabled && isNodeHealthy(repos, node);
         return { kind: "node", node, model, marker, healthy };
       }
     }
   }
 
-  if (depth === 0) log.debug("ROUTE", `unresolvable model string`, { modelStr });
+  // 4. bare "<nodePrefix>" — only when the provider IS the model for this kind
+  if (slash === -1 && isMediaKind(kind) && MEDIA_KINDS[kind].modelList === "none") {
+    const node = repos.nodes.byPrefix(stripped);
+    if (node && servesKind(node, kind)) {
+      const healthy = node.enabled && isNodeHealthy(repos, node);
+      return { kind: "node", node, model: null, marker, healthy };
+    }
+  }
+
+  if (depth === 0) log.debug("ROUTE", `unresolvable model string`, { modelStr, kind });
   return null;
+}
+
+/** Chat is unrestricted (every node speaks it). A media kind must be declared. */
+function servesKind(node, kind) {
+  return kind === CHAT_KIND || nodeServesKind(node, kind);
 }
 
 // Strategies the UI offers and the API accepts. `round-robin` and `sticky` were both
@@ -139,27 +163,118 @@ function priceRank(node) {
  * Enumerate client-visible models for GET /v1/models:
  * aliases (id = alias) + combos (id = combo name). Node-local models are
  * fetched upstream lazily (P1.4) and merged here.
+ *
+ * With `kind`, the same builder answers `/v1/models/<kind>`: nodes that declare that media
+ * kind, and nothing else. The chat list is unchanged and must stay that way — it is the list
+ * every connected client already reads, and a media model must not appear in it (a chat
+ * request to an image model is a 400 from the provider, not a feature).
+ *
+ * Media entries carry their own `kind`, because `/v1/models/web` serves two kinds at once and
+ * the client filters on it (9Router clients do the same).
  */
-export function listModels(repos) {
+export function listModels(repos, { kind = CHAT_KIND } = {}) {
   const data = [];
-  for (const [alias] of Object.entries(repos.aliases.map())) {
-    data.push({ id: alias, object: "model", owned_by: "routy-alias" });
+  if (kind === CHAT_KIND) {
+    for (const [alias] of Object.entries(repos.aliases.map())) {
+      data.push({ id: alias, object: "model", owned_by: "routy-alias" });
+    }
+    for (const c of repos.combos.list()) {
+      if ((c.kind || CHAT_KIND) !== CHAT_KIND) continue;
+      data.push({ id: c.name, object: "model", owned_by: "routy-combo" });
+    }
+    for (const n of repos.nodes.list({ enabled: true })) {
+      const models = repos.nodeModels.enabledModels(n.id, { kind: CHAT_KIND });
+      if (models.length > 0) {
+        for (const m of models) {
+          data.push({ id: `${n.prefix}/${m}`, object: "model", owned_by: `routy-node:${n.prefix}` });
+        }
+      } else {
+        // no models configured — expose the wildcard so the prefix is still discoverable
+        data.push({ id: `${n.prefix}/*`, object: "model", owned_by: `routy-node:${n.prefix}` });
+      }
+    }
+    return { object: "list", data };
   }
+
+  if (!isMediaKind(kind)) return { object: "list", data };
+
   for (const c of repos.combos.list()) {
-    data.push({ id: c.name, object: "model", owned_by: "routy-combo" });
+    if ((c.kind || CHAT_KIND) !== kind) continue;
+    data.push({ id: c.name, object: "model", kind, owned_by: "routy-combo" });
   }
+
+  const modelList = MEDIA_KINDS[kind].modelList;
   for (const n of repos.nodes.list({ enabled: true })) {
-    const models = repos.nodeModels.enabledModels(n.id);
-    if (models.length > 0) {
-      for (const m of models) {
-        data.push({ id: `${n.prefix}/${m}`, object: "model", owned_by: `routy-node:${n.prefix}` });
+    if (!nodeServesKind(n, kind)) continue;
+    if (modelList === "node") {
+      for (const m of repos.nodeModels.enabledModels(n.id, { kind })) {
+        data.push({ id: `${n.prefix}/${m}`, object: "model", kind, owned_by: `routy-node:${n.prefix}` });
       }
     } else {
-      // no models configured — expose the wildcard so the prefix is still discoverable
-      data.push({ id: `${n.prefix}/*`, object: "model", owned_by: `routy-node:${n.prefix}` });
+      // The provider IS the model (web search/fetch), or the model field names a voice the
+      // gateway cannot enumerate from here (tts) — either way the routable id is the prefix.
+      data.push({ id: n.prefix, object: "model", kind, owned_by: `routy-node:${n.prefix}` });
     }
   }
   return { object: "list", data };
+}
+
+/**
+ * Which kind is this id actually registered as?
+ *
+ * The id itself says it when the node has a model row for it: `m0probe/flux-1` registered as an
+ * image model IS an image model, and answering "chat" for it would describe an endpoint that
+ * cannot serve it. Chat is only the fallback for an id nothing knows — every node speaks chat,
+ * so it is the one kind that is always true of a routable prefix.
+ */
+function inferKind(repos, modelStr) {
+  const { modelStr: stripped } = stripContextMarker(modelStr);
+  const slash = stripped.indexOf("/");
+  if (slash > 0) {
+    const node = repos.nodes.byPrefix(stripped.slice(0, slash));
+    const row = node ? repos.nodeModels.byModel(node.id, stripped.slice(slash + 1)) : null;
+    return row ? row.kind : CHAT_KIND;
+  }
+  // A bare prefix is only a routable id when the provider IS the model, so the node's declared
+  // none-kinds are the candidates — and exactly one of them is the only unambiguous answer.
+  const node = repos.nodes.byPrefix(stripped);
+  const candidates = node ? mediaKindsOf(node).filter((k) => MEDIA_KINDS[k].modelList === "none") : [];
+  if (candidates.length === 1) return candidates[0];
+  return CHAT_KIND;
+}
+
+/**
+ * Effective dispatch config for one client model id — the payload behind
+ * `/v1/models/info?id=`. Answers what a request for this id would actually do: which node,
+ * which upstream URL, which auth style. This is the same information the dashboard's
+ * provider card shows, and it is the honest answer to "why did my image request 400?".
+ *
+ * `kind` constrains the answer; omitting it asks routy to infer the kind from the id.
+ */
+export function modelInfo(repos, modelStr, { kind } = {}) {
+  const effective = kind === undefined ? inferKind(repos, modelStr) : kind;
+  const resolved = resolveRoute(repos, modelStr, { kind: effective });
+  if (!resolved) return null;
+
+  if (resolved.kind === "combo") {
+    return {
+      id: modelStr, object: "model-info", kind: effective,
+      combo: true, strategy: resolved.strategy, stickyLimit: resolved.stickyLimit,
+      members: resolved.routes.filter((r) => r.kind === "node").map((r) => `${r.node.prefix}/${r.model ?? ""}`.replace(/\/$/, "")),
+    };
+  }
+
+  const node = resolved.node;
+  const spec = isMediaKind(effective) ? MEDIA_KINDS[effective] : null;
+  return {
+    id: modelStr, object: "model-info", kind: effective,
+    provider: node.prefix, model: resolved.model,
+    endpoint: spec ? { method: spec.method, path: spec.path } : { method: "POST", path: "/v1/chat/completions" },
+    url: spec ? mediaUrlFor(node, effective) : node.baseUrl,
+    auth: { style: spec ? authStyleFor(node, effective) : "bearer" },
+    noAuth: mediaConfigOf(node).noAuth,
+    healthy: resolved.healthy,
+  };
 }
 
 /**

@@ -3,6 +3,7 @@
 import crypto from "node:crypto";
 import { createCacheLoader, createMapCache } from "./cache.mjs";
 import { createApiKey } from "../lib/auth.mjs";
+import { CHAT_KIND } from "../core/media.mjs";
 
 const uuid = () => crypto.randomUUID();
 const DETAIL_CAP_BYTES = 64 * 1024;
@@ -86,12 +87,18 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
      * `data` is a bag of independent settings (pricing, pool tuning, cached model
      * list, retry overrides), so a patch MERGES into it instead of replacing it —
      * editing one field must not silently drop the others.
+     *
+     * `media` is the exception, and replaces: it is one composite config, and a merge
+     * would make removing a kind impossible — a node that stopped serving images could
+     * never say so, because the old kind would survive every patch that omitted it. The
+     * API validates the value (core/media.mjs) before it arrives here.
      */
     update(id, patch) {
       const existing = nodes.get(id);
       if (!existing) return null;
       const merged = { ...existing, ...patch, updatedAt: new Date().toISOString() };
       if (patch.data !== undefined) merged.data = { ...(existing.data || {}), ...patch.data };
+      if (patch.data?.media !== undefined) merged.data.media = patch.data.media;
       db.prepare(`UPDATE provider_nodes SET type=?, name=?, prefix=?, api_type=?, base_url=?, data=?, enabled=?, updated_at=? WHERE id=?`)
         .run(merged.type, merged.name, merged.prefix, merged.apiType, merged.baseUrl,
              JSON.stringify(merged.data), merged.enabled ? 1 : 0, merged.updatedAt, id);
@@ -188,6 +195,9 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
   function rowToModel(r) {
     return {
       id: r.id, nodeId: r.node_id, model: r.model,
+      // Which endpoint may reach this model. `llm` for every row written before media
+      // existed, so chat discovery is bit-for-bit what it was.
+      kind: r.kind || CHAT_KIND,
       source: r.source, enabled: !!r.enabled, stale: !!r.stale,
       lastTestAt: r.last_test_at, lastTestOk: r.last_test_ok === null ? null : !!r.last_test_ok,
       lastTestTtftMs: r.last_test_ttft_ms, lastTestError: r.last_test_error,
@@ -198,17 +208,20 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
   const nodeModels = {
     _cache: createMapCache(),
     invalidateCache() { this._cache.clear(); },
-    /** All rows for a node, enabled first then alphabetical. */
-    list(nodeId) {
+    /** All rows for a node, stale first then alphabetical; optionally one kind.
+     *  The cache holds the node's whole list — a kind view is a filter over it, so
+     *  switching kinds never re-reads the database. */
+    list(nodeId, { kind } = {}) {
       if (!this._cache.get(nodeId)) {
         const rows = db.prepare(`SELECT * FROM node_models WHERE node_id = ? ORDER BY stale, model`).all(nodeId);
         this._cache.set(nodeId, rows.map(rowToModel));
       }
-      return this._cache.get(nodeId);
+      const all = this._cache.get(nodeId);
+      return kind === undefined ? all : all.filter((m) => m.kind === kind);
     },
     /** Enabled, non-stale model ids — what discovery exposes. */
-    enabledModels(nodeId) {
-      return nodeModels.list(nodeId).filter((m) => m.enabled && !m.stale).map((m) => m.model);
+    enabledModels(nodeId, { kind } = {}) {
+      return nodeModels.list(nodeId, { kind }).filter((m) => m.enabled && !m.stale).map((m) => m.model);
     },
     get(id) {
       const row = db.prepare(`SELECT * FROM node_models WHERE id = ?`).get(id);
@@ -218,15 +231,25 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
       const row = db.prepare(`SELECT * FROM node_models WHERE node_id = ? AND model = ?`).get(nodeId, model);
       return row ? rowToModel(row) : null;
     },
-    /** Add a model by hand. Re-adding an existing id re-enables it rather than failing. */
-    create({ nodeId, model, enabled = true, source = "manual" }) {
+    /**
+     * Add a model by hand. Re-adding an existing id re-enables it rather than failing.
+     *
+     * A model id is unique per node (`UNIQUE(node_id, model)`), so an id cannot be registered
+     * under two kinds at once. Adding an existing id as another kind therefore MOVES it —
+     * which is the caller's explicit request, and the returned row carries the kind it ended
+     * up as. Omitting `kind` keeps the existing row's kind: a bare re-add must not quietly
+     * demote an image model to a chat model.
+     */
+    create({ nodeId, model, kind, enabled = true, source = "manual" }) {
       const existing = nodeModels.byModel(nodeId, model);
-      if (existing) return nodeModels.update(existing.id, { enabled, stale: false });
+      if (existing) {
+        return nodeModels.update(existing.id, { enabled, stale: false, kind: kind ?? existing.kind });
+      }
       const now = new Date().toISOString();
       const id = uuid();
-      db.prepare(`INSERT INTO node_models (id, node_id, model, source, enabled, stale, created_at, updated_at)
-                  VALUES (?, ?, ?, ?, ?, 0, ?, ?)`)
-        .run(id, nodeId, model, source, enabled ? 1 : 0, now, now);
+      db.prepare(`INSERT INTO node_models (id, node_id, model, kind, source, enabled, stale, created_at, updated_at)
+                  VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`)
+        .run(id, nodeId, model, kind || CHAT_KIND, source, enabled ? 1 : 0, now, now);
       nodeModels.invalidateCache();
       return nodeModels.get(id);
     },
@@ -234,8 +257,8 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
       const existing = nodeModels.get(id);
       if (!existing) return null;
       const merged = { ...existing, ...patch };
-      db.prepare(`UPDATE node_models SET model=?, source=?, enabled=?, stale=?, updated_at=? WHERE id=?`)
-        .run(merged.model, merged.source, merged.enabled ? 1 : 0, merged.stale ? 1 : 0, new Date().toISOString(), id);
+      db.prepare(`UPDATE node_models SET model=?, kind=?, source=?, enabled=?, stale=?, updated_at=? WHERE id=?`)
+        .run(merged.model, merged.kind || CHAT_KIND, merged.source, merged.enabled ? 1 : 0, merged.stale ? 1 : 0, new Date().toISOString(), id);
       nodeModels.invalidateCache();
       return nodeModels.get(id);
     },
@@ -371,7 +394,11 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
   const combosCache = createCacheLoader(() =>
     db.prepare(`SELECT * FROM combos`).all().map((r) => ({
       id: r.id, name: r.name, models: safeJson(r.models) || [],
-      strategy: r.strategy, stickyLimit: r.sticky_limit, updatedAt: r.updated_at,
+      strategy: r.strategy, stickyLimit: r.sticky_limit,
+      // Which endpoint this combo serves. A chat combo cannot be resolved from, say,
+      // /v1/images/generations — mixing them would route an image request to a chat model.
+      kind: r.kind || CHAT_KIND,
+      updatedAt: r.updated_at,
     }))
   );
   const aliasCache = createCacheLoader(() => {
@@ -386,8 +413,8 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
     create(input) {
       const now = new Date().toISOString();
       const id = input.id || uuid();
-      db.prepare(`INSERT INTO combos (id, name, models, strategy, sticky_limit, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-        .run(id, input.name, JSON.stringify(input.models || []), input.strategy || "fallback", input.stickyLimit ?? 1, now, now);
+      db.prepare(`INSERT INTO combos (id, name, models, strategy, sticky_limit, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.name, JSON.stringify(input.models || []), input.strategy || "fallback", input.stickyLimit ?? 1, input.kind || CHAT_KIND, now, now);
       combosCache.invalidate();
       return combos.byName(input.name);
     },
@@ -395,8 +422,8 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
       const existing = combosCache.get().find((c) => c.id === id);
       if (!existing) return null;
       const merged = { ...existing, ...patch, updatedAt: new Date().toISOString() };
-      db.prepare(`UPDATE combos SET name=?, models=?, strategy=?, sticky_limit=?, updated_at=? WHERE id=?`)
-        .run(merged.name, JSON.stringify(merged.models), merged.strategy, merged.stickyLimit, merged.updatedAt, id);
+      db.prepare(`UPDATE combos SET name=?, models=?, strategy=?, sticky_limit=?, kind=?, updated_at=? WHERE id=?`)
+        .run(merged.name, JSON.stringify(merged.models), merged.strategy, merged.stickyLimit, merged.kind || CHAT_KIND, merged.updatedAt, id);
       combosCache.invalidate();
       return combos.byName(merged.name);
     },
@@ -679,10 +706,10 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
     // reference it immediately). One insert per completed request is cheap on WAL;
     // the old write-behind queue existed to batch N-per-request writes.
     record(ev) {
-      const info = db.prepare(`INSERT INTO usage_events (ts, node_id, connection_id, api_key_id, model, status, prompt_tokens, completion_tokens, cached_tokens, cost_usd, ttft_ms, duration_ms, error_code)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      const info = db.prepare(`INSERT INTO usage_events (ts, node_id, connection_id, api_key_id, model, status, kind, prompt_tokens, completion_tokens, cached_tokens, cost_usd, ttft_ms, duration_ms, error_code)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         ev.ts ?? Date.now(), ev.nodeId ?? null, ev.connectionId ?? null, ev.apiKeyId ?? null,
-        ev.model ?? null, ev.status ?? null,
+        ev.model ?? null, ev.status ?? null, ev.kind || CHAT_KIND,
         ev.promptTokens ?? null, ev.completionTokens ?? null, ev.cachedTokens ?? null,
         ev.costUsd ?? null, ev.ttftMs ?? null, ev.durationMs ?? null, ev.errorCode ?? null,
       );

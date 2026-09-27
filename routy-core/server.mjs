@@ -10,7 +10,6 @@ import { loadOrCreateSessionKey } from "./lib/auth.mjs";
 import { serveStatic } from "./lib/static.mjs";
 import { openDatabase } from "./db/driver.mjs";
 import { createRepos } from "./db/repos.mjs";
-import { listModels } from "./core/routing.mjs";
 import { createChatHandler } from "./core/handlers/chat.mjs";
 import { closePools } from "./core/executors/pool.mjs";
 import { seedBudget } from "./core/budget.mjs";
@@ -20,6 +19,7 @@ import { startUpdateChecks } from "./core/updates.mjs";
 import { VERSION } from "./lib/version.mjs";
 import { buildApiRoutes, dashboardAuthorized, PUBLIC_API_PATHS } from "./http/api.mjs";
 import { createMetricsRoute } from "./http/metrics.mjs";
+import { buildProxyRoutes } from "./http/v1.mjs";
 
 const cfg = resolveConfig();
 setLogLevel(cfg.logLevel);
@@ -151,18 +151,7 @@ const routes = [
   ...buildApiRoutes(repos, cfg, VERSION, { shutdown }),
   createMetricsRoute(repos, VERSION, () => ({ inflight, startedAt: globalThis.__bootedAt })),
   // ── proxy surface (/v1) — source format detected per request (endpoint + body) ──
-  {
-    method: "GET", pattern: /^\/v1\/models$/,
-    handler: async (req, res) => json(res, 200, listModels(repos)),
-  },
-  {
-    method: "POST", pattern: /^\/v1\/chat\/completions$/,
-    handler: chatHandler,
-  },
-  {
-    method: "POST", pattern: /^\/v1\/messages$/,
-    handler: chatHandler,
-  },
+  ...buildProxyRoutes(repos, { chatHandler }),
 ];
 
 const dispatch = createRouter(routes);

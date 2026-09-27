@@ -3,6 +3,7 @@
 // the bootstrap token (Bearer) — the SPA is same-origin by design (P2.1).
 import { json, readBody } from "../lib/router.mjs";
 import { COMBO_STRATEGIES, listModels, toolModelIds } from "../core/routing.mjs";
+import { CHAT_KIND, MEDIA_KIND_IDS, authStyleFor, expandKind, mediaConfigOf, mediaKindsOf, mediaUrlFor, validateMediaConfig } from "../core/media.mjs";
 import { budgetSpent } from "../core/budget.mjs";
 import { probeNode, probeKey, probeModel, mapLimit } from "../core/probe.mjs";
 import { clearLogs, log, recentLogs, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
@@ -175,6 +176,21 @@ function nodeView(repos, node, now = Date.now()) {
     models: models.map((m) => m.model),
     /** the node's config bag (pricing, pool tuning, retry overrides) */
     data: node.data || {},
+    /**
+     * Which non-chat kinds this node serves, and how. `mediaKinds` is what the dashboard's
+     * kind badges and filters read; `media` is the config the Media tab edits, with each
+     * kind's effective URL and auth style resolved so the UI never has to guess a default.
+     */
+    mediaKinds: mediaKindsOf(node),
+    media: (() => {
+      const cfg = mediaConfigOf(node);
+      return {
+        kinds: cfg.kinds,
+        urls: Object.fromEntries(cfg.kinds.map((k) => [k, mediaUrlFor(node, k)])),
+        auth: Object.fromEntries(cfg.kinds.map((k) => [k, authStyleFor(node, k)])),
+        noAuth: cfg.noAuth,
+      };
+    })(),
     keyMasked: maskKey(primary?.credentials?.apiKey),
     lastError: breaker?.lastError || undefined,
   };
@@ -276,6 +292,13 @@ function gatewayInfo(repos, cfg, version, req) {
   };
 }
 
+/** A combo's kind must be one routy serves. Absent means chat, which is every combo today. */
+function comboKindError(kind) {
+  if (kind === undefined || kind === null) return null;
+  if (kind === CHAT_KIND || MEDIA_KIND_IDS.includes(kind)) return null;
+  return `kind "${kind}" is not a kind (known: ${CHAT_KIND}, ${MEDIA_KIND_IDS.join(", ")})`;
+}
+
 // ── routes ───────────────────────────────────────────────────────────────────
 export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   const R = [];
@@ -289,6 +312,11 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const input = await readBody(req).then((b) => JSON.parse(b.toString("utf8")));
     for (const f of ["name", "baseUrl", "prefix"]) {
       if (!input[f] || typeof input[f] !== "string") return json(res, 400, { error: { message: "bad_request", detail: `missing ${f}` } });
+    }
+    if (input.data?.media !== undefined) {
+      const checked = validateMediaConfig(input.data.media);
+      if (!checked.ok) return json(res, 400, { error: { message: "bad_request", detail: checked.detail } });
+      input.data = { ...input.data, media: checked.value };
     }
     if (repos.nodes.byPrefix(input.prefix.trim())) {
       return json(res, 409, { error: { message: "conflict", detail: `prefix "${input.prefix.trim()}" is already in use` } });
@@ -311,6 +339,13 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       if (input[f] !== undefined) patch[f] = input[f];
     }
     if (input.data !== undefined) patch.data = input.data;
+    // A media config is validated before it is stored: a typo'd kind or a non-http URL would
+    // otherwise sit on the node looking applied while the gateway ignored it. `null` clears it.
+    if (input.data?.media !== undefined) {
+      const checked = validateMediaConfig(input.data.media);
+      if (!checked.ok) return json(res, 400, { error: { message: "bad_request", detail: checked.detail } });
+      patch.data = { ...input.data, media: checked.value };
+    }
     const node = repos.nodes.update(p.id, patch);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
     if (typeof input.apiKey === "string" && input.apiKey.length > 0) {
@@ -334,13 +369,35 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   // that it listens on the network. /api is authenticated by the dashboard session
   // instead, so this is the same data reached through the surface that can authorise it.
   route("GET", /^\/api\/models$/, (req, res) => json(res, 200, listModels(repos)));
+  /**
+   * The same list for one kind, for the dashboard's Media screen and for clients that discover
+   * per kind (`/v1/models/<kind>` is the traffic-side twin). `web` covers both web kinds, and
+   * every entry names its own kind, so a caller can tell them apart from the response alone.
+   */
+  route("GET", /^\/api\/models\/(?<kind>[A-Za-z]+)$/, (req, res, p) => {
+    const expanded = expandKind(p.kind);
+    if (expanded.length === 0) {
+      return json(res, 400, {
+        error: { message: "bad_request", detail: `kind "${p.kind}" is not a kind (known: ${[...MEDIA_KIND_IDS, "web"].join(", ")})` },
+      });
+    }
+    if (expanded.length === 1) return json(res, 200, listModels(repos, { kind: expanded[0] }));
+    const data = expanded.flatMap((kind) => listModels(repos, { kind }).data);
+    return json(res, 200, { object: "list", data });
+  });
   // ── models (P6) ───────────────────────────────────────────────────────────
   // The list is discovery-only: it feeds /v1/models and the UI. Routing still
   // passes any <prefix>/<model> through, so nothing here can break a client.
-  route("GET", /^\/api\/nodes\/(?<id>[^/]+)\/models$/, (req, res, p) => {
+  route("GET", /^\/api\/nodes\/(?<id>[^/]+)\/models$/, (req, res, p, url) => {
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
-    const models = repos.nodeModels.list(node.id);
+    const asked = url?.searchParams?.get("kind");
+    if (asked && asked !== CHAT_KIND && !MEDIA_KIND_IDS.includes(asked)) {
+      return json(res, 400, { error: { message: "bad_request", detail: `kind "${asked}" is not a kind` } });
+    }
+    // Without ?kind this stays the whole list — the Models tab shows every kind at once and
+    // marks each row, rather than hiding rows the user just added.
+    const models = repos.nodeModels.list(node.id, asked ? { kind: asked } : {});
     json(res, 200, { node: node.prefix, models, count: models.length });
   });
 
@@ -350,7 +407,18 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const input = JSON.parse((await readBody(req)).toString("utf8"));
     const model = typeof input?.model === "string" ? input.model.trim() : "";
     if (!model) return json(res, 400, { error: { message: "bad_request", detail: "model required" } });
-    json(res, 201, repos.nodeModels.create({ nodeId: node.id, model, enabled: input.enabled !== false, source: "manual" }));
+    // A model is only reachable from the endpoint matching its kind, so adding one as a media
+    // kind on a node that does not declare that kind would create an unreachable row.
+    const kind = input.kind === undefined ? CHAT_KIND : input.kind;
+    if (kind !== CHAT_KIND && !MEDIA_KIND_IDS.includes(kind)) {
+      return json(res, 400, { error: { message: "bad_request", detail: `kind "${kind}" is not a kind` } });
+    }
+    if (kind !== CHAT_KIND && !mediaKindsOf(node).includes(kind)) {
+      return json(res, 400, {
+        error: { message: "bad_request", detail: `this node does not declare the "${kind}" kind — declare it on the node first` },
+      });
+    }
+    json(res, 201, repos.nodeModels.create({ nodeId: node.id, model, kind, enabled: input.enabled !== false, source: "manual" }));
   });
 
   route("PUT", /^\/api\/nodes\/(?<id>[^/]+)\/models\/(?<modelId>[^/]+)$/, async (req, res, p) => {
@@ -362,6 +430,17 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const next = {};
     if (typeof patch.model === "string" && patch.model.trim()) next.model = patch.model.trim();
     if (patch.enabled !== undefined) next.enabled = !!patch.enabled;
+    if (patch.kind !== undefined) {
+      if (patch.kind !== CHAT_KIND && !MEDIA_KIND_IDS.includes(patch.kind)) {
+        return json(res, 400, { error: { message: "bad_request", detail: `kind "${patch.kind}" is not a kind` } });
+      }
+      if (patch.kind !== CHAT_KIND && !mediaKindsOf(node).includes(patch.kind)) {
+        return json(res, 400, {
+          error: { message: "bad_request", detail: `this node does not declare the "${patch.kind}" kind` },
+        });
+      }
+      next.kind = patch.kind;
+    }
     json(res, 200, repos.nodeModels.update(p.modelId, next));
   });
 
@@ -727,6 +806,10 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (input.strategy !== undefined && !COMBO_STRATEGIES.includes(input.strategy)) {
       return json(res, 400, { error: { message: "bad_request", detail: `strategy must be one of ${COMBO_STRATEGIES.join(", ")}` } });
     }
+    // A combo serves exactly one kind: its members are resolved for that kind only, so a
+    // chat combo can never be reached from an image request and vice versa.
+    const kindError = comboKindError(input.kind);
+    if (kindError) return json(res, 400, { error: { message: "bad_request", detail: kindError } });
     json(res, 201, repos.combos.create(input));
   });
   route("PUT", /^\/api\/combos\/(?<id>[^/]+)$/, async (req, res, p) => {
@@ -734,6 +817,8 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (patch.strategy !== undefined && !COMBO_STRATEGIES.includes(patch.strategy)) {
       return json(res, 400, { error: { message: "bad_request", detail: `strategy must be one of ${COMBO_STRATEGIES.join(", ")}` } });
     }
+    const kindError = comboKindError(patch.kind);
+    if (kindError) return json(res, 400, { error: { message: "bad_request", detail: kindError } });
     json(res, 200, repos.combos.update(p.id, patch));
   });
   route("DELETE", /^\/api\/combos\/(?<id>[^/]+)$/, (req, res, p) => noContent(res, repos.combos.delete(p.id)));

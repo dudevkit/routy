@@ -244,4 +244,29 @@ export const MIGRATIONS = [
       }
     },
   },
+  {
+    // v6 — a kind for models, usage and combos (docs/media-providers.md §0/§8 M0).
+    //
+    // routy serves six non-chat kinds (embedding, image, tts, stt, webSearch, webFetch) on
+    // top of chat, and each has its own endpoint. "Kind" is what keeps the two in step: a
+    // row's kind says which endpoint may reach it, so a model added for image generation
+    // cannot appear in the chat list, and a combo cannot silently mix the two.
+    //
+    // `llm` is the default everywhere and every existing row gets it, so nothing that works
+    // today changes meaning: a model, a usage event and a combo written before this migration
+    // are chat, which is exactly what they were.
+    //
+    // Nested config lives in `provider_nodes.data.media` rather than a table: it is one small
+    // object per node describing kinds and their URLs, and the node's `data` bag already is
+    // where per-node settings live (pricing, pool tuning, retry overrides).
+    version: 6,
+    up: `
+      ALTER TABLE node_models ADD COLUMN kind TEXT NOT NULL DEFAULT 'llm';
+      CREATE INDEX idx_node_models_kind ON node_models(node_id, kind, enabled);
+
+      ALTER TABLE usage_events ADD COLUMN kind TEXT NOT NULL DEFAULT 'llm';
+
+      ALTER TABLE combos ADD COLUMN kind TEXT NOT NULL DEFAULT 'llm';
+    `,
+  },
 ];
