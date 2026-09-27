@@ -233,7 +233,22 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       let lastKeyError = null;
       const cooledHere = []; // cooldowns applied during this node's attempt, for rollback
 
-      for (const connection of keys) {
+      // One-shot optional-param retry, keyed per node+model (see the client-verdict branch below):
+      // some providers reject a request ONLY because of an optional reasoning param and answer
+      // with an opaque body that names neither the param nor a machine-readable reason — b.ai's
+      // MaaS front ("rejected by an internal MaaS component", code 400001) does exactly this for
+      // reasoning_effort values that other accounts of the same provider accept, so no static
+      // STRIP_RULES entry can be right for everyone. When such a 400 arrives while the request
+      // still carries optional reasoning params, the same connection is retried ONCE without them
+      // (re-queued below), and the log names what was dropped.
+      const OPTIONAL_REASONING_PARAMS = ["reasoning_effort", "reasoning", "thinking"];
+      let paramRetryUsed = false;
+      const keyQueue = keys.map((c) => ({ connection: c, body: null })); // body=null -> build from request
+
+      // Index loop over a growable queue: a requeued param-retry is appended and will be
+      // reached after the current pass's remaining keys.
+      for (let qi = 0; qi < keyQueue.length; qi++) {
+        const { connection, body: retryBody } = keyQueue[qi];
         // Which proxy this attempt egresses through: the key's own pool when it has one,
         // else the provider's rotation. Resolved per attempt so a rotation to another
         // key can also rotate its proxy.
@@ -241,7 +256,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         const targetFormat = targetFormatForNode(r.node);
         const translate = needsTranslation(sourceFormat, targetFormat);
 
-        let outbound = { ...body, model: r.model };
+        let outbound = { ...(retryBody ?? body), model: r.model };
         let toolNameMap = null;
         let customToolNames = null;
         if (translate) {
@@ -333,6 +348,28 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
               combo: combo?.name ?? null,
               detail: String(result.message || "").slice(0, 160),
             });
+            // Opaque 400 while optional reasoning params are still aboard: the static param
+            // table could not have predicted this provider's opinion (it is account-scoped, see
+            // the b.ai note in paramSupport.js), so learn it live — one retry without them, on
+            // this same connection. If the retry also 400s, fall through to the normal
+            // next-route behavior; nothing is charged to health either way.
+            const detailLower = String(result.message || "").toLowerCase();
+            const strippable = OPTIONAL_REASONING_PARAMS.filter((k) => outbound[k] !== undefined);
+            // Only OPAQUE rejections qualify: when the body names the rejected param
+            // ("MaaS reject: reasoning_effort medium"), the caller can fix it — retrying would
+            // mask a real diagnosis behind a silent rewrite.
+            const opaque = strippable.every((k) => !detailLower.includes(k));
+            if (!paramRetryUsed && opaque && strippable.length > 0 && result.status === 400) {
+              paramRetryUsed = true;
+              const strippedBody = { ...outbound };
+              const dropped = {};
+              for (const k of strippable) { dropped[k] = strippedBody[k]; delete strippedBody[k]; }
+              log.warn("CHAT", `node ${r.node.prefix} answered 400 with an opaque body — retrying this connection once without optional reasoning params`, {
+                dropped, detail: String(result.message || "").slice(0, 200),
+              });
+              keyQueue.push({ connection, body: strippedBody }); // requeued: reached after the remaining keys
+              continue; // next qi — the requeued attempt runs after the queue's remaining keys
+            }
             nodeDied = true;
             break;
           }
