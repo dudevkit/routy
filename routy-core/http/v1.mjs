@@ -86,6 +86,9 @@ export function buildProxyRoutes(repos, { chatHandler, handlers = {} }) {
     ...(handlers.embeddings
       ? [{ method: "POST", pattern: /^\/v1\/embeddings$/, handler: handlers.embeddings }]
       : []),
+    ...(handlers.images
+      ? [{ method: "POST", pattern: /^\/v1\/images\/generations$/, handler: handlers.images }]
+      : []),
 
     // Chat traffic. Both paths land on the same handler (source format is detected per
     // request from the endpoint and the body).

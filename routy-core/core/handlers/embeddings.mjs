@@ -14,9 +14,8 @@ import { readBody, json } from "../../lib/router.mjs";
 import { extractBearer } from "../../lib/auth.mjs";
 import { log as rootLog } from "../../lib/log.mjs";
 import { resolveRoute } from "../routing.mjs";
-import { pickConnections, recent429For, recordFailure, recordSuccess, recordMediaUsage, saveMediaDetail } from "../dispatch.mjs";
-import { classifyConnectionError, recordConnectionFailure, recordConnectionSuccess, earliestRecovery } from "../key-health.mjs";
-import { UPSTREAM_429_MEMO_MS } from "../limits.mjs";
+import { pickConnections, recent429For, recordFailure, recordSuccess, recordMediaUsage, saveMediaDetail, settleFailure } from "../dispatch.mjs";
+import { recordConnectionSuccess, earliestRecovery } from "../key-health.mjs";
 import { resolveNodeProxy } from "../proxy.mjs";
 import { budgetState } from "../budget.mjs";
 import { isMetered } from "../pricing.mjs";
@@ -44,7 +43,7 @@ export function createEmbeddingsHandler(repos, { timeoutMs = EMBEDDINGS_TIMEOUT_
   const log = rootLog;
   // A node+model we have already proven provider-wide saturated stays saturated for the window
   // (RAM, per handler): without this every request waits out a 429 round trip to learn what one
-  // 429 already said. Same window as chat — see UPSTREAM_429_MEMO_MS.
+  // 429 already said. The window itself is shared with chat — UPSTREAM_429_MEMO_MS in limits.
   const global429Memo = new Map();
 
   return async function handleEmbeddings(req, res) {
@@ -177,28 +176,26 @@ export function createEmbeddingsHandler(repos, { timeoutMs = EMBEDDINGS_TIMEOUT_
       });
 
       if (!result.ok) {
-        if (result.errorCode === "client_aborted") {
+        // Settled once, by the shared rule — see dispatch.mjs `settleFailure`.
+        lastError = result;
+        const settled = settleFailure(repos, {
+          node, connection, result, settings,
+          recent429: recent429For(recent429, node.id), cooledHere, tag: "EMBED", log,
+        });
+
+        if (settled.action === "aborted") {
           return json(res, 499, { error: { message: "client_aborted", detail: "client aborted the request" } });
         }
-
-        // Our own egress failing says nothing about the provider or the key — the same rule
-        // chat applies, so three dead proxies cannot open a healthy node's breaker.
-        if (result.errorCode === "proxy_failed" || result.errorCode === "proxy_exhausted") {
-          lastError = result;
-          log.warn("EMBED", `node ${node.prefix}: ${result.errorCode} — ${result.message}`);
+        if (settled.action === "proxy") {
           // A provider-level binding covers every key of this node, so rotating keys against it
           // only multiplies the failure; a key-level pool's next key may reach a working exit.
-          if (result.proxySource === "provider") break;
+          if (settled.providerLevel) break;
           continue;
         }
-
-        // A request-shaped 4xx is the caller's, not the node's: no health charge, and since
-        // providers disagree about what they accept, the next key may still serve it.
-        if (classifyConnectionError(result, { connection, recent429: null }).verdict === "client") {
-          lastError = result;
-          log.warn("EMBED", `node ${node.prefix} rejected the request (${result.status}) — no health recorded`, {
-            detail: String(result.message || "").slice(0, 200),
-          });
+        if (settled.action === "client") {
+          // Reported to the caller, charged to nobody — and recorded, so a rejected request is
+          // still visible in the log as something that happened rather than something that
+          // did not.
           const rejectedId = recordMediaUsage(repos, log, {
             route: { node }, connection, clientModel: model, kind: KIND, status: "rejected",
             durationMs: Date.now() - t0, apiKeyId, pool: proxy?.poolName ?? null, attempts,
@@ -206,45 +203,18 @@ export function createEmbeddingsHandler(repos, { timeoutMs = EMBEDDINGS_TIMEOUT_
           saveMediaDetail(repos, { usageEventId: rejectedId, request: outbound });
           return json(res, result.status || 400, { error: { message: "upstream_rejected", detail: String(result.message || "provider rejected the request") } });
         }
-
-        // Here the failure is classified and charged exactly as chat charges it — the same
-        // vocabulary (client / cooldown / strike / global / node), so a 500 on an embeddings
-        // request and a 500 on a chat request mean the same thing for the node and the key.
-        const verdict = recordConnectionFailure(repos, connection, result, settings, Date.now(), recent429For(recent429, node.id));
-        if (verdict.verdict === "global") {
-          // Provider-wide saturation: no key is at fault, so any cooldown this request already
-          // applied is based on evidence that has just been overruled — undo it.
-          for (const id of cooledHere) recordConnectionSuccess(repos, id);
-          const until = Date.now() + (result.retryAfterMs ?? UPSTREAM_429_MEMO_MS);
-          global429Memo.set(memoKey, until);
-          log.warn("EMBED", `node ${node.prefix}: upstream-wide rate limit — not a key problem, failing through`, {
-            keys: keys.length, errorCode: result.errorCode, rolledBack: cooledHere.length,
-          });
+        if (settled.action === "global") {
+          global429Memo.set(memoKey, settled.until);
           return json(res, 429, {
             error: {
               message: "upstream_rate_limited",
-              detail: `provider ${node.prefix} is rate-limiting this model for everyone${verdict.others ? ` (429 across ${verdict.others} keys)` : ""}`,
-              retryAfterMs: Math.max(0, until - Date.now()),
+              detail: `provider ${node.prefix} is rate-limiting this model for everyone${settled.others ? ` (429 across ${settled.others} keys)` : ""} — not a key problem`,
+              retryAfterMs: settled.retryAfterMs,
             },
           });
         }
-        if (verdict.verdict === "node") {
-          // The node's fault, not the key's: rotating keys would multiply the load by the key
-          // count against an upstream that is already failing, so the loop stops here.
-          lastError = result;
-          recordFailure(repos, node, result);
-          log.warn("EMBED", `node ${node.prefix} failed: ${result.errorCode} ${result.status ?? ""}`);
-          break;
-        }
-
-        // cooldown / disable: the key took the hit and the node is not implicated — next key.
-        lastError = result;
-        // Only a cooldown is rollback-able; a disable is a strike the key earned.
-        if (verdict.verdict === "cooldown") cooledHere.push(connection.id);
-        log.warn("EMBED", `node ${node.prefix}: key ${connection.name} — ${verdict.verdict} (${result.errorCode})`, {
-          reason: verdict.reason, status: result.status ?? null,
-        });
-        continue; // rotate: the next key may be a different account
+        if (settled.action === "node") break; // the node's fault: rotating keys multiplies load
+        continue;                             // the key's problem: the next key may serve it
       }
 
       const text = await result.response.text().catch(() => "");

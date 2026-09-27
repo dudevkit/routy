@@ -12,6 +12,7 @@ import { openDatabase } from "./db/driver.mjs";
 import { createRepos } from "./db/repos.mjs";
 import { createChatHandler } from "./core/handlers/chat.mjs";
 import { createEmbeddingsHandler } from "./core/handlers/embeddings.mjs";
+import { createImagesHandler } from "./core/handlers/images.mjs";
 import { closePools } from "./core/executors/pool.mjs";
 import { seedBudget } from "./core/budget.mjs";
 import { seedTtft } from "./core/latency.mjs";
@@ -78,6 +79,7 @@ if (persistedLogLevel && ["debug", "info", "warn", "error"].includes(persistedLo
 
 const chatHandler = createChatHandler(repos, { streamIdleTimeoutMs: cfg.streamIdleTimeoutMs });
 const embeddingsHandler = createEmbeddingsHandler(repos);
+const imagesHandler = createImagesHandler(repos);
 
 // ── invalidate stored probe verdicts when probe semantics changed ───────────
 // A result produced by an older probe describes a probe that no longer exists,
@@ -153,7 +155,7 @@ const routes = [
   ...buildApiRoutes(repos, cfg, VERSION, { shutdown }),
   createMetricsRoute(repos, VERSION, () => ({ inflight, startedAt: globalThis.__bootedAt })),
   // ── proxy surface (/v1) — source format detected per request (endpoint + body) ──
-  ...buildProxyRoutes(repos, { chatHandler, handlers: { embeddings: embeddingsHandler } }),
+  ...buildProxyRoutes(repos, { chatHandler, handlers: { embeddings: embeddingsHandler, images: imagesHandler } }),
 ];
 
 const dispatch = createRouter(routes);

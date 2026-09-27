@@ -6,8 +6,8 @@
 // than grow a second, subtly different copy of them. (The copy is always where the bug is: a
 // rotation that skips a cooling key in one handler and not the other is invisible until a
 // provider is failing.)
-import { connectionState, isConnectionAvailable } from "./key-health.mjs";
-import { FAILURE_THRESHOLD, OPEN_MS, MAX_OPEN_MS } from "./limits.mjs";
+import { classifyConnectionError, recordConnectionFailure, connectionState, isConnectionAvailable } from "./key-health.mjs";
+import { FAILURE_THRESHOLD, OPEN_MS, MAX_OPEN_MS, UPSTREAM_429_MEMO_MS } from "./limits.mjs";
 import { maskKey } from "../lib/mask.mjs";
 import { costOf } from "./pricing.mjs";
 import { addSpend } from "./budget.mjs";
@@ -110,6 +110,68 @@ export function recordMediaUsage(repos, log, { route, connection, clientModel, k
     costUsd: Number.isFinite(costUsd) ? Number(costUsd.toFixed(6)) : null,
   });
   return event.id;
+}
+
+/**
+ * What a failed upstream attempt is allowed to cost, decided once for every kind.
+ *
+ * Chat, embeddings, images and the rest must agree on this: a 400 is the caller's, a 429 that
+ * names the provider is nobody's, a 5xx is the node's and stops key rotation, a per-key 429
+ * cools that key and moves on. Returning a decision instead of branching inside the caller
+ * keeps one definition of the rule while leaving each handler free to shape its own response.
+ *
+ * @returns {{action: "aborted"}} |
+ *           {action: "proxy", providerLevel: boolean} |
+ *           {action: "client"} |                                     // no health charged
+ *           {action: "global", retryAfterMs: number, until: number} | // 429 for everyone
+ *           {action: "node"} |                                       // breaker + stop keys
+ *           {action: "key", verdict: string, reason?: string}
+ */
+export function settleFailure(repos, { node, connection, result, settings = {}, recent429 = null, cooledHere = [], tag = "GATEWAY", log = null }) {
+  if (result.errorCode === "client_aborted") return { action: "aborted" };
+
+  // Our own egress failing says nothing about the provider or the key: three dead proxies
+  // must not open a healthy node's breaker, nor cool its keys.
+  if (result.errorCode === "proxy_failed" || result.errorCode === "proxy_exhausted") {
+    log?.warn?.(tag, `node ${node.prefix}: ${result.errorCode} — ${result.message}`);
+    return { action: "proxy", providerLevel: result.proxySource === "provider" };
+  }
+
+  // A request-shaped 4xx (400/413/422) is the caller's mistake. Charging it to the node is
+  // what turns one unsupported field into an outage — three such requests used to open a
+  // provider's breaker and 503 every later request on it.
+  if (classifyConnectionError(result, { connection, recent429: null }).verdict === "client") {
+    log?.warn?.(tag, `node ${node.prefix} rejected the request (${result.status}) — no health recorded`, {
+      detail: String(result.message || "").slice(0, 200),
+    });
+    return { action: "client" };
+  }
+
+  const verdict = recordConnectionFailure(repos, connection, result, settings, Date.now(), recent429);
+
+  if (verdict.verdict === "global") {
+    // Provider-wide saturation: no key is at fault, so a cooldown this request already
+    // applied was based on evidence that has just been overruled — put it back.
+    for (const id of cooledHere) recordSuccess(repos, id);
+    const until = Date.now() + (result.retryAfterMs ?? UPSTREAM_429_MEMO_MS);
+    log?.warn?.(tag, `node ${node.prefix}: upstream-wide rate limit — not a key problem, failing through`, {
+      errorCode: result.errorCode, rolledBack: cooledHere.length,
+    });
+    return { action: "global", retryAfterMs: Math.max(0, until - Date.now()), until, others: verdict.others ?? 0 };
+  }
+
+  if (verdict.verdict === "node") {
+    recordFailure(repos, node, result);
+    log?.warn?.(tag, `node ${node.prefix} failed: ${result.errorCode} ${result.status ?? ""}`);
+    return { action: "node" };
+  }
+
+  // Only a cooldown is rollback-able; a disable is a strike the key earned.
+  if (verdict.verdict === "cooldown") cooledHere.push(connection.id);
+  log?.warn?.(tag, `node ${node.prefix}: key ${connection.name} — ${verdict.verdict} (${result.errorCode})`, {
+    reason: verdict.reason, status: result.status ?? null,
+  });
+  return { action: "key", verdict: verdict.verdict, reason: verdict.reason };
 }
 
 /** The console tag for a kind: `IMAGE`, `TTS`, … chat logs its own lines under `REQ`. */
