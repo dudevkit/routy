@@ -170,4 +170,41 @@ describe("one-shot optional-param retry on an opaque 400", () => {
     expect(r2.status).toBe(200); // per-request one-shot, not per-node lifetime
     expect(stubState.bodies).toHaveLength(4);
   });
+
+  // A retry must send a request the caller COULD have sent. On a route that needs translation
+  // the body is rebuilt from the source, so dropping the param from the translated body drops it
+  // from nothing: the second attempt re-derives the same provider-native thinking field and is
+  // byte-identical to the first — a wasted retry that the log reports as a successful drop.
+  it("drops the params on a translated route too, where the body is not sent as received", async () => {
+    node = repos.nodes.create({ name: "claude", prefix: "anthropic", apiType: "anthropic", baseUrl: `http://127.0.0.1:${stubPort}/v1` });
+    repos.connections.create({ nodeId: node.id, name: "claude-key", credentials: { apiKey: "sk-claude" } });
+    stubState.responses = [
+      { status: 400, message: "The request was rejected by an internal MaaS component." },
+    ];
+
+    const lines = [];
+    const stop = subscribeLog((text) => lines.push(JSON.parse(text)));
+    let r;
+    try {
+      r = await chat("anthropic/claude-3-5-sonnet", { reasoning_effort: "medium", top_p: 0.9 });
+    } finally {
+      stop();
+    }
+
+    expect(r.status).toBe(200);
+    expect(stubState.bodies).toHaveLength(2);
+    // The upstream speaks Claude, so the retry must not carry the intent in ANY of the shapes
+    // translation can produce for it — the first attempt's was `thinking: {budget_tokens: 8192}`.
+    for (const key of ["reasoning_effort", "reasoning", "thinking", "budget_tokens", "thinking_budget"]) {
+      expect(stubState.bodies[1]).not.toHaveProperty(key);
+    }
+    expect(JSON.stringify(stubState.bodies[1])).not.toBe(JSON.stringify(stubState.bodies[0]));
+    // …and the rest of the request is what translation would have produced without the param
+    // (top_p is not the translator's to keep for a Claude target, so it is not asserted here).
+    expect(stubState.bodies[1].messages).toEqual(stubState.bodies[0].messages);
+    expect(stubState.bodies[1].max_tokens).toBe(stubState.bodies[0].max_tokens);
+
+    const line = lines.find((l) => l.tag === "CHAT" && l.msg.includes("retrying this connection once"));
+    expect(line.data.dropped).toEqual({ reasoning_effort: "medium" }); // named as the caller sent it
+  });
 });

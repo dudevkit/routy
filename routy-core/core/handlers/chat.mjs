@@ -233,7 +233,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       let lastKeyError = null;
       const cooledHere = []; // cooldowns applied during this node's attempt, for rollback
 
-      // One-shot optional-param retry, keyed per node+model (see the client-verdict branch below):
+      // One-shot optional-param retry, per route (see the client-verdict branch below):
       // some providers reject a request ONLY because of an optional reasoning param and answer
       // with an opaque body that names neither the param nor a machine-readable reason — b.ai's
       // MaaS front ("rejected by an internal MaaS component", code 400001) does exactly this for
@@ -241,6 +241,10 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       // STRIP_RULES entry can be right for everyone. When such a 400 arrives while the request
       // still carries optional reasoning params, the same connection is retried ONCE without them
       // (re-queued below), and the log names what was dropped.
+      //
+      // Per route, not per request: the opinion being probed belongs to an upstream ACCOUNT, so a
+      // second member is entitled to its own probe (and its own answer) rather than inheriting the
+      // first member's. Keys of one node are the same connection family, so one probe covers them.
       const OPTIONAL_REASONING_PARAMS = ["reasoning_effort", "reasoning", "thinking"];
       let paramRetryUsed = false;
       const keyQueue = keys.map((c) => ({ connection: c, body: null })); // body=null -> build from request
@@ -256,7 +260,14 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         const targetFormat = targetFormatForNode(r.node);
         const translate = needsTranslation(sourceFormat, targetFormat);
 
-        let outbound = { ...(retryBody ?? body), model: r.model };
+        // `sourceBody` is what the caller sent — and on a retry, that same body with the optional
+        // reasoning params removed. Everything downstream builds from it, so a retry is a request
+        // the caller could have sent and translation treats it like any other. Dropping the param
+        // from the TRANSLATED body instead would drop it from nothing: translation re-derives the
+        // provider-native thinking field from the source, so the retry would resend the exact
+        // request that just failed while the log reported a successful drop.
+        const sourceBody = retryBody ?? body;
+        let outbound = { ...sourceBody, model: r.model };
         let toolNameMap = null;
         let customToolNames = null;
         if (translate) {
@@ -266,7 +277,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             break;
           }
           try {
-            outbound = translateRequest(sourceFormat, targetFormat, r.model, structuredClone(body), stream, {}, null, null, [], null, null);
+            outbound = translateRequest(sourceFormat, targetFormat, r.model, structuredClone(sourceBody), stream, {}, null, null, [], null, null);
             if (!outbound) throw new Error("translateRequest returned falsy");
             toolNameMap = outbound._toolNameMap; delete outbound._toolNameMap;
             customToolNames = outbound._customToolNames; delete outbound._customToolNames;
@@ -354,20 +365,22 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             // this same connection. If the retry also 400s, fall through to the normal
             // next-route behavior; nothing is charged to health either way.
             const detailLower = String(result.message || "").toLowerCase();
-            const strippable = OPTIONAL_REASONING_PARAMS.filter((k) => outbound[k] !== undefined);
+            // Named as the caller sent them: the retry body is source-shaped, so the params it
+            // drops are the caller's own fields, whatever shape the target format needed them in.
+            const strippable = OPTIONAL_REASONING_PARAMS.filter((k) => sourceBody[k] !== undefined);
             // Only OPAQUE rejections qualify: when the body names the rejected param
             // ("MaaS reject: reasoning_effort medium"), the caller can fix it — retrying would
             // mask a real diagnosis behind a silent rewrite.
             const opaque = strippable.every((k) => !detailLower.includes(k));
             if (!paramRetryUsed && opaque && strippable.length > 0 && result.status === 400) {
               paramRetryUsed = true;
-              const strippedBody = { ...outbound };
+              const strippedSource = { ...sourceBody };
               const dropped = {};
-              for (const k of strippable) { dropped[k] = strippedBody[k]; delete strippedBody[k]; }
+              for (const k of strippable) { dropped[k] = strippedSource[k]; delete strippedSource[k]; }
               log.warn("CHAT", `node ${r.node.prefix} answered 400 with an opaque body — retrying this connection once without optional reasoning params`, {
                 dropped, detail: String(result.message || "").slice(0, 200),
               });
-              keyQueue.push({ connection, body: strippedBody }); // requeued: reached after the remaining keys
+              keyQueue.push({ connection, body: strippedSource }); // requeued: reached after the remaining keys
               continue; // next qi — the requeued attempt runs after the queue's remaining keys
             }
             nodeDied = true;
