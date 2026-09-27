@@ -88,8 +88,8 @@ export class DefaultExecutor {
     return `${base}/chat/completions`;
   }
 
-  buildHeaders(auth = null) {
-    const headers = { "content-type": "application/json" };
+  buildHeaders(auth = null, contentType = null) {
+    const headers = { "content-type": contentType ?? "application/json" };
     // Media calls arrive with their own credential style (bearer/token/x-api-key/key/none,
     // from `node.data.media.auth`) — see core/media.mjs `authHeadersFor`. `none` legitimately
     // yields no header, so this cannot be expressed as "override the default": the default
@@ -124,11 +124,13 @@ export class DefaultExecutor {
    * @returns {Promise<{ok:true, response: Response, url: string}> |
    *           {ok:false, status: number, errorCode: string, retryAfterMs: number|null, message: string}}
    */
-  async execute({ model, body, stream, signal, log = null, url = null, auth = null }) {
+  async execute({ model, body, stream, signal, log = null, url = null, auth = null, bodyText = undefined, contentType = null }) {
     const target = url ?? this.buildUrl();
     const plan = this.proxy;
-    // stringify ONCE per logical request (upstream re-stringified per retry attempt)
-    const bodyStr = JSON.stringify({ ...body, model, stream });
+    // stringify ONCE per logical request (upstream re-stringified per retry attempt).
+    // `bodyText` bypasses serialization entirely: a multipart body is already the wire format,
+    // and re-encoding it would change the boundary the provider is parsing.
+    const bodyStr = bodyText !== undefined ? bodyText : JSON.stringify({ ...body, model, stream });
 
     // A bound proxy that cannot serve fails the request rather than quietly going direct: a
     // binding is a routing decision, and silently dropping it is the one outcome a proxy
@@ -141,7 +143,7 @@ export class DefaultExecutor {
 
     for (let i = 0; i < exits.length && i < PROXY_MAX_ATTEMPTS; i++) {
       const exit = exits[i];
-      const result = await this.#attempt({ url: target, exit, bodyStr, model, stream, signal, log, auth });
+      const result = await this.#attempt({ url: target, exit, bodyStr, model, stream, signal, log, auth, contentType });
       if (result.ok) {
         plan?.onSucceeded?.(exit);
         return result;
@@ -169,7 +171,7 @@ export class DefaultExecutor {
     if (!plan.directAllowed) return proxyFailed(plan, failures);
 
     log?.warn?.("PROXY", `all ${failures.length} exit(s) of "${plan.target}" failed — retrying directly (strict is off)`, { node: this.node.prefix });
-    return this.#attempt({ url: target, exit: null, bodyStr, model, stream, signal, log, auth });
+    return this.#attempt({ url: target, exit: null, bodyStr, model, stream, signal, log, auth, contentType });
   }
 
   /**
@@ -177,7 +179,7 @@ export class DefaultExecutor {
    * `rotate` on the result means "this failure was the exit's, try another" — it is only
    * ever set when an exit is in use, so a direct connection behaves exactly as before.
    */
-  async #attempt({ url, exit, bodyStr, model, stream, signal, log, auth = null }) {
+  async #attempt({ url, exit, bodyStr, model, stream, signal, log, auth = null, contentType = null }) {
     const perUrl = {};
     for (let attemptPhase = 0; ; attemptPhase++) {
       const controller = new AbortController();
@@ -194,7 +196,7 @@ export class DefaultExecutor {
       try {
         const response = await undiciFetch(url, {
           method: "POST",
-          headers: this.buildHeaders(auth),
+          headers: this.buildHeaders(auth, contentType),
           body: bodyStr,
           signal: merged,
           dispatcher: this.#dispatcher(exit),

@@ -100,6 +100,28 @@ export function resolveRoute(repos, modelStr, { depth = 0, kind = CHAT_KIND } = 
     }
   }
 
+  // 5. bare "<model>" for kinds whose nodes register models (embedding, image, stt).
+  //    routy's own ids are "<prefix>/<model>", but a client that hands us the provider's
+  //    own name — `whisper-1`, `text-embedding-3-small` — should reach it when exactly one
+  //    node serving that kind carries that model. One match is a fact; two is a question only
+  //    the caller can answer (which provider did you mean?), so an ambiguous id stays
+  //    unresolvable rather than being silently answered by whichever node came first.
+  if (slash === -1 && isMediaKind(kind) && MEDIA_KINDS[kind].modelList === "node") {
+    const serving = repos.nodes.list({ enabled: true }).filter(
+      (n) => servesKind(n, kind) && repos.nodeModels.list(n.id, { kind }).some((m) => m.model === stripped),
+    );
+    if (serving.length === 1) {
+      const node = serving[0];
+      return { kind: "node", node, model: stripped, marker, healthy: node.enabled && isNodeHealthy(repos, node) };
+    }
+    if (serving.length > 1 && depth === 0) {
+      log.debug("ROUTE", `ambiguous bare model id for ${kind} — use <prefix>/<model>`, {
+        modelStr,
+        prefixes: serving.map((n) => n.prefix),
+      });
+    }
+  }
+
   if (depth === 0) log.debug("ROUTE", `unresolvable model string`, { modelStr, kind });
   return null;
 }
@@ -235,8 +257,20 @@ function inferKind(repos, modelStr) {
     const row = node ? repos.nodeModels.byModel(node.id, stripped.slice(slash + 1)) : null;
     return row ? row.kind : CHAT_KIND;
   }
-  // A bare prefix is only a routable id when the provider IS the model, so the node's declared
-  // none-kinds are the candidates — and exactly one of them is the only unambiguous answer.
+  // A bare "<model>": the rows that carry it say what kind it is. One kind across every match
+  // is the answer; a model registered under two kinds is a question the caller answers by
+  // prefixing (`<prefix>/<model>`), and chat is the default when nothing carries it.
+  const kinds = new Set();
+  for (const n of repos.nodes.list()) {
+    for (const m of repos.nodeModels.list(n.id)) {
+      if (m.model === stripped) kinds.add(m.kind);
+      if (kinds.size > 1) return CHAT_KIND; // ambiguous → the loosest, most useful default
+    }
+  }
+  if (kinds.size === 1) return [...kinds][0];
+  // A bare prefix is only a routable id when the provider IS the model for this kind, so the
+  // node's declared none-kinds are the candidates — and exactly one of them is the only
+  // unambiguous answer.
   const node = repos.nodes.byPrefix(stripped);
   const candidates = node ? mediaKindsOf(node).filter((k) => MEDIA_KINDS[k].modelList === "none") : [];
   if (candidates.length === 1) return candidates[0];

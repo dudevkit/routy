@@ -51,11 +51,22 @@ export function buildProxyRoutes(repos, { chatHandler, handlers = {} }) {
         const prefix = id.split("/")[0];
         const node = repos.nodes.byPrefix(prefix);
         const declared = node ? mediaKindsOf(node) : [];
-        const hint = asked
-          ? `"${id}" is not routable as ${asked}`
-          : declared.length > 1
-            ? `"${id}" is routable as more than one kind (${declared.join(", ")}) — name one with ?kind=`
-            : `"${id}" is not routable — check the prefix, or that the node declares the kind`;
+        const bare = !id.includes("/");
+        const carriers = bare
+          ? repos.nodes.list().filter((n) => repos.nodeModels.list(n.id).some((m) => m.model === id))
+          : [];
+        let hint;
+        if (asked) {
+          hint = `"${id}" is not routable as ${asked}`;
+        } else if (carriers.length > 1) {
+          // The id resolves to more than one node, so there is no single dispatch config to
+          // report — say which nodes carry it, so the caller can pick one by prefixing.
+          hint = `"${id}" is carried by ${carriers.length} nodes (${carriers.map((n) => n.prefix).join(", ")}) — use <prefix>/<model>`;
+        } else if (declared.length > 1) {
+          hint = `"${id}" is routable as more than one kind (${declared.join(", ")}) — name one with ?kind=`;
+        } else {
+          hint = `"${id}" is not routable — check the prefix, or that the node declares the kind`;
+        }
         return json(res, 404, { error: { message: "not_found", detail: hint } });
       },
     },
@@ -88,6 +99,12 @@ export function buildProxyRoutes(repos, { chatHandler, handlers = {} }) {
       : []),
     ...(handlers.images
       ? [{ method: "POST", pattern: /^\/v1\/images\/generations$/, handler: handlers.images }]
+      : []),
+    ...(handlers.tts
+      ? [{ method: "POST", pattern: /^\/v1\/audio\/speech$/, handler: handlers.tts }]
+      : []),
+    ...(handlers.stt
+      ? [{ method: "POST", pattern: /^\/v1\/audio\/transcriptions$/, handler: handlers.stt }]
       : []),
 
     // Chat traffic. Both paths land on the same handler (source format is detected per

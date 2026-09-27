@@ -233,6 +233,36 @@ describe("resolving a request to a target", () => {
     expect(modelInfo(repos, "pix/flux-1", { kind: "chat" })).toBeNull();
     expect(modelInfo(repos, "nope/m1")).toBeNull();
   });
+
+  // A provider's own model name — `whisper-1`, `text-embedding-3-small` — reaches it when
+  // exactly one node serves that name for the kind. One match is a fact; two is a question only
+  // the caller can answer, so an ambiguous bare id must NOT be guessed at (the first node in
+  // list order would win silently, which is how a request reaches the wrong provider).
+  it("resolves a bare model id when exactly one node serves it", () => {
+    const n = node("asr", { kinds: ["stt"] });
+    repos.nodeModels.create({ nodeId: n.id, model: "whisper-1", kind: "stt" });
+
+    expect(resolveRoute(repos, "whisper-1", { kind: "stt" })).toMatchObject({ kind: "node", model: "whisper-1" });
+    expect(resolveRoute(repos, "asr/whisper-1", { kind: "stt" })).toMatchObject({ model: "whisper-1" });
+    // and it stays a media-only capability: chat never resolved a bare model id
+    expect(resolveRoute(repos, "whisper-1")).toBeNull();
+    // a kind nobody declares that model for does not resolve it either
+    expect(resolveRoute(repos, "whisper-1", { kind: "embedding" })).toBeNull();
+  });
+
+  it("refuses to guess when two nodes carry the same bare id", () => {
+    const a = node("a-asr", { kinds: ["stt"] });
+    const b = node("b-asr", { kinds: ["stt"] });
+    repos.nodeModels.create({ nodeId: a.id, model: "whisper-1", kind: "stt" });
+    repos.nodeModels.create({ nodeId: b.id, model: "whisper-1", kind: "stt" });
+
+    expect(resolveRoute(repos, "whisper-1", { kind: "stt" })).toBeNull(); // ambiguous
+    expect(resolveRoute(repos, "a-asr/whisper-1", { kind: "stt" })).toMatchObject({ model: "whisper-1" });
+    expect(resolveRoute(repos, "b-asr/whisper-1", { kind: "stt" })).toMatchObject({ model: "whisper-1" });
+    // Neither can info pick one: two candidates, so there is no single dispatch config to
+    // report — the endpoint says which nodes carry it instead (asserted over HTTP below).
+    expect(modelInfo(repos, "whisper-1", { kind: "stt" })).toBeNull();
+  });
 });
 
 describe("the HTTP surface", () => {
@@ -297,6 +327,25 @@ describe("the HTTP surface", () => {
     expect(ambiguous.body.error.detail).toContain("?kind=");
     expect(ambiguous.body.error.detail).toContain("webSearch");
     expect((await get("/v1/models/info?id=both&kind=webFetch")).status).toBe(200);
+  });
+
+  // Two nodes carrying the same bare model name: there is no single answer, so the refusal has
+  // to say who carries it — otherwise the caller is told "not routable" while the model plainly
+  // exists on both nodes.
+  it("names the nodes carrying a bare id that more than one serves", async () => {
+    const a = node("a-asr", { kinds: ["stt"] });
+    const b = node("b-asr", { kinds: ["stt"] });
+    repos.nodeModels.create({ nodeId: a.id, model: "whisper-1", kind: "stt" });
+    repos.nodeModels.create({ nodeId: b.id, model: "whisper-1", kind: "stt" });
+
+    const r = await get("/v1/models/info?id=whisper-1");
+    expect(r.status).toBe(404);
+    expect(r.body.error.detail).toContain("carried by 2 nodes");
+    expect(r.body.error.detail).toContain("a-asr, b-asr");
+    expect(r.body.error.detail).toContain("<prefix>/<model>");
+
+    // with a prefix there is nothing ambiguous to report
+    expect((await get("/v1/models/info?id=a-asr/whisper-1")).status).toBe(200);
   });
 });
 
