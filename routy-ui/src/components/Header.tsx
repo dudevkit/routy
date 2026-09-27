@@ -5,6 +5,7 @@ import {
   ChartBar,
   Coins,
   Gear,
+  Images,
   List,
   Network,
   SquaresFour,
@@ -27,6 +28,7 @@ interface PageInfo {
 function getPageInfo(pathname: string): PageInfo {
   if (pathname.includes("/upstreams")) return { title: "Providers", description: "Connect compatible providers, manage keys and models", icon: Broadcast };
   if (pathname.includes("/combos")) return { title: "Combos & Aliases", description: "Group upstreams into fallback combos", icon: Stack };
+  if (pathname.includes("/media")) return { title: "Media", description: "Image, audio, embeddings and web endpoints", icon: Images };
   if (pathname.includes("/usage")) return { title: "Usage", description: "Requests, tokens, cost and latency", icon: ChartBar };
   if (pathname.includes("/token-saver")) return { title: "Token Saver", description: "Reduce prompt token spend (RTK)", icon: Coins };
   if (pathname.includes("/pools")) return { title: "Proxy Pools", description: "Outbound proxy pools and health", icon: Network };

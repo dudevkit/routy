@@ -8,6 +8,81 @@
 /* ── nodes / upstreams ─────────────────────────────────────────────────────── */
 export type NodeStatus = "healthy" | "degraded" | "down" | "disabled";
 
+/**
+ * The non-chat kinds routy serves, as the gateway's kind enum defines them (`core/media.mjs`).
+ * A kind IS its endpoint: `image` is `/v1/images/generations`, `stt` is
+ * `/v1/audio/transcriptions`. Chat is not a media kind — it is what a node serves by default.
+ */
+export type MediaKind = "embedding" | "image" | "tts" | "stt" | "webSearch" | "webFetch";
+
+/** What the gateway reports for a kind: label + endpoint, so the UI never hardcodes paths. */
+export interface MediaKindInfo {
+  id: MediaKind;
+  label: string;
+  method: string;
+  path: string;
+  /** "node" = models come from the node's model rows · "voices" = model names a voice ·
+   *  "none" = the provider IS the model (no model list to show) */
+  modelList: "node" | "voices" | "none";
+}
+
+/** The six kinds and their endpoints — mirrors `MEDIA_KINDS` in routy-core/core/media.mjs, and
+ *  it is the one place the two copies are written down together. A kind IS its endpoint: the
+ *  server validates writes against its own copy, so drift here is a display bug, never a
+ *  routing one. A `/api/media/kinds` endpoint would remove the duplication later. */
+export const MEDIA_KIND_INFO: MediaKindInfo[] = [
+  { id: "embedding", label: "Embeddings", method: "POST", path: "/v1/embeddings", modelList: "node" },
+  { id: "image", label: "Text to Image", method: "POST", path: "/v1/images/generations", modelList: "node" },
+  { id: "tts", label: "Text to Speech", method: "POST", path: "/v1/audio/speech", modelList: "voices" },
+  { id: "stt", label: "Speech to Text", method: "POST", path: "/v1/audio/transcriptions", modelList: "node" },
+  { id: "webSearch", label: "Web Search", method: "POST", path: "/v1/search", modelList: "none" },
+  { id: "webFetch", label: "Web Fetch", method: "POST", path: "/v1/web/fetch", modelList: "none" },
+];
+
+/**
+ * The upstream URL the gateway derives when a kind has no explicit one: the node's base URL plus
+ * the kind's path WITHOUT its `/v1` prefix, because the base carries it.
+ *
+ * Mirrors `upstreamUrl` in core/handlers/*.mjs. The client-facing path and the upstream path are
+ * not the same string — concatenating them produces `…/v1/v1/images/generations`, which is what
+ * the empty URL field's placeholder showed before this existed. A preview that claims "the same
+ * rule the gateway applies" has to apply that rule exactly.
+ */
+export function derivedMediaUrl(baseUrl: string, path: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/v1\//, "")}`;
+}
+
+/** `node.data.media` — what a node declares it serves, and how. Read and written whole on
+ *  update: the gateway replaces this key rather than merging it, so a kind can be removed. */
+export interface NodeMediaConfig {
+  kinds?: MediaKind[];
+  /** per-kind upstream URL; absent = the node's baseUrl + the kind's OpenAI path */
+  urls?: Partial<Record<MediaKind, string>>;
+  /** per-kind credential style; absent = bearer with the node's key */
+  auth?: Partial<Record<MediaKind, { style: "bearer" | "token" | "x-api-key" | "key" | "none" }>>;
+  /** the node needs no credential at all (a local endpoint) */
+  noAuth?: boolean;
+}
+
+/** An entry from `/api/models/<kind>` — carries its own kind, because `/v1/models/web` serves
+ *  two kinds at once and the client filters on the entry rather than the endpoint. */
+export interface MediaModelEntry {
+  id: string;
+  object: "model";
+  kind?: MediaKind;
+  owned_by?: string;
+}
+
+/** What the gateway's node view resolves for display: the kinds as written, each kind's URL
+ *  (null when unset) and auth style. Differs from NodeMediaConfig only in that nulls are shown
+ *  rather than absent — an unset URL is a real thing the Media tab has to say out loud. */
+export interface ResolvedNodeMedia {
+  kinds: MediaKind[];
+  urls: Partial<Record<MediaKind, string | null>>;
+  auth: Partial<Record<MediaKind, string>>;
+  noAuth: boolean;
+}
+
 export interface UpstreamNode {
   id: string;
   name: string;
@@ -22,6 +97,10 @@ export interface UpstreamNode {
   models: string[];
   /** the node's config bag: pricing, pool tuning, retry overrides, cached models */
   data: NodeData;
+  /** non-chat kinds this node serves — what the Media badges and filters read */
+  mediaKinds: MediaKind[];
+  /** the media config with each kind's URL and auth style resolved for display */
+  media: ResolvedNodeMedia;
   /** always masked - plaintext never returns */
   keyMasked: string;
   lastError?: string;
@@ -298,6 +377,8 @@ export interface NodeModel {
   id: string;
   nodeId: string;
   model: string;
+  /** which endpoint may reach this model: chat unless it was added for a media kind */
+  kind: MediaKind | "llm";
   source: "imported" | "manual";
   enabled: boolean;
   /** was imported, no longer listed upstream — kept, never silently deleted */
@@ -389,6 +470,9 @@ export interface NodeData {
   streamIdleTimeoutMs?: number;
   /** upstream connection pool tuning */
   pool?: { connections?: number; keepAliveTimeoutMs?: number; pipelining?: number; noDelay?: boolean };
+  /** non-chat kinds this node serves. REPLACED on update (not merged) — that is how a kind
+   *  gets removed, which a merge could never express. */
+  media?: NodeMediaConfig;
   [k: string]: unknown;
 }
 

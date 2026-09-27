@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { api, streamLogs, type StreamLevel } from "./transport";
-import type { ComboInput, LogRecord, ModelBulkAction, ProxyPoolInput } from "./types";
+import type { ComboInput, LogRecord, MediaKind, ModelBulkAction, ProxyPoolInput } from "./types";
 
 /* ── query keys ────────────────────────────────────────────────────────────── */
 const NODES: QueryKey = ["nodes"];
@@ -66,6 +66,15 @@ export const useSettings = () => useQuery({ queryKey: ["settings"], queryFn: api
 export const useKeys = () => useQuery({ queryKey: KEYS, queryFn: api.listKeys });
 
 export const useCombos = () => useQuery({ queryKey: COMBOS, queryFn: api.listCombos });
+
+/** The Media screen's list: which nodes and models serve one kind. `web` covers both web
+ *  kinds in one call, and every entry names its own kind so the two stay distinguishable. */
+export const useModelsForKind = (kind: MediaKind | "web") =>
+  useQuery({
+    queryKey: ["models", "kind", kind],
+    queryFn: () => api.listModelsForKind(kind),
+    refetchInterval: 30000,
+  });
 
 export const useAliases = () => useQuery({ queryKey: ALIASES, queryFn: api.listAliases });
 

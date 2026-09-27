@@ -31,6 +31,7 @@ import {
   Plus, Prohibit, Trash, WifiHigh, XCircle,
 } from "../components/icons";
 import { NodeFormModal } from "../components/NodeFormModal";
+import { MediaTab } from "../components/MediaTab";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -1038,12 +1039,14 @@ export function ProviderDetail() {
         onChange={setTab}
         items={[
           { value: "models", label: `Models${node.modelCount ? ` (${node.modelCount})` : ""}` },
+          { value: "media", label: node.mediaKinds?.length ? `Media (${node.mediaKinds.length})` : "Media" },
           { value: "keys", label: "API Keys" },
           { value: "settings", label: "Settings" },
         ]}
       />
 
       {tab === "models" && <ModelsTab node={node} />}
+      {tab === "media" && <MediaTab node={node} />}
       {tab === "keys" && <KeysTab node={node} />}
       {tab === "settings" && <SettingsTab node={node} />}
     </div>

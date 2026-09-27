@@ -17,10 +17,13 @@ import type {
   NewConnectionInput,
   NewNodeInput,
   KeyTestResult,
+  MediaKind,
+  MediaModelEntry,
   ModelBulkAction,
   ModelBulkResult,
   ModelImportResult,
   NodeConnection,
+  NodeMediaConfig,
   NodeModel,
   AddEntriesResult,
   EntryTestOutcome,
@@ -45,6 +48,23 @@ import type { LogStreamHandlers, StreamLevel } from "./client";
 
 const uuid = () => crypto.randomUUID();
 const nowIso = () => new Date().toISOString();
+
+/** Mirror of the gateway's nodeView media block: kinds, each kind's URL and auth style as the
+ *  dashboard shows them (a null URL is shown, not hidden — the Media tab has to say out loud
+ *  that no URL was written). */
+function resolveMedia(data?: { media?: NodeMediaConfig }) {
+  const cfg = data?.media ?? {};
+  const kinds = [...(cfg.kinds ?? [])];
+  return {
+    mediaKinds: kinds as MediaKind[],
+    media: {
+      kinds,
+      urls: { ...(cfg.urls ?? {}) },
+      auth: Object.fromEntries(Object.entries(cfg.auth ?? {}).map(([k, v]) => [k, (v as { style: string }).style])),
+      noAuth: cfg.noAuth === true,
+    },
+  };
+}
 const maskKey = (k: string) => (k.length > 12 ? `${k.slice(0, 6)}…${k.slice(-4)}` : k ? "•••" : "—");
 
 const freshStats: UsageStats = {
@@ -181,6 +201,7 @@ export const api = {
       modelCount: 0,
       models: [],
       data: input.data ?? {},
+      ...resolveMedia(input.data),
       keyMasked: maskKey(input.apiKey),
       apiKey: input.apiKey,
     };
@@ -221,6 +242,11 @@ export const api = {
     if (patch.prefix !== undefined) node.prefix = patch.prefix.trim();
     if (patch.apiKey) node.keyMasked = maskKey(patch.apiKey);
     if (patch.enabled !== undefined) node.status = patch.enabled ? "healthy" : "disabled";
+    if (patch.data !== undefined) {
+      node.data = { ...node.data, ...patch.data };
+      if (patch.data.media !== undefined) node.data.media = patch.data.media; // replaced, not merged
+      Object.assign(node, resolveMedia(node.data));
+    }
     const { apiKey: _drop, ...view } = node;
     return view;
   },
@@ -237,7 +263,21 @@ export const api = {
     return { node: node?.prefix || "", models, count: models.length };
   },
 
-  async addModel(id: string, input: { model: string }): Promise<NodeModel> {
+  async listModelsForKind(kind: MediaKind | "web"): Promise<{ object: "list"; data: MediaModelEntry[] }> {
+    const wanted = kind === "web" ? (["webSearch", "webFetch"] as MediaKind[]) : [kind as MediaKind];
+    const nodes = new Map(state.nodes.map((n) => [n.id, n]));
+    const data: MediaModelEntry[] = [];
+    for (const row of state.models.filter((m) => m.enabled && !m.stale)) {
+      if (!wanted.includes(row.kind as MediaKind)) continue;
+      const node = nodes.get(row.nodeId);
+      if (node?.mediaKinds.includes(row.kind as MediaKind)) {
+        data.push({ id: `${node.prefix}/${row.model}`, object: "model", kind: row.kind as MediaKind, owned_by: `routy-node:${node.prefix}` });
+      }
+    }
+    return { object: "list", data };
+  },
+
+  async addModel(id: string, input: { model: string; kind?: MediaKind | "llm" }): Promise<NodeModel> {
     const existing = state.models.find((m) => m.nodeId === id && m.model === input.model.trim());
     if (existing) {
       existing.enabled = true;
@@ -245,7 +285,7 @@ export const api = {
       return existing;
     }
     const row: NodeModel = {
-      id: uuid(), nodeId: id, model: input.model.trim(), source: "manual",
+      id: uuid(), nodeId: id, model: input.model.trim(), kind: input.kind ?? "llm", source: "manual",
       enabled: true, stale: false,
       lastTestAt: null, lastTestOk: null, lastTestTtftMs: null, lastTestError: null,
       createdAt: nowIso(), updatedAt: nowIso(),

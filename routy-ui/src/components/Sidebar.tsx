@@ -6,6 +6,7 @@ import {
   ChartBar,
   Coins,
   Gear,
+  Images,
   Network,
   SquaresFour,
   Stack,
@@ -29,6 +30,7 @@ const navItems: NavItemSpec[] = [
   { to: "/", label: "Overview", icon: SquaresFour, end: true },
   { to: "/upstreams", label: "Providers", icon: Broadcast },
   { to: "/combos", label: "Combos & Aliases", icon: Stack },
+  { to: "/media", label: "Media", icon: Images },
   { to: "/usage", label: "Usage", icon: ChartBar },
   { to: "/token-saver", label: "Token Saver", icon: Coins },
 ];

@@ -8,6 +8,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ToastProvider } from "./components/ui/Toast";
 import { CliTools } from "./screens/CliTools";
 import { Combos } from "./screens/Combos";
+import { Media } from "./screens/Media";
 import { ConsoleLog } from "./screens/ConsoleLog";
 import { Overview } from "./screens/Overview";
 import { ProxyPools } from "./screens/ProxyPools";
@@ -72,6 +73,7 @@ function Shell() {
               <Route path="/usage" element={<Usage />} />
               <Route path="/console" element={<ConsoleLog />} />
               <Route path="/combos" element={<Combos />} />
+              <Route path="/media" element={<Media />} />
               <Route path="/pools" element={<ProxyPools />} />
               <Route path="/cli-tools" element={<CliTools />} />
               <Route path="/token-saver" element={<TokenSaver />} />

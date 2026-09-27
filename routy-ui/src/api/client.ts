@@ -22,6 +22,8 @@ import type {
   GatewayHealth,
   GatewayInfo,
   KeyTestResult,
+  MediaKind,
+  MediaModelEntry,
   ModelBulkAction,
   ModelBulkResult,
   ModelImportResult,
@@ -257,6 +259,10 @@ export const api = {
   /* models — discovery-only list, plus per-model probes (P6) */
   listModels: (id: string): Promise<{ node: string; models: NodeModel[]; count: number }> =>
     getJson(`/api/nodes/${enc(id)}/models`),
+  /** The same gateway list filtered to one kind — the Media screen's source of truth.
+   *  `web` covers both web kinds; every entry names its own kind. */
+  listModelsForKind: (kind: MediaKind | "web"): Promise<{ object: "list"; data: MediaModelEntry[] }> =>
+    getJson(`/api/models/${enc(kind)}`),
   addModel: (id: string, input: { model: string; enabled?: boolean }): Promise<NodeModel> =>
     postJson<NodeModel>(`/api/nodes/${enc(id)}/models`, input),
   updateModel: (id: string, modelId: string, patch: { model?: string; enabled?: boolean }): Promise<NodeModel> =>
