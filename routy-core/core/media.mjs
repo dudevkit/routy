@@ -14,14 +14,15 @@
  *   "node"   — the node's own model rows (a provider hosting several models)
  *   "voices" — no model list; the model field names a voice (TTS)
  *   "none"   — the provider IS the model (web search/fetch, and earlier 9Router parity)
+ *  `logTag` is what a media request logs under, so the console can be filtered by kind.
  */
 export const MEDIA_KINDS = Object.freeze({
-  embedding: { label: "Embedding", method: "POST", path: "/v1/embeddings", modelList: "node" },
-  image: { label: "Text to Image", method: "POST", path: "/v1/images/generations", modelList: "node" },
-  tts: { label: "Text To Speech", method: "POST", path: "/v1/audio/speech", modelList: "voices" },
-  stt: { label: "Speech To Text", method: "POST", path: "/v1/audio/transcriptions", modelList: "node" },
-  webSearch: { label: "Web Search", method: "POST", path: "/v1/search", modelList: "none" },
-  webFetch: { label: "Web Fetch", method: "POST", path: "/v1/web/fetch", modelList: "none" },
+  embedding: { label: "Embedding", method: "POST", path: "/v1/embeddings", modelList: "node", logTag: "EMBED" },
+  image: { label: "Text to Image", method: "POST", path: "/v1/images/generations", modelList: "node", logTag: "IMAGE" },
+  tts: { label: "Text To Speech", method: "POST", path: "/v1/audio/speech", modelList: "voices", logTag: "TTS" },
+  stt: { label: "Speech To Text", method: "POST", path: "/v1/audio/transcriptions", modelList: "node", logTag: "STT" },
+  webSearch: { label: "Web Search", method: "POST", path: "/v1/search", modelList: "none", logTag: "SEARCH" },
+  webFetch: { label: "Web Fetch", method: "POST", path: "/v1/web/fetch", modelList: "none", logTag: "FETCH" },
 });
 
 export const MEDIA_KIND_IDS = Object.freeze(Object.keys(MEDIA_KINDS));
@@ -109,6 +110,22 @@ export function authStyleFor(node, kind) {
   const style = mediaConfigOf(node).auth[kind]?.style;
   if (typeof style === "string" && AUTH_STYLES.includes(style)) return style;
   return node?.data?.media?.noAuth === true ? "none" : "bearer";
+}
+
+/**
+ * The credential header for a media call. Every style is a one-liner, and putting them here
+ * is what keeps "the auth style a node declares" and "the header a request sends" the same
+ * fact — an adapter that re-decides it is an adapter that can disagree with the config.
+ * `none` returns nothing: a local endpoint that answers without a key is ready, not broken.
+ */
+export function authHeadersFor(style, secret) {
+  if (!secret || style === "none") return {};
+  switch (style) {
+    case "token": return { Authorization: `Token ${secret}` };
+    case "x-api-key": return { "x-api-key": secret };
+    case "key": return { Authorization: `Key ${secret}` };
+    default: return { Authorization: `Bearer ${secret}` };
+  }
 }
 
 /**

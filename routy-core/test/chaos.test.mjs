@@ -8,7 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
-import { createChatHandler, recordFailure } from "../core/handlers/chat.mjs";
+import { createChatHandler } from "../core/handlers/chat.mjs";
+import { recordFailure } from "../core/dispatch.mjs";
 import { isTerminalFrame, LogBuffer } from "../core/sse/stream.mjs";
 
 let tmp, db, repos, handlerServer, handlerPort, stubServer, stubPort, stubState;

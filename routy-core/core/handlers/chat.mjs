@@ -6,9 +6,10 @@ import { extractBearer } from "../../lib/auth.mjs";
 import { log as rootLog } from "../../lib/log.mjs";
 import { resolveRoute, orderRoutes } from "../routing.mjs";
 import {
-  classifyConnectionError, recordConnectionFailure, recordConnectionSuccess, connectionState, isConnectionAvailable,
+  classifyConnectionError, recordConnectionFailure, recordConnectionSuccess,
   earliestRecovery,
 } from "../key-health.mjs";
+import { pickConnections, recent429For, recordFailure, recordSuccess } from "../dispatch.mjs";
 import { stripUnsupportedParams } from "../translate/concerns/paramSupport.js";
 import { observeTtft } from "../latency.mjs";
 import { maskKey } from "../../lib/mask.mjs";
@@ -24,12 +25,8 @@ import { translateRequest, needsTranslation } from "../translate/index.js";
 import { FORMATS, detectFormatByEndpoint } from "../translate/formats.js";
 import { detectFormat } from "../translate/deps/detectFormat.js";
 import { compressMessages, formatRtkLog } from "../rtk/index.js";
-import { FAILURE_THRESHOLD, OPEN_MS, MAX_OPEN_MS, STREAM_IDLE_TIMEOUT_MS } from "../limits.mjs";
+import { STREAM_IDLE_TIMEOUT_MS, UPSTREAM_429_MEMO_MS } from "../limits.mjs";
 
-// How long a provider-wide 429 keeps a node+model out of dispatch when the provider sent
-// no Retry-After. Short: the point is to stop re-probing a saturated model on every
-// request, not to lock the model out.
-const UPSTREAM_429_MEMO_MS = 60_000;
 // Stall watchdog: abort a stream that goes this long without a chunk. Reasoning
 // models can think for a while, so the default is generous; nodes can override
 // (or disable with 0) via data.streamIdleTimeoutMs.
@@ -652,55 +649,6 @@ function comboTurn(comboName, strategy, stickyLimit = 1) {
 // rotation). Connections.list is ORDER BY priority, created_at, so the rotation
 // preserves the user's priority order within each turn.
 const rrCursor = new Map();
-
-/**
- * Keys of `node` in dispatch order: active in the DB, not cooling/disabled in the
- * health store, then ordered by the provider's key strategy. Empty means nothing to
- * serve with.
- *
- *   round-robin (default) — start at a different key each request, spreading load
- *   fallback              — always start at the first usable key, so a primary key
- *                           carries everything until it fails; the fallover to the
- *                           next key still happens inside the same request
- */
-function pickConnections(repos, node) {
-  const usable = repos.connections.list(node.id)
-    .filter((c) => c.status === "active")
-    .filter((c) => isConnectionAvailable(connectionState(repos, c.id)));
-  if (usable.length === 0) return [];
-  if (node.data?.keyStrategy === "fallback") return usable;
-  const start = rrCursor.get(node.id) ?? 0;
-  rrCursor.set(node.id, start + 1);
-  const at = start % usable.length;
-  return [...usable.slice(at), ...usable.slice(0, at)];
-}
-
-/** Per-node set of connection ids that 429'd during this request's rotation. */
-function recent429For(map, nodeId) {
-  let set = map.get(nodeId);
-  if (!set) { set = new Set(); map.set(nodeId, set); }
-  return set;
-}
-
-export function recordFailure(repos, node, err) {
-  const scope = `node:${node.id}`;
-  const cur = repos.breakers.record(scope, { failureDelta: 1, lastError: `${err.errorCode}: ${(err.message || "").slice(0, 200)}` });
-  if (cur.failures >= FAILURE_THRESHOLD) {
-    // Exponential backoff on consecutive failures: the first trip opens for
-    // OPEN_MS, and each failed half-open probe doubles it up to MAX_OPEN_MS.
-    // A success resets the count, so a recovered node is back to base.
-    const exp = cur.failures - FAILURE_THRESHOLD;
-    const openMs = Math.min(OPEN_MS * 2 ** exp, MAX_OPEN_MS);
-    repos.breakers.record(scope, {
-      state: "open",
-      openUntil: new Date(Date.now() + openMs).toISOString(),
-    });
-  }
-}
-
-function recordSuccess(repos, node) {
-  repos.breakers.record(`node:${node.id}`, { state: "closed", failures: 0, openUntil: null, lastError: null });
-}
 
 /**
  * What a combo request is about to do, for the log.

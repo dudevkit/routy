@@ -11,7 +11,7 @@ import { json } from "../lib/router.mjs";
 import { listModels, modelInfo } from "../core/routing.mjs";
 import { CHAT_KIND, MEDIA_KINDS, MEDIA_KIND_IDS, expandKind, isKnownKind, mediaKindsOf } from "../core/media.mjs";
 
-export function buildProxyRoutes(repos, { chatHandler }) {
+export function buildProxyRoutes(repos, { chatHandler, handlers = {} }) {
   /** The kinds a `/v1/models/<kind>` path may name, alias included ("web" → both web kinds). */
   const kindsForPath = (name) => {
     const expanded = expandKind(name);
@@ -80,6 +80,12 @@ export function buildProxyRoutes(repos, { chatHandler }) {
         return json(res, 200, { object: "list", data });
       },
     },
+
+    // Media traffic. Every media kind is declared here as its own route, so the endpoint a
+    // request arrives on is what decides its kind — handlers never inspect a body to find out.
+    ...(handlers.embeddings
+      ? [{ method: "POST", pattern: /^\/v1\/embeddings$/, handler: handlers.embeddings }]
+      : []),
 
     // Chat traffic. Both paths land on the same handler (source format is detected per
     // request from the endpoint and the body).

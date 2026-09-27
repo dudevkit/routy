@@ -15,6 +15,12 @@ export const CONNECTION_STRIKE_WINDOW_MS = 60 * 60_000;
 
 export const STREAM_IDLE_TIMEOUT_MS = 120_000;
 
+// How long a provider-wide 429 keeps a node+model out of dispatch when the provider sent
+// no Retry-After. Short: the point is to stop re-probing a saturated model on every
+// request, not to lock the model out. Shared by chat and the media handlers so both hold
+// the same window — a second definition would let one fail fast while the other hammers.
+export const UPSTREAM_429_MEMO_MS = 60_000;
+
 // Proxy exits (one URL each). Rotation spreads requests across them to multiply
 // whatever the upstream meters per address, so an exit that fails or is rate-limited
 // has to leave the rotation for a while — otherwise every N-th request is spent on a

@@ -12,6 +12,7 @@
 // is the provider's, and rotating exits over it would burn the fleet for nothing.
 import { getDispatcher, undiciFetch } from "./pool.mjs";
 import { classifyProxyFailure, getProxyAgent } from "../proxy.mjs";
+import { authHeadersFor } from "../media.mjs";
 import { PROXY_MAX_ATTEMPTS, PROXY_MAX_RATE_LIMIT_ATTEMPTS } from "../limits.mjs";
 export const DEFAULT_RETRY_CONFIG = {
   429: { attempts: 0, delayMs: 0 },
@@ -87,9 +88,14 @@ export class DefaultExecutor {
     return `${base}/chat/completions`;
   }
 
-  buildHeaders() {
-    const key = this.connection?.credentials?.apiKey;
+  buildHeaders(auth = null) {
     const headers = { "content-type": "application/json" };
+    // Media calls arrive with their own credential style (bearer/token/x-api-key/key/none,
+    // from `node.data.media.auth`) — see core/media.mjs `authHeadersFor`. `none` legitimately
+    // yields no header, so this cannot be expressed as "override the default": the default
+    // would still be added for a local endpoint that needs no key.
+    if (auth) return { ...headers, ...authHeadersFor(auth.style, auth.secret) };
+    const key = this.connection?.credentials?.apiKey;
     if (key) headers.authorization = `Bearer ${key}`;
     return headers;
   }
@@ -107,12 +113,19 @@ export class DefaultExecutor {
   }
 
   /**
-   * Execute a chat request against the node.
+   * Execute a request against the node.
+   *
+   * `url` overrides the endpoint — media kinds call their own path (`/v1/embeddings`, not
+   * `/chat/completions`) — and `auth` supplies a credential style instead of the chat default
+   * of `Bearer <apiKey>`. Both default to exactly what chat does, so chat is unaffected; what
+   * media inherits for free is everything around the call: proxy plan, exit rotation,
+   * address-level classification, retries and connect timeout.
+   *
    * @returns {Promise<{ok:true, response: Response, url: string}> |
    *           {ok:false, status: number, errorCode: string, retryAfterMs: number|null, message: string}}
    */
-  async execute({ model, body, stream, signal, log = null }) {
-    const url = this.buildUrl();
+  async execute({ model, body, stream, signal, log = null, url = null, auth = null }) {
+    const target = url ?? this.buildUrl();
     const plan = this.proxy;
     // stringify ONCE per logical request (upstream re-stringified per retry attempt)
     const bodyStr = JSON.stringify({ ...body, model, stream });
@@ -128,7 +141,7 @@ export class DefaultExecutor {
 
     for (let i = 0; i < exits.length && i < PROXY_MAX_ATTEMPTS; i++) {
       const exit = exits[i];
-      const result = await this.#attempt({ url, exit, bodyStr, model, stream, signal, log });
+      const result = await this.#attempt({ url: target, exit, bodyStr, model, stream, signal, log, auth });
       if (result.ok) {
         plan?.onSucceeded?.(exit);
         return result;
@@ -156,7 +169,7 @@ export class DefaultExecutor {
     if (!plan.directAllowed) return proxyFailed(plan, failures);
 
     log?.warn?.("PROXY", `all ${failures.length} exit(s) of "${plan.target}" failed — retrying directly (strict is off)`, { node: this.node.prefix });
-    return this.#attempt({ url, exit: null, bodyStr, model, stream, signal, log });
+    return this.#attempt({ url: target, exit: null, bodyStr, model, stream, signal, log, auth });
   }
 
   /**
@@ -164,7 +177,7 @@ export class DefaultExecutor {
    * `rotate` on the result means "this failure was the exit's, try another" — it is only
    * ever set when an exit is in use, so a direct connection behaves exactly as before.
    */
-  async #attempt({ url, exit, bodyStr, model, stream, signal, log }) {
+  async #attempt({ url, exit, bodyStr, model, stream, signal, log, auth = null }) {
     const perUrl = {};
     for (let attemptPhase = 0; ; attemptPhase++) {
       const controller = new AbortController();
@@ -181,7 +194,7 @@ export class DefaultExecutor {
       try {
         const response = await undiciFetch(url, {
           method: "POST",
-          headers: this.buildHeaders(),
+          headers: this.buildHeaders(auth),
           body: bodyStr,
           signal: merged,
           dispatcher: this.#dispatcher(exit),
