@@ -24,6 +24,12 @@ const STRIP_RULES = [
   // "integer above maximum value, expected <= 32768". Pin an explicit endpoint cap;
   // min() with the model ceiling still applies if a variant's own limit is lower.
   { provider: "volcengine-ark", match: /kimi/i, maxOutputCap: 32768, clampToModelMaxOutput: true },
+  // b.ai rejects reasoning_effort values outside {low, high, max} with a 400 — medium, none and
+  // minimal all fail, deterministically, and the same request without the field succeeds.
+  // Unsupported values are DROPPED rather than remapped: dropping reproduces the one shape
+  // measured to work, while mapping medium→high would silently raise the reasoning budget (and
+  // the bill) of every request a client sent at medium. Accepted values pass through untouched.
+  { provider: "bai", paramValues: { reasoning_effort: { allow: ["low", "high", "max"], otherwise: null } } },
 ];
 
 // Test a rule's match (regex or predicate) against the model id.
@@ -38,6 +44,22 @@ function clampNumber(body, key, ceiling) {
   }
 }
 
+/**
+ * Apply `paramValues` specs to a body. Exported because the vocabulary is the part worth
+ * testing on its own: a rule says which values a provider accepts, and what an unaccepted one
+ * becomes — dropped (`otherwise: null`, the provider's own default) or replaced (a string).
+ */
+export function applyParamValues(body, paramValues) {
+  for (const [key, spec] of Object.entries(paramValues || {})) {
+    const value = body[key];
+    if (value === undefined || value === null) continue;
+    if (spec.allow?.includes(value)) continue;
+    if (spec.otherwise === null || spec.otherwise === undefined) delete body[key];
+    else body[key] = spec.otherwise;
+  }
+  return body;
+}
+
 // Remove unsupported params from body in place; returns body.
 export function stripUnsupportedParams(provider, model, body) {
   if (!model || !body || typeof body !== "object") return body;
@@ -47,6 +69,9 @@ export function stripUnsupportedParams(provider, model, body) {
     for (const key of rule.drop || []) {
       if (body[key] !== undefined) delete body[key];
     }
+    // Values a provider accepts are a set, not "the field" — dropping the field outright would
+    // also discard the values that work.
+    applyParamValues(body, rule.paramValues);
     // CF Workers AI oneOf root schema only accepts content as plain string (#1926)
     if (rule.flattenContent && Array.isArray(body.messages)) {
       for (const msg of body.messages) {

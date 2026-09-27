@@ -102,6 +102,14 @@ export function classifyConnectionError(err, { connection, recent429 } = {}) {
     // key to 429 flips the verdict to global via recent429.
     return { verdict: "cooldown", reason: "rate limit (unclassified body)" };
   }
+  // A request-shaped 4xx is the caller's mistake, not the provider's condition: the same body
+  // would be rejected by any node that shares the upstream's opinion, and — the part that
+  // bites — three of them used to open the node's breaker and take every model on it down.
+  // 404 is deliberately NOT here: "this provider has no such model" is a per-node fact worth
+  // falling through to the next route, which is what the node verdict already does.
+  if (status === 400 || status === 413 || status === 422) {
+    return { verdict: "client", reason: `request rejected (${status})` };
+  }
   // Everything else (5xx, timeouts, network) is the node's problem, not the key's.
   return { verdict: "node", reason: err?.errorCode || `status ${status}` };
 }

@@ -47,8 +47,9 @@ describe("classifyConnectionError", () => {
     expect(classifyConnectionError(err(400, "credit insufficient balance: balance=13604 required=15206")).verdict).toBe("strike");
     expect(classifyConnectionError(err(400, "Insufficient Quota")).verdict).toBe("strike");
     expect(classifyConnectionError(err(400, "your account has no credits left")).verdict).toBe("strike");
-    // a generic 400 (invalid request) must stay a node problem, not a key strike
-    expect(classifyConnectionError(err(400, "invalid parameter: model")).verdict).toBe("node");
+    // A generic 400 must not read as a credit problem. It is now "client" rather than "node":
+    // the body is a complaint about the request, and nothing about the provider's health.
+    expect(classifyConnectionError(err(400, "invalid parameter: model")).verdict).toBe("client");
   });
 
   it("does not read a malformed REQUEST as an empty account", () => {
@@ -61,7 +62,7 @@ describe("classifyConnectionError", () => {
       "billing address required for this model",
       "balance parameter out of range",
     ]) {
-      expect(classifyConnectionError(err(400, body)).verdict).toBe("node");
+      expect(classifyConnectionError(err(400, body)).verdict, body).toBe("client");
     }
   });
 
@@ -73,6 +74,19 @@ describe("classifyConnectionError", () => {
     expect(credit.reason).toBe("credit body");
     expect(classifyConnectionError(err(403, "invalid api key")).reason).toBe("auth 403");
     expect(classifyConnectionError(err(401)).reason).toBe("auth 401");
+  });
+
+  it("calls a request-shaped 4xx the caller's mistake, not the node's", () => {
+    // Charging these to the node is what turned one unsupported param into an outage: three
+    // 400s opened b.ai's breaker and every later request came back 503 all_unavailable.
+    for (const status of [400, 413, 422]) {
+      expect(classifyConnectionError(err(status, "invalid parameter: reasoning_effort")).verdict, String(status)).toBe("client");
+    }
+    // 404 is deliberately not "client": "this provider has no such model" is a per-node fact,
+    // so it must still fall through to the next route.
+    expect(classifyConnectionError(err(404, "model not found")).verdict).toBe("node");
+    // and a 429 stays a rate-limit answer, not a client error
+    expect(classifyConnectionError(err(429, "slow down")).verdict).toBe("cooldown");
   });
 
   it("counts 5xx and network errors as the node's problem, never the key's", () => {

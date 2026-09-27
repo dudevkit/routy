@@ -6,9 +6,10 @@ import { extractBearer } from "../../lib/auth.mjs";
 import { log as rootLog } from "../../lib/log.mjs";
 import { resolveRoute, orderRoutes } from "../routing.mjs";
 import {
-  recordConnectionFailure, recordConnectionSuccess, connectionState, isConnectionAvailable,
+  classifyConnectionError, recordConnectionFailure, recordConnectionSuccess, connectionState, isConnectionAvailable,
   earliestRecovery,
 } from "../key-health.mjs";
+import { stripUnsupportedParams } from "../translate/concerns/paramSupport.js";
 import { observeTtft } from "../latency.mjs";
 import { maskKey } from "../../lib/mask.mjs";
 import { resolveNodeProxy } from "../proxy.mjs";
@@ -43,6 +44,18 @@ function stripContinuityFields(body) {
     }
   }
   return body;
+}
+
+/**
+ * Which provider a node is, for the param-support table.
+ *
+ * An explicit `data.provider` wins; otherwise the node's prefix, which is the user's own name
+ * for the upstream and is usually the provider ("bai", "github"). A rule that needs extra
+ * setup before it can fire is a rule that stays dead — which is what happened to this whole
+ * table while nothing called it.
+ */
+function providerKeyFor(node) {
+  return String(node?.data?.provider || node?.prefix || "").toLowerCase();
 }
 
 function targetFormatForNode(node) {
@@ -257,6 +270,14 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           if (rtkStats?.hits?.length) log.debug("RTK", formatRtkLog(rtkStats));
         }
 
+        // Params this provider rejects are dropped here — the final body, after translation,
+        // before dispatch. Same slot 9Router calls its final-body stage, and it runs on the
+        // passthrough path too, which is the one a client talking OpenAI to an OpenAI-shaped
+        // provider actually uses. This table existed and was never called from anywhere, so
+        // every rule in it was dead: one unsupported client field reached its provider,
+        // 400'd, and (before the verdict above) took the node's breaker with it.
+        stripUnsupportedParams(providerKeyFor(r.node), r.model, outbound);
+
         const executor = new DefaultExecutor(r.node, connection, { proxy });
         // Per-node stall budget; 0 disables the watchdog.
         const idleTimeoutMs = r.node.data?.streamIdleTimeoutMs ?? globalIdleTimeoutMs;
@@ -288,6 +309,23 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
               break;
             }
             continue;
+          }
+
+          // A request-shaped rejection (400/413/422) belongs to the caller, not to the
+          // provider's health. Charging it to the breaker is what turns one unsupported field
+          // into an outage: three requests with `reasoning_effort: "medium"` opened b.ai's
+          // node breaker, and every later request — for every model on it — came back 503
+          // all_unavailable. Advancing without recording also keeps the useful case: providers
+          // disagree about which params they accept, so the next route may serve it.
+          if (classifyConnectionError(result, { connection, recent429: null }).verdict === "client") {
+            lastError = result;
+            log.warn("CHAT", `node ${r.node.prefix} rejected the request (${result.status}) — trying the next route, no health recorded`, {
+              errorCode: result.errorCode,
+              combo: combo?.name ?? null,
+              detail: String(result.message || "").slice(0, 160),
+            });
+            nodeDied = true;
+            break;
           }
 
           const verdict = recordConnectionFailure(repos, connection, result, settings, Date.now(), recent429For(recent429, r.node.id));
