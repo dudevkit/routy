@@ -70,7 +70,7 @@ const node = (prefix, media, extra = {}) =>
 
 describe("the kind enum", () => {
   it("keeps every kind pointed at its own endpoint", () => {
-    expect(MEDIA_KIND_IDS).toEqual(["embedding", "image", "tts", "stt", "webSearch", "webFetch"]);
+    expect(MEDIA_KIND_IDS).toEqual(["embedding", "image", "tts", "webSearch", "webFetch"]);
     const paths = MEDIA_KIND_IDS.map((k) => MEDIA_KINDS[k].path);
     expect(new Set(paths).size).toBe(paths.length); // a path serves exactly one kind
     for (const kind of MEDIA_KIND_IDS) {
@@ -79,7 +79,6 @@ describe("the kind enum", () => {
       expect(typeof MEDIA_KINDS[kind].label).toBe("string");
     }
     expect(MEDIA_KINDS.tts.path).toBe("/v1/audio/speech");
-    expect(MEDIA_KINDS.stt.path).toBe("/v1/audio/transcriptions");
   });
 });
 
@@ -168,7 +167,7 @@ describe("what discovery exposes", () => {
       { id: "pix/flux-1", object: "model", kind: "image", owned_by: "routy-node:pix" },
     ]);
     expect(listModels(repos, { kind: "embedding" }).data.map((m) => m.id)).toEqual(["pix/emb-1"]);
-    expect(listModels(repos, { kind: "stt" }).data).toEqual([]); // declared kinds only
+    expect(listModels(repos, { kind: "tts" }).data).toEqual([]); // declared kinds only
 
     // "the provider IS the model": web kinds list the prefix, not a fabricated model id
     const web = node("jina", { kinds: ["webFetch"] });
@@ -234,34 +233,34 @@ describe("resolving a request to a target", () => {
     expect(modelInfo(repos, "nope/m1")).toBeNull();
   });
 
-  // A provider's own model name — `whisper-1`, `text-embedding-3-small` — reaches it when
+  // A provider's own model name — `flux-1`, `text-embedding-3-small` — reaches it when
   // exactly one node serves that name for the kind. One match is a fact; two is a question only
   // the caller can answer, so an ambiguous bare id must NOT be guessed at (the first node in
   // list order would win silently, which is how a request reaches the wrong provider).
   it("resolves a bare model id when exactly one node serves it", () => {
-    const n = node("asr", { kinds: ["stt"] });
-    repos.nodeModels.create({ nodeId: n.id, model: "whisper-1", kind: "stt" });
+    const n = node("pix2", { kinds: ["image"] });
+    repos.nodeModels.create({ nodeId: n.id, model: "flux-1", kind: "image" });
 
-    expect(resolveRoute(repos, "whisper-1", { kind: "stt" })).toMatchObject({ kind: "node", model: "whisper-1" });
-    expect(resolveRoute(repos, "asr/whisper-1", { kind: "stt" })).toMatchObject({ model: "whisper-1" });
+    expect(resolveRoute(repos, "flux-1", { kind: "image" })).toMatchObject({ kind: "node", model: "flux-1" });
+    expect(resolveRoute(repos, "pix2/flux-1", { kind: "image" })).toMatchObject({ model: "flux-1" });
     // and it stays a media-only capability: chat never resolved a bare model id
-    expect(resolveRoute(repos, "whisper-1")).toBeNull();
+    expect(resolveRoute(repos, "flux-1")).toBeNull();
     // a kind nobody declares that model for does not resolve it either
-    expect(resolveRoute(repos, "whisper-1", { kind: "embedding" })).toBeNull();
+    expect(resolveRoute(repos, "flux-1", { kind: "embedding" })).toBeNull();
   });
 
   it("refuses to guess when two nodes carry the same bare id", () => {
-    const a = node("a-asr", { kinds: ["stt"] });
-    const b = node("b-asr", { kinds: ["stt"] });
-    repos.nodeModels.create({ nodeId: a.id, model: "whisper-1", kind: "stt" });
-    repos.nodeModels.create({ nodeId: b.id, model: "whisper-1", kind: "stt" });
+    const a = node("a-img", { kinds: ["image"] });
+    const b = node("b-img", { kinds: ["image"] });
+    repos.nodeModels.create({ nodeId: a.id, model: "flux-1", kind: "image" });
+    repos.nodeModels.create({ nodeId: b.id, model: "flux-1", kind: "image" });
 
-    expect(resolveRoute(repos, "whisper-1", { kind: "stt" })).toBeNull(); // ambiguous
-    expect(resolveRoute(repos, "a-asr/whisper-1", { kind: "stt" })).toMatchObject({ model: "whisper-1" });
-    expect(resolveRoute(repos, "b-asr/whisper-1", { kind: "stt" })).toMatchObject({ model: "whisper-1" });
+    expect(resolveRoute(repos, "flux-1", { kind: "image" })).toBeNull(); // ambiguous
+    expect(resolveRoute(repos, "a-img/flux-1", { kind: "image" })).toMatchObject({ model: "flux-1" });
+    expect(resolveRoute(repos, "b-img/flux-1", { kind: "image" })).toMatchObject({ model: "flux-1" });
     // Neither can info pick one: two candidates, so there is no single dispatch config to
     // report — the endpoint says which nodes carry it instead (asserted over HTTP below).
-    expect(modelInfo(repos, "whisper-1", { kind: "stt" })).toBeNull();
+    expect(modelInfo(repos, "flux-1", { kind: "image" })).toBeNull();
   });
 });
 
@@ -333,19 +332,19 @@ describe("the HTTP surface", () => {
   // to say who carries it — otherwise the caller is told "not routable" while the model plainly
   // exists on both nodes.
   it("names the nodes carrying a bare id that more than one serves", async () => {
-    const a = node("a-asr", { kinds: ["stt"] });
-    const b = node("b-asr", { kinds: ["stt"] });
-    repos.nodeModels.create({ nodeId: a.id, model: "whisper-1", kind: "stt" });
-    repos.nodeModels.create({ nodeId: b.id, model: "whisper-1", kind: "stt" });
+    const a = node("a-img", { kinds: ["image"] });
+    const b = node("b-img", { kinds: ["image"] });
+    repos.nodeModels.create({ nodeId: a.id, model: "flux-1", kind: "image" });
+    repos.nodeModels.create({ nodeId: b.id, model: "flux-1", kind: "image" });
 
-    const r = await get("/v1/models/info?id=whisper-1");
+    const r = await get("/v1/models/info?id=flux-1");
     expect(r.status).toBe(404);
     expect(r.body.error.detail).toContain("carried by 2 nodes");
-    expect(r.body.error.detail).toContain("a-asr, b-asr");
+    expect(r.body.error.detail).toContain("a-img, b-img");
     expect(r.body.error.detail).toContain("<prefix>/<model>");
 
     // with a prefix there is nothing ambiguous to report
-    expect((await get("/v1/models/info?id=a-asr/whisper-1")).status).toBe(200);
+    expect((await get("/v1/models/info?id=a-img/flux-1")).status).toBe(200);
   });
 });
 

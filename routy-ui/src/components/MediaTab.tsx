@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useUpdateNode } from "../api/hooks";
-import { MEDIA_KIND_INFO, derivedMediaUrl, type MediaKind, type NodeMediaConfig, type ResolvedNodeMedia, type UpstreamNode } from "../api/types";
+import { useMediaCatalog, useUpdateNode } from "../api/hooks";
+import { MEDIA_KIND_INFO, derivedMediaUrl, type MediaCatalogEntry, type MediaKind, type NodeMediaConfig, type ResolvedNodeMedia, type UpstreamNode } from "../api/types";
 import { toastApiError } from "../utils/errors";
 import { Badge } from "./ui/Badge";
 import { Card } from "./ui/Card";
@@ -14,6 +14,7 @@ const AUTH_STYLES = [
   { value: "token", label: "Token — Authorization: Token <key>" },
   { value: "x-api-key", label: "x-api-key header" },
   { value: "key", label: "Key — Authorization: Key <key>" },
+  { value: "query", label: "Query parameter — the key travels in the URL, named by the mapping" },
   { value: "none", label: "No credential — a local endpoint that answers without one" },
 ] as const;
 
@@ -36,6 +37,7 @@ const EMPTY_MEDIA: ResolvedNodeMedia = { kinds: [], urls: {}, auth: {}, noAuth: 
 export function MediaTab({ node }: { node: UpstreamNode }) {
   const toast = useToast();
   const updateNode = useUpdateNode();
+  const catalog = useMediaCatalog();
   const media: ResolvedNodeMedia = node.media ?? EMPTY_MEDIA;
   const declared = media.kinds ?? [];
 
@@ -61,6 +63,9 @@ export function MediaTab({ node }: { node: UpstreamNode }) {
           .filter(([, v]) => v && v !== "bearer") // the default is written as absent, not repeated
           .map(([k, v]) => [k, { style: v }]),
       ),
+      // The mappings belong to this object too, and the server replaces the whole key: leaving
+      // them out is how editing a URL used to erase a web provider's mapping.
+      ...(media.map && Object.keys(media.map).length ? { map: media.map } : {}),
       ...(media.noAuth ? { noAuth: true } : {}),
     };
     const data = { ...current, ...next };
@@ -99,6 +104,38 @@ export function MediaTab({ node }: { node: UpstreamNode }) {
     // `undefined` is dropped by JSON.stringify, which is how a key with a default gets removed
     // rather than sent as false — the validator only sees a key that is present.
     push({ noAuth: on ? true : undefined }, on ? "This provider needs no credentials" : "Credentials required again");
+  };
+
+  /** The catalogue for one kind, split the way this screen needs it: what can be applied now, and
+   *  what cannot — named with the reason, so a 9Router provider missing from the picker is never
+   *  a mystery. */
+  const catalogFor = (kind: MediaKind): { supported: MediaCatalogEntry[]; unsupported: MediaCatalogEntry[] } => {
+    const entries = catalog.data?.kinds?.[kind] ?? [];
+    return { supported: entries.filter((e) => e.supported), unsupported: entries.filter((e) => !e.supported) };
+  };
+
+  /** Applying a preset is the same write a user makes by hand — endpoint, auth style, and for the
+   *  web kinds the mapping — sent whole, because the server replaces `media` rather than merging
+   *  it. The presets come from the gateway, so the dashboard never has to know a provider's shape. */
+  const applyPreset = (kind: MediaKind, id: string) => {
+    const entry = catalogFor(kind).supported.find((e) => e.id === id);
+    if (!entry?.preset) return;
+    const preset = entry.preset.media;
+    const urlsNext = { ...(media.urls as Record<string, string | null>), ...(preset.urls ?? {}) };
+    const styles = { ...(media.auth as Record<string, string>) };
+    for (const [k, spec] of Object.entries(preset.auth ?? {})) if (spec?.style) styles[k] = spec.style;
+    push(
+      {
+        urls: urlsNext,
+        auth: Object.fromEntries(Object.entries(styles).map(([k, v]) => [k, { style: v }])),
+        map: { ...(media.map ?? {}), ...(preset.map ?? {}) },
+      },
+      [
+        `${entry.name} preset applied to ${kind}`,
+        entry.models.length ? `add its models on the Models tab: ${entry.models.slice(0, 3).join(", ")}${entry.models.length > 3 ? ", …" : ""}` : null,
+        ...entry.requires,
+      ].filter(Boolean).join(" — "),
+    );
   };
 
   return (
@@ -155,6 +192,7 @@ export function MediaTab({ node }: { node: UpstreamNode }) {
               const info = MEDIA_KIND_INFO.find((k) => k.id === kind);
               const style = (media.auth as Record<string, string>)[kind] ?? "bearer";
               const effective = (urls[kind] ?? "").trim() || derivedMediaUrl(node.baseUrl, info?.path ?? "");
+              const { supported, unsupported } = catalogFor(kind);
               return (
                 <div key={kind} className="flex flex-col gap-2 pt-3 first:pt-0">
                   <div className="flex flex-wrap items-end gap-3">
@@ -183,8 +221,30 @@ export function MediaTab({ node }: { node: UpstreamNode }) {
                         onChange={(e) => setAuth(kind, e.target.value)}
                       />
                     </div>
+                    <div className="min-w-56 flex-1">
+                      {/* A preset is a starting point, not a mode: it writes the endpoint, the
+                          auth style and the mapping, and every field stays editable afterwards. */}
+                      <Select
+                        label="Start from a provider"
+                        value=""
+                        options={[
+                          { value: "", label: supported.length ? `${supported.length} provider${supported.length === 1 ? "" : "s"} available…` : "none for this kind yet" },
+                          ...supported.map((e) => ({ value: e.id, label: e.name })),
+                        ]}
+                        disabled={updateNode.isPending || supported.length === 0}
+                        onChange={(e) => {
+                          if (e.target.value) applyPreset(kind, e.target.value);
+                        }}
+                      />
+                    </div>
                   </div>
                   <div className="font-mono text-[11px] text-text-muted">→ {effective}</div>
+                  {unsupported.length > 0 && (
+                    <div className="text-[11px] text-text-muted" title={unsupported.map((e) => `${e.name}: ${e.why}`).join("\n")}>
+                      9Router providers not supported yet: {unsupported.slice(0, 4).map((e) => e.name).join(", ")}
+                      {unsupported.length > 4 ? ` +${unsupported.length - 4} more` : ""} — hover for the reason
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -196,7 +256,7 @@ export function MediaTab({ node }: { node: UpstreamNode }) {
         <div className="min-w-0">
           <div className="text-sm text-text-main">No credentials needed</div>
           <p className="text-[11px] text-text-muted">
-            For an endpoint that answers without a key — a local ComfyUI, a house transcription server. The dashboard shows it as ready rather than missing a connection.
+            For an endpoint that answers without a key — a local ComfyUI, a house TTS server. The dashboard shows it as ready rather than missing a connection.
           </p>
         </div>
         <Toggle

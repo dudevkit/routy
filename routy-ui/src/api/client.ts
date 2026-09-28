@@ -23,6 +23,7 @@ import type {
   GatewayInfo,
   KeyTestResult,
   MediaKind,
+  MediaCatalogEntry,
   MediaModelEntry,
   ModelBulkAction,
   ModelBulkResult,
@@ -263,6 +264,10 @@ export const api = {
    *  `web` covers both web kinds; every entry names its own kind. */
   listModelsForKind: (kind: MediaKind | "web"): Promise<{ object: "list"; data: MediaModelEntry[] }> =>
     getJson(`/api/models/${enc(kind)}`),
+  /** The provider catalogue for the media kinds: every provider 9Router ships, with the node
+   *  fragment a preset applies. Providers routy cannot serve yet carry a `why` instead. */
+  mediaCatalog: (): Promise<{ kinds: Partial<Record<MediaKind, MediaCatalogEntry[]>> }> =>
+    getJson("/api/media/catalog"),
   addModel: (id: string, input: { model: string; enabled?: boolean }): Promise<NodeModel> =>
     postJson<NodeModel>(`/api/nodes/${enc(id)}/models`, input),
   updateModel: (id: string, modelId: string, patch: { model?: string; enabled?: boolean }): Promise<NodeModel> =>

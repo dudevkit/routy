@@ -78,6 +78,11 @@ export const useModelsForKind = (kind: MediaKind | "web") =>
 
 export const useAliases = () => useQuery({ queryKey: ALIASES, queryFn: api.listAliases });
 
+/** The media provider catalogue (what 9Router ships, and what routy can serve today). Static data
+ *  on the server, so it is fetched once per session rather than on every Media tab visit. */
+export const useMediaCatalog = () =>
+  useQuery({ queryKey: ["media", "catalog"], queryFn: api.mediaCatalog, staleTime: 5 * 60_000 });
+
 export const usePools = () => useQuery({ queryKey: POOLS, queryFn: api.listPools });
 
 /* ── mutations (invalidate exactly the affected keys) ──────────────────────── */

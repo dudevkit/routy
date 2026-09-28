@@ -193,7 +193,7 @@ export function settleFailure(repos, { node, connection, result, settings = {}, 
  *
  * @returns {{ ordered, routes, candidates, combo, budget, retryAfterMs }}
  */
-export function dispatchPlan(repos, route, { settings = {} } = {}) {
+export function dispatchPlan(repos, route, { settings = {}, applyBudget = true } = {}) {
   const ordered = route.kind === "combo"
     ? orderRoutes(route.routes, {
         strategy: route.strategy,
@@ -201,8 +201,12 @@ export function dispatchPlan(repos, route, { settings = {} } = {}) {
       })
     : [route];
 
-  const budget = budgetState(settings.budgetUsdPerDay);
-  const routes = budget.over ? ordered.filter((r) => r.kind === "node" && !isMetered(r.node)) : ordered;
+  // The daily budget is a CHAT limit: it is denominated in USD derived from token pricing, and
+  // media routes carry no pricing at all. A media request is refused for an open breaker, a
+  // cooling key or a disabled node — never for chat spend — so media callers pass
+  // `applyBudget: false`. This is the one place chat and media traffic deliberately differ.
+  const budget = applyBudget ? budgetState(settings.budgetUsdPerDay) : null;
+  const routes = budget?.over ? ordered.filter((r) => r.kind === "node" && !isMetered(r.node)) : ordered;
 
   // Fail fast when every route has an open breaker — hammering a dead upstream is what the
   // breaker exists to prevent.

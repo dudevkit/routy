@@ -91,19 +91,15 @@ export function createImagesHandler(repos, { timeoutMs = IMAGE_TIMEOUT_MS, maxBy
     if (route.kind === "combo") {
       return json(res, 400, { error: { message: "bad_request", detail: `"${route.name}" is a combo — combos for images are not enabled yet` } });
     }
-    // Availability comes from the same plan chat uses (dispatch.mjs): strategy order, the daily
-    // budget, whether the node is enabled, and — the part this handler used to miss — an OPEN
-    // BREAKER. A node the dashboard shows as down must not keep answering media requests.
-    const plan = dispatchPlan(repos, route, { settings });
+    // Availability comes from the same plan chat uses (dispatch.mjs): strategy order, whether the
+    // node is enabled, and — the part this handler used to miss — an OPEN BREAKER. A node the
+    // dashboard shows as down must not keep answering media requests.
+    //
+    // The daily budget is deliberately NOT consulted (`applyBudget: false`): it is denominated in
+    // chat token spend, and a media request has no price in routy to weigh against it.
+    const plan = dispatchPlan(repos, route, { settings, applyBudget: false });
     if (plan.candidates.length === 0) return unavailableResponse(res, { route, plan });
     const node = route.node;
-
-    const budget = plan.budget;
-    if (budget.over && isMetered(node)) {
-      return json(res, 429, {
-        error: { message: "budget_exhausted", detail: "the daily budget is reached and this node bills per request", retryAfterMs: budget.resetInMs ?? null },
-      });
-    }
 
     const memoKey = `${node.id}|${route.model}`;
     const saturatedUntil = global429Memo.get(memoKey);

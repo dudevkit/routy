@@ -77,20 +77,11 @@ export function createFetchHandler(repos, { timeoutMs = FETCH_TIMEOUT_MS } = {})
       return json(res, 400, { error: { message: "bad_request", detail } });
     }
 
-    const plan = dispatchPlan(repos, route, { settings });
-    const { budget, candidates, combo } = plan;
+    // Media does not consult the daily budget (dispatchPlan's applyBudget), for the same reason
+    // search does not: the limit is chat's token spend.
+    const plan = dispatchPlan(repos, route, { settings, applyBudget: false });
+    const { candidates, combo } = plan;
 
-    if (plan.routes.length === 0 && budget.over) {
-      return json(res, 402, {
-        error: {
-          message: "budget_exceeded",
-          detail: `daily budget of ${budget.limit} spent (${budget.spent.toFixed(4)}); no unmetered route available`,
-          spentUsd: budget.spent,
-          limitUsd: budget.limit,
-          retryAfterMs: budget.retryAfterMs,
-        },
-      });
-    }
     if (candidates.length === 0) {
       if (combo) log.warn("FETCH", `${combo.name} ← all ${combo.of} member(s) unavailable`, { ...combo, retryAfterMs: plan.retryAfterMs });
       return unavailableResponse(res, { route, plan });
@@ -152,7 +143,8 @@ export function createFetchHandler(repos, { timeoutMs = FETCH_TIMEOUT_MS } = {})
       for (const connection of keys) {
         attempts++;
         const proxy = resolveNodeProxy(repos, node, connection, { settings });
-        const built = buildUpstreamRequest({ baseUrl, body, map });
+        const secret = connection.credentials?.apiKey || connection.credentials?.accessToken || null;
+        const built = buildUpstreamRequest({ baseUrl, body, map, secret });
         const upstreamStarted = Date.now();
 
         const executor = new DefaultExecutor(node, connection, { proxy });
@@ -162,7 +154,7 @@ export function createFetchHandler(repos, { timeoutMs = FETCH_TIMEOUT_MS } = {})
           signal,
           log,
           url: built.url,
-          auth: { style, secret: connection.credentials?.apiKey || connection.credentials?.accessToken || null },
+          auth: { style, secret, header: map.authHeader ?? null },
           bodyText: built.body,
           method: built.method,
           headers: headersFor(map),
@@ -206,7 +198,9 @@ export function createFetchHandler(repos, { timeoutMs = FETCH_TIMEOUT_MS } = {})
         }
 
         const text = await result.response.text().catch(() => "");
-        const parsed = safeJson(text);
+        // A `response.text` provider answers with the page itself (Jina Reader), so the body here
+        // is the payload rather than a JSON envelope that failed to parse.
+        const parsed = map.response?.text ? text : safeJson(text);
         if (parsed === null) {
           lastError = { ok: false, status: 502, errorCode: "upstream_error", message: "provider returned a non-JSON body" };
           recordFailure(repos, node, lastError);

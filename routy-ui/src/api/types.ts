@@ -10,10 +10,10 @@ export type NodeStatus = "healthy" | "degraded" | "down" | "disabled";
 
 /**
  * The non-chat kinds routy serves, as the gateway's kind enum defines them (`core/media.mjs`).
- * A kind IS its endpoint: `image` is `/v1/images/generations`, `stt` is
- * `/v1/audio/transcriptions`. Chat is not a media kind — it is what a node serves by default.
+ * A kind IS its endpoint: `image` is `/v1/images/generations`, `tts` is `/v1/audio/speech`.
+ * Chat is not a media kind — it is what a node serves by default.
  */
-export type MediaKind = "embedding" | "image" | "tts" | "stt" | "webSearch" | "webFetch";
+export type MediaKind = "embedding" | "image" | "tts" | "webSearch" | "webFetch";
 
 /** What the gateway reports for a kind: label + endpoint, so the UI never hardcodes paths. */
 export interface MediaKindInfo {
@@ -34,7 +34,6 @@ export const MEDIA_KIND_INFO: MediaKindInfo[] = [
   { id: "embedding", label: "Embeddings", method: "POST", path: "/v1/embeddings", modelList: "node" },
   { id: "image", label: "Text to Image", method: "POST", path: "/v1/images/generations", modelList: "node" },
   { id: "tts", label: "Text to Speech", method: "POST", path: "/v1/audio/speech", modelList: "voices" },
-  { id: "stt", label: "Speech to Text", method: "POST", path: "/v1/audio/transcriptions", modelList: "node" },
   { id: "webSearch", label: "Web Search", method: "POST", path: "/v1/search", modelList: "none" },
   { id: "webFetch", label: "Web Fetch", method: "POST", path: "/v1/web/fetch", modelList: "none" },
 ];
@@ -59,7 +58,10 @@ export interface NodeMediaConfig {
   /** per-kind upstream URL; absent = the node's baseUrl + the kind's OpenAI path */
   urls?: Partial<Record<MediaKind, string>>;
   /** per-kind credential style; absent = bearer with the node's key */
-  auth?: Partial<Record<MediaKind, { style: "bearer" | "token" | "x-api-key" | "key" | "none" }>>;
+  auth?: Partial<Record<MediaKind, { style: "bearer" | "token" | "x-api-key" | "key" | "query" | "none" }>>;
+  /** the web kinds' per-provider mapping (`core/mediaMap.mjs`): the provider's request and
+   *  response shapes. Sent whole, like the rest of this object — a partial one erases the rest. */
+  map?: Partial<Record<MediaKind, Record<string, unknown>>>;
   /** the node needs no credential at all (a local endpoint) */
   noAuth?: boolean;
 }
@@ -73,6 +75,25 @@ export interface MediaModelEntry {
   owned_by?: string;
 }
 
+/** One provider in the gateway's media catalogue (`core/mediaCatalog.mjs`). Every provider
+ *  9Router ships is here; `supported: false` names the code path routy does not have yet, and
+ *  carries no preset — an entry that looks selectable and then fails is worse than a gap. */
+export interface MediaCatalogEntry {
+  id: string;
+  name: string;
+  supported: boolean;
+  why: string | null;
+  /** 9Router's own selector for the code path the provider needs (tts providers) */
+  format: string | null;
+  /** for the providers that search by prompting a chat model */
+  chatModel: string | null;
+  models: string[];
+  /** settings the operator must supply, e.g. Google PSE's `cx` */
+  requires: string[];
+  /** the node fragment applying this preset writes; null when unsupported */
+  preset: { media: NodeMediaConfig } | null;
+}
+
 /** What the gateway's node view resolves for display: the kinds as written, each kind's URL
  *  (null when unset) and auth style. Differs from NodeMediaConfig only in that nulls are shown
  *  rather than absent — an unset URL is a real thing the Media tab has to say out loud. */
@@ -80,6 +101,9 @@ export interface ResolvedNodeMedia {
   kinds: MediaKind[];
   urls: Partial<Record<MediaKind, string | null>>;
   auth: Partial<Record<MediaKind, string>>;
+  /** the web kinds' mappings, as written — the dashboard has to be able to show what the
+   *  operator configured, since for those kinds the mapping IS the provider support */
+  map?: Partial<Record<MediaKind, Record<string, unknown>>>;
   noAuth: boolean;
 }
 

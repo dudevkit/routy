@@ -94,7 +94,7 @@ export class DefaultExecutor {
     // from `node.data.media.auth`) — see core/media.mjs `authHeadersFor`. `none` legitimately
     // yields no header, so this cannot be expressed as "override the default": the default
     // would still be added for a local endpoint that needs no key.
-    if (auth) return { ...headers, ...authHeadersFor(auth.style, auth.secret), ...(extra ?? {}) };
+    if (auth) return { ...headers, ...authHeadersFor(auth.style, auth.secret, auth.header ?? null), ...(extra ?? {}) };
     const key = this.connection?.credentials?.apiKey;
     if (key) headers.authorization = `Bearer ${key}`;
     return { ...headers, ...(extra ?? {}) };

@@ -18,6 +18,7 @@ import type {
   NewNodeInput,
   KeyTestResult,
   MediaKind,
+  MediaCatalogEntry,
   MediaModelEntry,
   ModelBulkAction,
   ModelBulkResult,
@@ -275,6 +276,42 @@ export const api = {
       }
     }
     return { object: "list", data };
+  },
+
+  /**
+   * A cut-down copy of the gateway's media catalogue. The mock exists for standalone UI work, so
+   * what has to be real is the SHAPE the Media tab renders — a preset it can apply, and an
+   * unsupported provider it has to explain — not the full provider list.
+   */
+  async mediaCatalog(): Promise<{ kinds: Partial<Record<MediaKind, MediaCatalogEntry[]>> }> {
+    const search = (id: string, name: string, url: string, query: string): MediaCatalogEntry => ({
+      id, name, supported: true, why: null, format: null, chatModel: null, models: [], requires: [],
+      preset: {
+        media: {
+          kinds: ["webSearch"],
+          urls: { webSearch: url },
+          map: { webSearch: { request: { query, max_results: "max_results" }, response: { results: "results", fields: { title: "title", url: "url" } } } },
+        },
+      },
+    });
+    const unsupported = (id: string, name: string, why: string): MediaCatalogEntry => ({
+      id, name, supported: false, why, format: null, chatModel: null, models: [], requires: [], preset: null,
+    });
+    return {
+      kinds: {
+        webSearch: [
+          search("tavily", "Tavily", "https://api.tavily.com/search", "query"),
+          search("searxng", "SearXNG (self-hosted)", "http://localhost:8888/search", "q"),
+          unsupported("glm", "GLM web_search_prime", "JSON-RPC over MCP — a shape routy does not speak yet"),
+        ],
+        webFetch: [
+          {
+            id: "jina-reader", name: "Jina Reader", supported: true, why: null, format: null, chatModel: null, models: [], requires: [],
+            preset: { media: { kinds: ["webFetch"], urls: { webFetch: "https://r.jina.ai/" }, map: { webFetch: { request: { url: "url" }, response: { text: true } } } } },
+          },
+        ],
+      },
+    };
   },
 
   async addModel(id: string, input: { model: string; kind?: MediaKind | "llm" }): Promise<NodeModel> {

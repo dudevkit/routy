@@ -35,7 +35,12 @@ export function budgetSpent(now = Date.now()) {
 }
 
 export function addSpend(usd) {
-  if (Number.isFinite(usd) && usd > 0) spendUsd += usd;
+  if (!Number.isFinite(usd) || usd <= 0) return;
+  // Roll the day FIRST, with the same rule `budgetSpent` uses. Otherwise spend added before the
+  // first read of the day is discarded by that read's rollover — and the loss is in the direction
+  // that stops the ceiling protecting anything (a budget that under-counts never blocks).
+  budgetSpent();
+  spendUsd += usd;
 }
 
 export function resetBudget() {

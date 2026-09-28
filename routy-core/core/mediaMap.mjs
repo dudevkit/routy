@@ -13,25 +13,48 @@
  *   method?     "POST" | "GET"                     default POST
  *   in?         "body" | "query"                   default: GET ⇒ query, POST ⇒ body
  *   headers?    { name: literal }                  static per-provider headers
+ *   static?     { providerField: literal }         fixed values the provider always wants
  *   request?    { routy.path: providerField }      renames; only what is named is sent
- *   response?   { results?, fields?, top? }
- *                 results  dotted path to the items array (search)
- *                 fields   routy.path ← provider.path, per item (search) / whole body (fetch)
- *                 top      routy.path ← provider.path, top level (answer, pagination, usage)
+ *   arrays?     [providerField, ...]               wrap those values in a one-element list
+ *   authQuery?  providerParam                      the credential goes in the query under this name
+ *   response?   { results?, fields?, top?, text?, titleRegex? }
+ *                 results     dotted path to the items array (search)
+ *                 fields      routy.path ← provider.path, per item (search) / whole body (fetch)
+ *                 top         routy.path ← provider.path, top level (answer, pagination, usage)
+ *                 text        the body IS the content (a text/markdown provider, not JSON)
+ *                 titleRegex  one regex, or a list tried in order, group 1 is the title
  *   raw?        provider already speaks routy's shape → returned untouched
  *
  * Routed request fields are dotted paths in both directions, so `provider_options.cursor` can map
  * to `cursor` without a special case, and a nested routy field (`content.text`) can be built from
- * a flat provider one.
+ * a flat provider one. Response paths accept `a|b` (first present) and numeric segments (`items.0`).
  */
 
-/** Read a dotted path (`""` → the value itself). */
+/**
+ * Read a dotted path (`""` → the value itself).
+ *
+ * Two things beyond plain drilling, both because real providers need them and both cheaper than a
+ * per-provider code path:
+ *   - `a|b|c` is a fallback chain. Providers put the same fact in different places depending on
+ *     what they chose to return (Firecrawl answers `data.markdown`, `data.html` or `data.text` for
+ *     the same page), and "the first one that is there" is the data form of that rule.
+ *   - a numeric segment indexes an array. Five of the six fetch providers wrap the page in a
+ *     one-element list, so `results.0.raw_content` is their normal shape, not an exception.
+ */
 export function getPath(source, path) {
   if (path === undefined || path === null || path === "") return source;
+  const text = String(path);
+  if (text.includes("|")) {
+    for (const alt of text.split("|")) {
+      const value = getPath(source, alt.trim());
+      if (value !== undefined && value !== null && value !== "") return value;
+    }
+    return undefined;
+  }
   let cur = source;
-  for (const seg of String(path).split(".")) {
+  for (const seg of text.split(".")) {
     if (cur === null || cur === undefined) return undefined;
-    cur = cur[seg];
+    cur = Array.isArray(cur) && /^\d+$/.test(seg) ? cur[Number(seg)] : cur[seg];
   }
   return cur;
 }
@@ -58,16 +81,31 @@ export function setPath(target, path, value) {
  *
  * @returns {{ method: "GET"|"POST", url: string, body: string }}
  */
-export function buildUpstreamRequest({ baseUrl, body, map }) {
+export function buildUpstreamRequest({ baseUrl, body, map, secret = null }) {
   const method = (map.method ?? (map.in === "query" ? "GET" : "POST")).toUpperCase();
   const target = map.in ?? (method === "GET" ? "query" : "body");
 
+  // Fixed values first, renames second, so a rename into the same field wins: `static` says what
+  // the provider always wants (Exa's `text: true`, Linkup's `outputType`), the rename says what
+  // the request carries.
   const payload = {};
+  for (const [k, v] of Object.entries(map.static ?? {})) payload[k] = v;
   for (const [source, dest] of Object.entries(map.request ?? {})) {
     const value = getPath(body, source);
     if (value === undefined || value === null) continue;
     payload[dest] = value;
   }
+
+  // A provider that wants a LIST where routy has one value: Tavily extract takes `urls: [u]`,
+  // Exa contents `ids: [u]`, Firecrawl `formats: [fmt]`.
+  for (const field of map.arrays ?? []) {
+    if (payload[field] !== undefined && !Array.isArray(payload[field])) payload[field] = [payload[field]];
+  }
+
+  // A credential that travels in the query string (Google PSE's `key`, SearchAPI's `api_key`).
+  // It goes in from the CONNECTION's secret, never from the mapping — the same rule that keeps
+  // `authorization` out of static headers.
+  if (map.authQuery && secret) payload[map.authQuery] = secret;
 
   const url = String(baseUrl).replace(/\/+$/, "");
   if (target === "query") {
@@ -136,6 +174,19 @@ export function normalizeSearch(raw, { map, provider, query, responseTimeMs, ups
 export function normalizeFetch(raw, { map, provider, requestedUrl, format, maxCharacters, responseTimeMs, upstreamMs }) {
   if (map.raw) return raw;
   const out = { provider, url: requestedUrl };
+
+  // `response.text` marks a provider that answers with the page itself rather than JSON — Jina
+  // Reader's whole interface. The body IS the content, and the title, when the provider prefixes
+  // one, comes from a regex over that same text (`Title: …`, else the first Markdown heading).
+  if (map.response?.text) {
+    const text = typeof raw === "string" ? raw : String(raw ?? "");
+    out.content = { text };
+    for (const pattern of [].concat(map.response.titleRegex ?? [])) {
+      const m = new RegExp(pattern, "im").exec(text);
+      if (m && m[1]) { out.title = m[1].trim(); break; }
+    }
+  }
+
   for (const [dest, source] of Object.entries(map.response?.fields ?? {})) {
     const value = getPath(raw, source);
     if (value !== undefined) setPath(out, dest, value);

@@ -5,8 +5,8 @@
 // of growing server.mjs, and so the whole surface is testable without booting a gateway.
 //
 // A request's KIND is decided by the path it arrived on, never by inspecting the body. That
-// is not a style choice: an STT body is multipart and is forwarded byte-for-byte (re-encoding
-// it would change the boundary), so nothing here may parse a body to find out what it is.
+// is not a style choice: a media body is forwarded byte-for-byte (re-encoding it would change
+// boundaries and lengths), so nothing here may parse one to find out what it is.
 import { json } from "../lib/router.mjs";
 import { listModels, modelInfo } from "../core/routing.mjs";
 import { CHAT_KIND, MEDIA_KINDS, MEDIA_KIND_IDS, expandKind, isKnownKind, mediaKindsOf } from "../core/media.mjs";
@@ -71,7 +71,7 @@ export function buildProxyRoutes(repos, { chatHandler, handlers = {} }) {
       },
     },
 
-    // Per-kind model discovery: /v1/models/embedding, /image, /tts, /stt, /web.
+    // Per-kind model discovery: /v1/models/embedding, /image, /tts, /web.
     // `/v1/models/web` carries both web kinds; each entry names its own kind, so a client
     // filters on the entry rather than on which endpoint returned it (9Router clients do).
     {
@@ -102,9 +102,6 @@ export function buildProxyRoutes(repos, { chatHandler, handlers = {} }) {
       : []),
     ...(handlers.tts
       ? [{ method: "POST", pattern: /^\/v1\/audio\/speech$/, handler: handlers.tts }]
-      : []),
-    ...(handlers.stt
-      ? [{ method: "POST", pattern: /^\/v1\/audio\/transcriptions$/, handler: handlers.stt }]
       : []),
     ...(handlers.search
       ? [{ method: "POST", pattern: /^\/v1\/search$/, handler: handlers.search }]

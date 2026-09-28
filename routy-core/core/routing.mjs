@@ -100,7 +100,7 @@ export function resolveRoute(repos, modelStr, { depth = 0, kind = CHAT_KIND } = 
     }
   }
 
-  // 5. bare "<model>" for kinds whose nodes register models (embedding, image, stt).
+  // 5. bare "<model>" for kinds whose nodes register models (embedding, image).
   //    routy's own ids are "<prefix>/<model>", but a client that hands us the provider's
   //    own name — `whisper-1`, `text-embedding-3-small` — should reach it when exactly one
   //    node serving that kind carries that model. One match is a fact; two is a question only

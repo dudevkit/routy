@@ -63,20 +63,11 @@ export function createSearchHandler(repos, { timeoutMs = SEARCH_TIMEOUT_MS } = {
       return json(res, 400, { error: { message: "bad_request", detail } });
     }
 
-    const plan = dispatchPlan(repos, route, { settings });
-    const { budget, candidates, combo } = plan;
+    // Media does not consult the daily budget (dispatchPlan's applyBudget): that limit is chat's
+    // token spend, and a web request has no price in routy to weigh against it.
+    const plan = dispatchPlan(repos, route, { settings, applyBudget: false });
+    const { candidates, combo } = plan;
 
-    if (plan.routes.length === 0 && budget.over) {
-      return json(res, 402, {
-        error: {
-          message: "budget_exceeded",
-          detail: `daily budget of ${budget.limit} spent (${budget.spent.toFixed(4)}); no unmetered route available`,
-          spentUsd: budget.spent,
-          limitUsd: budget.limit,
-          retryAfterMs: budget.retryAfterMs,
-        },
-      });
-    }
     if (candidates.length === 0) {
       if (combo) log.warn("SEARCH", `${combo.name} ← all ${combo.of} member(s) unavailable`, { ...combo, retryAfterMs: plan.retryAfterMs });
       return unavailableResponse(res, { route, plan });
@@ -142,7 +133,8 @@ export function createSearchHandler(repos, { timeoutMs = SEARCH_TIMEOUT_MS } = {
       for (const connection of keys) {
         attempts++;
         const proxy = resolveNodeProxy(repos, node, connection, { settings });
-        const built = buildUpstreamRequest({ baseUrl, body, map });
+        const secret = connection.credentials?.apiKey || connection.credentials?.accessToken || null;
+        const built = buildUpstreamRequest({ baseUrl, body, map, secret });
         const upstreamStarted = Date.now();
 
         const executor = new DefaultExecutor(node, connection, { proxy });
@@ -152,7 +144,7 @@ export function createSearchHandler(repos, { timeoutMs = SEARCH_TIMEOUT_MS } = {
           signal,
           log,
           url: built.url,
-          auth: { style, secret: connection.credentials?.apiKey || connection.credentials?.accessToken || null },
+          auth: { style, secret, header: map.authHeader ?? null },
           bodyText: built.body,             // exactly what the mapping built — nothing is added
           method: built.method,
           headers: headersFor(map),         // the mapping's static headers (never authorization)

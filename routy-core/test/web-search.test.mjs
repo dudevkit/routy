@@ -16,6 +16,7 @@ import { buildApiRoutes } from "../http/api.mjs";
 import { buildProxyRoutes } from "../http/v1.mjs";
 import { createSearchHandler } from "../core/handlers/search.mjs";
 import { createRouter, json } from "../lib/router.mjs";
+import { addSpend } from "../core/budget.mjs";
 import { subscribeLog } from "../lib/log.mjs";
 
 let tmp, db, repos, server, port, stubServer, stubPort, stubState;
@@ -281,5 +282,23 @@ describe("a combo of search providers", () => {
     expect(r.status).toBe(400);
     expect(r.body.error.message).toBe("upstream_rejected");
     expect(breaker(node.id)?.failures ?? 0).toBe(0);
+  });
+});
+
+describe("the daily budget is chat's, not media's", () => {
+  // The two kinds of traffic are metered differently on purpose: the budget is denominated in USD
+  // derived from chat token pricing, and a media request has no price in routy. Coupling them would
+  // mean a spent chat budget silently 402s a web search, which is the bug this pins.
+  it("serves a search while the chat budget is spent", async () => {
+    const node = searchNode("budgeted", POST_MAP, { url: `http://127.0.0.1:${stubPort}/api/search` });
+    // Metered on purpose: an unmetered node is kept by the budget filter either way, so the
+    // request would succeed without proving anything about media.
+    repos.nodes.update(node.id, { data: { ...node.data, pricing: { inputPer1M: 3, outputPer1M: 15 } } });
+    addSpend(5);
+    repos.settings.update({ budgetUsdPerDay: 0.01 });
+
+    const r = await post("/v1/search", { model: "budgeted/search", query: "q" });
+    expect(r.status).toBe(200);
+    expect(stubState.calls).toHaveLength(1);
   });
 });

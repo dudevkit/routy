@@ -247,7 +247,7 @@ export const MIGRATIONS = [
   {
     // v6 — a kind for models, usage and combos (docs/media-providers.md §0/§8 M0).
     //
-    // routy serves six non-chat kinds (embedding, image, tts, stt, webSearch, webFetch) on
+    // routy serves five non-chat kinds (embedding, image, tts, webSearch, webFetch) on
     // top of chat, and each has its own endpoint. "Kind" is what keeps the two in step: a
     // row's kind says which endpoint may reach it, so a model added for image generation
     // cannot appear in the chat list, and a combo cannot silently mix the two.

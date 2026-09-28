@@ -4,6 +4,7 @@
 import { json, readBody } from "../lib/router.mjs";
 import { COMBO_STRATEGIES, listModels, toolModelIds } from "../core/routing.mjs";
 import { CHAT_KIND, MEDIA_KIND_IDS, authStyleFor, expandKind, mediaConfigOf, mediaKindsOf, mediaUrlFor, validateMediaConfig } from "../core/media.mjs";
+import { catalogFor, presetFor } from "../core/mediaCatalog.mjs";
 import { budgetSpent } from "../core/budget.mjs";
 import { probeNode, probeKey, probeModel, mapLimit } from "../core/probe.mjs";
 import { clearLogs, log, recentLogs, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
@@ -387,6 +388,29 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (expanded.length === 1) return json(res, 200, listModels(repos, { kind: expanded[0] }));
     const data = expanded.flatMap((kind) => listModels(repos, { kind }).data);
     return json(res, 200, { object: "list", data });
+  });
+  /**
+   * The media provider catalogue: every provider 9Router ships for these kinds, and what routy
+   * can speak to today. Each entry carries the node fragment a preset applies, so the dashboard
+   * never has to know how a provider is configured — and an entry routy cannot serve names the
+   * code path it needs rather than looking selectable and failing later.
+   */
+  route("GET", /^\/api\/media\/catalog$/, (req, res) => {
+    const kinds = {};
+    for (const kind of MEDIA_KIND_IDS) {
+      kinds[kind] = catalogFor(kind).map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        supported: entry.supported !== false,
+        why: entry.why ?? null,
+        format: entry.format ?? null,
+        chatModel: entry.chatModel ?? null,
+        models: entry.models ?? [],
+        requires: entry.requires ?? [],
+        preset: presetFor(kind, entry.id)?.data ?? null,
+      }));
+    }
+    json(res, 200, { kinds });
   });
   // ── models (P6) ───────────────────────────────────────────────────────────
   // The list is discovery-only: it feeds /v1/models and the UI. Routing still

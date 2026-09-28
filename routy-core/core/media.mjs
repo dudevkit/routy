@@ -2,13 +2,14 @@
 // (docs/media-providers.md §0). A kind IS the endpoint it serves, so this enum is the
 // single place the two are kept in step: `/v1/models/<kind>` lists the models of a kind,
 // `POST <path>` serves it, and a request's kind is decided by the path it arrived on —
-// never by inspecting the body (an STT body is multipart we deliberately do not parse).
+// never by inspecting the body.
 //
-// Scope is deliberately six kinds. `video` is absent because a video create is a billable
-// upstream job and needs a different rotation policy (never retry a create; rotate only on
-// 401/403/429; never rotate a poll) — that belongs in a change of its own, not in a list.
-// 9Router also declares `music`, but it has no route and no provider config there, so it is
-// a placeholder we do not guess at.
+// Scope is deliberately five kinds. `stt` was built and then removed: it was never asked for
+// (the user's kind was text-to-speech), and 9Router's own stt providers each need their own
+// shape. `video` is absent because a video create is a billable upstream job and needs a
+// different rotation policy (never retry a create; rotate only on 401/403/429; never rotate a
+// poll) — that belongs in a change of its own, not in a list. 9Router also declares `music`,
+// but it has no route and no provider config there, so it is a placeholder we do not guess at.
 
 /** The kinds routy serves. `modelList` says what discovery can enumerate for the kind:
  *   "node"   — the node's own model rows (a provider hosting several models)
@@ -20,7 +21,6 @@ export const MEDIA_KINDS = Object.freeze({
   embedding: { label: "Embedding", method: "POST", path: "/v1/embeddings", modelList: "node", logTag: "EMBED" },
   image: { label: "Text to Image", method: "POST", path: "/v1/images/generations", modelList: "node", logTag: "IMAGE" },
   tts: { label: "Text To Speech", method: "POST", path: "/v1/audio/speech", modelList: "voices", logTag: "TTS" },
-  stt: { label: "Speech To Text", method: "POST", path: "/v1/audio/transcriptions", modelList: "node", logTag: "STT" },
   webSearch: { label: "Web Search", method: "POST", path: "/v1/search", modelList: "none", logTag: "SEARCH" },
   webFetch: { label: "Web Fetch", method: "POST", path: "/v1/web/fetch", modelList: "none", logTag: "FETCH" },
 });
@@ -38,8 +38,10 @@ export const CHAT_KIND = "llm";
 export const KIND_ALIASES = Object.freeze({ web: ["webSearch", "webFetch"] });
 
 /** How a credential is presented upstream. `none` is a real case, not an omission:
- *  local ComfyUI/SearXNG-style endpoints answer without auth. */
-export const AUTH_STYLES = Object.freeze(["bearer", "token", "x-api-key", "key", "none"]);
+ *  local ComfyUI/SearXNG-style endpoints answer without auth. `query` means the key travels as a
+ *  query parameter — Google PSE's `key`, SearchAPI's `api_key` — and the mapping's `authQuery`
+ *  names the parameter; no header is sent. */
+export const AUTH_STYLES = Object.freeze(["bearer", "token", "x-api-key", "key", "query", "none"]);
 
 export function isMediaKind(kind) {
   return Object.prototype.hasOwnProperty.call(MEDIA_KINDS, kind);
@@ -123,12 +125,19 @@ export function authStyleFor(node, kind) {
  * fact — an adapter that re-decides it is an adapter that can disagree with the config.
  * `none` returns nothing: a local endpoint that answers without a key is ready, not broken.
  */
-export function authHeadersFor(style, secret) {
+export function authHeadersFor(style, secret, header = null) {
   if (!secret || style === "none") return {};
+  // Some providers put the key in a header with its own name — Brave's `x-subscription-token`,
+  // ElevenLabs' `xi-api-key`. The mapping names the header because the name is the provider's
+  // format, while the VALUE still comes from the connection: a mapping never carries a secret.
+  if (header) return { [header]: secret };
   switch (style) {
     case "token": return { Authorization: `Token ${secret}` };
     case "x-api-key": return { "x-api-key": secret };
     case "key": return { Authorization: `Key ${secret}` };
+    // The credential is a query parameter here, and the mapping puts it there — sending it as a
+    // Bearer header as well would leak the key into a place the provider logs.
+    case "query": return {};
     default: return { Authorization: `Bearer ${secret}` };
   }
 }
@@ -222,7 +231,7 @@ export function validateMediaConfig(value) {
       if (typeof spec !== "object" || spec === null || Array.isArray(spec)) {
         return { ok: false, detail: `media.map.${kind} must be an object` };
       }
-      const knownMap = ["method", "in", "headers", "request", "response", "raw"];
+      const knownMap = ["method", "in", "headers", "static", "request", "arrays", "authQuery", "authHeader", "response", "raw"];
       for (const k of Object.keys(spec)) {
         if (!knownMap.includes(k)) {
           return { ok: false, detail: `media.map.${kind}.${k} is not a setting (expected one of: ${knownMap.join(", ")})` };
@@ -280,12 +289,55 @@ export function validateMediaConfig(value) {
         if (!r.ok) return r;
         specOut.request = r.value;
       }
+
+      // `static` values are literals the provider always wants, so unlike a rename they may be any
+      // scalar: Exa's `text: true`, Linkup's `outputType: "searchResults"`.
+      if (spec.static !== undefined) {
+        if (typeof spec.static !== "object" || spec.static === null || Array.isArray(spec.static)) {
+          return { ok: false, detail: `media.map.${kind}.static must be an object of literal values` };
+        }
+        for (const [k, v] of Object.entries(spec.static)) {
+          if (!k.trim()) return { ok: false, detail: `media.map.${kind}.static needs field names` };
+          const t = typeof v;
+          if (t !== "string" && t !== "number" && t !== "boolean") {
+            return { ok: false, detail: `media.map.${kind}.static.${k} must be a string, number or boolean` };
+          }
+        }
+        specOut.static = { ...spec.static };
+      }
+
+      // Fields the provider wants as a one-element list where routy has one value.
+      if (spec.arrays !== undefined) {
+        if (!Array.isArray(spec.arrays) || spec.arrays.length === 0 || spec.arrays.some((f) => typeof f !== "string" || !f.trim())) {
+          return { ok: false, detail: `media.map.${kind}.arrays must be a non-empty list of field names` };
+        }
+        specOut.arrays = [...spec.arrays];
+      }
+
+      // The credential's query parameter, when the provider wants the key in the URL. The value
+      // itself comes from the connection: a mapping names the parameter, never the secret.
+      if (spec.authQuery !== undefined) {
+        if (typeof spec.authQuery !== "string" || !spec.authQuery.trim() || /[\r\n&?#]/.test(spec.authQuery)) {
+          return { ok: false, detail: `media.map.${kind}.authQuery must be a query parameter name` };
+        }
+        specOut.authQuery = spec.authQuery;
+      }
+
+      // The credential's header NAME, for providers that do not use a standard scheme (Brave's
+      // `x-subscription-token`). Safe to accept `authorization` here, unlike in `headers`: the
+      // value is the connection's secret, so this renames a credential rather than replacing one.
+      if (spec.authHeader !== undefined) {
+        if (typeof spec.authHeader !== "string" || !spec.authHeader.trim() || /[\r\n:]/.test(spec.authHeader)) {
+          return { ok: false, detail: `media.map.${kind}.authHeader must be a header name` };
+        }
+        specOut.authHeader = spec.authHeader;
+      }
       if (spec.response !== undefined) {
         const resp = spec.response;
         if (typeof resp !== "object" || resp === null || Array.isArray(resp)) {
           return { ok: false, detail: `media.map.${kind}.response must be an object` };
         }
-        const knownResp = ["results", "fields", "top"];
+        const knownResp = ["results", "fields", "top", "text", "titleRegex"];
         for (const k of Object.keys(resp)) {
           if (!knownResp.includes(k)) {
             return { ok: false, detail: `media.map.${kind}.response.${k} is not a setting (expected one of: ${knownResp.join(", ")})` };
@@ -303,6 +355,25 @@ export function validateMediaConfig(value) {
           const r = stringMap(resp[label], `response.${label}`);
           if (!r.ok) return r;
           respOut[label] = r.value;
+        }
+        // A provider that answers with the page itself (Jina Reader) rather than JSON.
+        if (resp.text !== undefined) {
+          if (resp.text !== true) return { ok: false, detail: `media.map.${kind}.response.text must be true` };
+          respOut.text = true;
+        }
+        if (resp.titleRegex !== undefined) {
+          const patterns = [].concat(resp.titleRegex);
+          if (patterns.length === 0 || patterns.some((p) => typeof p !== "string" || !p.trim())) {
+            return { ok: false, detail: `media.map.${kind}.response.titleRegex must be a regex string, or a list of them` };
+          }
+          for (const p of patterns) {
+            // Compiled here, not at request time: an invalid pattern would otherwise be a 500 on a
+            // request whose configuration looks fine in the dashboard.
+            try { new RegExp(p); } catch {
+              return { ok: false, detail: `media.map.${kind}.response.titleRegex is not a valid regex: ${p}` };
+            }
+          }
+          respOut.titleRegex = resp.titleRegex;
         }
         specOut.response = respOut;
       }
