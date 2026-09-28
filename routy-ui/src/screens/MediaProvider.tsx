@@ -1,6 +1,7 @@
 import { useParams, Link, Navigate } from "react-router-dom";
 import { useMediaCatalog, useNodes } from "../api/hooks";
 import { MediaProviderSettings } from "../components/MediaProviderSettings";
+import { ExampleCard } from "../components/ExampleCard";
 import { MEDIA_KIND_INFO, type ResolvedNodeMedia } from "../api/types";
 import { KeysTab, ModelsTab } from "./ProviderDetail";
 import { Badge } from "../components/ui/Badge";
@@ -101,6 +102,10 @@ export function MediaProvider() {
 
       {/* The same key UI a text-generation provider gets — multiple keys, priority, per-key test. */}
       <KeysTab node={node} />
+
+      {/* Run a real request with the connected key — the only honest test a media provider has,
+          since routy's probe speaks an API these hosts do not. */}
+      <ExampleCard node={node} />
 
       {kinds.some((k) => MEDIA_KIND_INFO.find((i) => i.id === k)?.modelList === "node") && (
         <>
