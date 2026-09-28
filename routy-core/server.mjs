@@ -34,6 +34,27 @@ globalThis.__bootedAt = Date.now();
 
 // ── single-gateway lock (R3-6): one routy.db implies one gateway ─────────────
 fs.mkdirSync(cfg.home, { recursive: true }); // fresh ROUTY_HOME must not crash boot
+
+// Set only for a process the dashboard's Restart button started, and consumed here so nothing
+// downstream inherits "I am a replacement" as an identity. The old process holds gateway.lock for
+// its whole life, so waiting for it HERE — before the check below turns "still shutting down" into
+// "another gateway is already running" (exit 73) — is the difference between a restart that hands
+// over and a restart that leaves the user with no gateway at all.
+const isRestarting = process.env.ROUTY_RESTARTING === "1";
+delete process.env.ROUTY_RESTARTING;
+if (isRestarting) {
+  const probeLock = path.join(cfg.home, "gateway.lock");
+  const lockDeadline = Date.now() + 20_000;
+  while (fs.existsSync(probeLock)) {
+    let holder = null;
+    try { holder = JSON.parse(fs.readFileSync(probeLock, "utf8")); } catch { break; }
+    let alive = false;
+    if (holder?.pid) { try { process.kill(holder.pid, 0); alive = true; } catch { alive = false; } }
+    if (!alive) break; // a stale lock: the normal path below takes it over
+    if (Date.now() > lockDeadline) break; // not draining — fail exactly like a normal boot
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
 const lockPath = path.join(cfg.home, "gateway.lock");
 if (fs.existsSync(lockPath)) {
   let holder = null;
@@ -223,6 +244,28 @@ const server = http.createServer((req, res) => {
 
   dispatch(req, res);
 });
+
+// A replacement spawned by the dashboard's Restart button arrives while this process may still be
+// draining: binding first would fail with EADDRINUSE and the one thing the button promises — a
+// clean handover — would become a dead gateway. So the replacement waits for the port to stop
+// answering before it listens. One-shot: the flag is consumed here so nothing downstream inherits
+// "I am a restart" as a permanent identity.
+if (isRestarting) {
+  const probeHost = cfg.host === "0.0.0.0" || cfg.host === "::" || cfg.host === "" ? "127.0.0.1" : cfg.host;
+  const probe = `http://${probeHost}:${cfg.port}/api/health`;
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    let up = false;
+    try {
+      up = (await fetch(probe, { signal: AbortSignal.timeout(700) })).ok;
+    } catch {
+      up = false; // refused or timed out: the old process is gone
+    }
+    if (!up) break;
+    if (Date.now() > deadline) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
 
 server.listen(cfg.port, cfg.host, () => {
   const requireLogin = repos.settings.get("requireLogin", true) !== false;

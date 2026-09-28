@@ -20,6 +20,7 @@ import {
 } from "../lib/auth.mjs";
 import { checkForUpdate, updateState } from "../core/updates.mjs";
 import { RESTART_FOR_UPDATE, applyUpdate } from "../core/update-apply.mjs";
+import { spawnReplacement } from "../core/restart.mjs";
 import { getDispatcher, undiciFetch } from "../core/executors/pool.mjs";
 import { connectionState } from "../core/key-health.mjs";
 import { DEFAULT_PROXY_TEST_URL, forgetExitHealth, poolExits, proxyIdentity, resetPoolHealth, resolveNodeProxy, testProxyUrl } from "../core/proxy.mjs";
@@ -671,6 +672,22 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (!hooks.shutdown) return json(res, 501, { error: { message: "not_supported" } });
     json(res, 202, { status: "shutting_down" });
     setImmediate(() => hooks.shutdown("api"));
+  });
+
+  // Restart from the dashboard. The replacement is spawned BEFORE this process exits: nothing
+  // supervises a locally started gateway, so a bare exit would leave the user with no routy until
+  // someone noticed. If the OS refuses to start a child we do not exit — a restart that cannot
+  // replace itself is a shutdown, and the caller deserves to be told which one happened.
+  route("POST", /^\/api\/gateway\/restart$/, (req, res) => {
+    if (!hooks.shutdown) return json(res, 501, { error: { message: "not_supported" } });
+    let pid = null;
+    try {
+      pid = spawnReplacement();
+    } catch (err) {
+      return json(res, 500, { error: { message: "restart_failed", detail: err instanceof Error ? err.message : String(err) } });
+    }
+    json(res, 202, { status: "restarting", pid });
+    setImmediate(() => hooks.shutdown("restart"));
   });
 
   // settings

@@ -268,6 +268,9 @@ export const api = {
    *  fragment a preset applies. Providers routy cannot serve yet carry a `why` instead. */
   mediaCatalog: (): Promise<{ kinds: Partial<Record<MediaKind, MediaCatalogEntry[]>> }> =>
     getJson("/api/media/catalog"),
+  /** Restart the gateway. The server spawns its replacement BEFORE it exits (nothing supervises a
+   *  locally started one), so a 202 here means the gateway will come back by itself. */
+  restartGateway: (): Promise<{ status: string; pid: number }> => postJson("/api/gateway/restart"),
   addModel: (id: string, input: { model: string; enabled?: boolean }): Promise<NodeModel> =>
     postJson<NodeModel>(`/api/nodes/${enc(id)}/models`, input),
   updateModel: (id: string, modelId: string, patch: { model?: string; enabled?: boolean }): Promise<NodeModel> =>

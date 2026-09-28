@@ -314,6 +314,11 @@ export const api = {
     };
   },
 
+  /** A mock has no process to restart: fail loudly rather than answer 202 and hang the button. */
+  async restartGateway(): Promise<{ status: string; pid: number }> {
+    throw new Error("restart is not available in mock mode");
+  },
+
   async addModel(id: string, input: { model: string; kind?: MediaKind | "llm" }): Promise<NodeModel> {
     const existing = state.models.find((m) => m.nodeId === id && m.model === input.model.trim());
     if (existing) {

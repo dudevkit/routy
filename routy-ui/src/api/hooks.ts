@@ -59,6 +59,9 @@ export const useDetailsForEvent = (usageEventId: number | null) =>
 
 export const useGateway = () => useQuery({ queryKey: GATEWAY, queryFn: api.getGateway, refetchInterval: 30000 });
 
+/** Restart the gateway from the dashboard — the page then waits for it and reloads. */
+export const useRestartGateway = () => useMutation({ mutationFn: api.restartGateway });
+
 export const useHealth = () => useQuery({ queryKey: ["health"], queryFn: api.getHealth, refetchInterval: 30000 });
 
 export const useSettings = () => useQuery({ queryKey: ["settings"], queryFn: api.getSettings });

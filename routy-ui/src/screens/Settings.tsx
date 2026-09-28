@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useCheckUpdates, useDismissUpdate, useGateway, useHealth, usePutSettings, useSettings, useStats, useUpdates } from "../api/hooks";
+import { useCheckUpdates, useDismissUpdate, useGateway, useHealth, usePutSettings, useRestartGateway, useSettings, useStats, useUpdates } from "../api/hooks";
 import { toastApiError } from "../utils/errors";
 import { fmtAgo, fmtCost } from "../utils/format";
 import { CopyChip } from "../components/CopyChip";
@@ -337,6 +337,81 @@ function UpdateSettingsCard() {
   );
 }
 
+/**
+ * Restart the gateway from the dashboard, so picking up a change never needs the assistant.
+ *
+ * The server spawns its replacement BEFORE it exits (`core/restart.mjs`), which is what makes this
+ * safe: nothing supervises a locally started gateway, so a bare exit would leave the user with no
+ * routy at all. The button's own job is the waiting — watch it go DOWN, then come BACK, so an
+ * answer from the old process during its drain is never mistaken for the new one — and then reload
+ * to pick up whatever changed: a new bundle, a config on disk, an installed release.
+ */
+function RestartButton() {
+  const toast = useToast();
+  const restart = useRestartGateway();
+  const [busy, setBusy] = useState(false);
+
+  const sleep = (ms: number) => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setTimeout(resolve, ms);
+    return promise;
+  };
+
+  const start = async () => {
+    if (!window.confirm("Restart the gateway now? This page waits for it to come back, then reloads.")) return;
+    setBusy(true);
+    try {
+      await restart.mutateAsync();
+    } catch (err) {
+      toastApiError(toast, err, "Restart failed — the gateway is still running");
+      setBusy(false);
+      return;
+    }
+
+    // Down first: while the old process drains, /api/health still answers, and reloading on that
+    // answer would land the page back on a process that is about to disappear.
+    const gone = (async () => {
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        try {
+          await fetch("/api/health", { cache: "no-store" });
+        } catch {
+          return true; // nothing is listening any more
+        }
+        await sleep(300);
+      }
+      return false;
+    })();
+    await gone;
+
+    const back = (async () => {
+      const deadline = Date.now() + 45_000;
+      while (Date.now() < deadline) {
+        try {
+          if ((await fetch("/api/health", { cache: "no-store" })).ok) return true;
+        } catch {
+          /* still down */
+        }
+        await sleep(500);
+      }
+      return false;
+    })();
+
+    if (await back) {
+      location.reload();
+    } else {
+      setBusy(false);
+      toast("Gateway did not come back in 45s — check the process and its log");
+    }
+  };
+
+  return (
+    <Button size="sm" variant="outline" disabled={busy} onClick={start}>
+      {busy ? "Restarting…" : "Restart"}
+    </Button>
+  );
+}
+
 export function Settings() {
   const toast = useToast();
   const gateway = useGateway();
@@ -372,7 +447,10 @@ export function Settings() {
   return (
     <div className="flex flex-col gap-4">
       <Card padding="sm" className="flex flex-col gap-3">
-        <h3 className="text-sm font-semibold text-text-main">Gateway</h3>
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-text-main">Gateway</h3>
+          <RestartButton />
+        </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="flex flex-col gap-1">
             <span className="text-[11px] text-text-muted">Proxy endpoint</span>
