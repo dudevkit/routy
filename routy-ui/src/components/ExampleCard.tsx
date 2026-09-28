@@ -19,13 +19,17 @@ import { useToast } from "./ui/Toast";
  * It SPENDS the provider's quota when Run is pressed — that is the request it is testing — which
  * is why Run is a deliberate click and never automatic.
  */
-export function ExampleCard({ node }: { node: UpstreamNode }) {
+/** Text generation's entry. Chat is not a media kind, but the card is the same shape, so the
+ *  provider page reuses it — one request tester, not one per surface. */
+const CHAT_INFO = { id: "llm", label: "Chat", method: "POST", path: "/v1/chat/completions", modelList: "node" };
+
+export function ExampleCard({ node, kind: kindProp }: { node: UpstreamNode; kind?: MediaKind | "llm" }) {
   const toast = useToast();
   const gateway = useGateway();
   const keys = useKeys();
   const models = useNodeModels(node.id);
-  const kind = node.mediaKinds?.[0] as MediaKind | undefined;
-  const info = kind ? MEDIA_KIND_INFO.find((k) => k.id === kind) : undefined;
+  const kind = kindProp ?? (node.mediaKinds?.[0] as MediaKind | undefined);
+  const info = kind === "llm" ? CHAT_INFO : kind ? MEDIA_KIND_INFO.find((k) => k.id === kind) : undefined;
 
   // The provider key: the gateway's client key, which is what /v1/* asks for.
   const clientKey = (keys.data ?? []).find((k) => k.enabled !== false)?.key ?? "";
@@ -34,7 +38,7 @@ export function ExampleCard({ node }: { node: UpstreamNode }) {
     try { return `${new URL(gateway.data.endpoint).origin}${info.path}`; } catch { return info.path; }
   }, [gateway.data?.endpoint, info]);
 
-  const modelRows = (models.data?.models ?? []).filter((m) => !m.stale && m.enabled !== false && (!kind || m.kind === kind));
+  const modelRows = (models.data?.models ?? []).filter((m) => !m.stale && m.enabled !== false && (!kind || m.kind === kind || (kind === "llm" && (m.kind === "llm" || !m.kind))));
   const defaultModel = info?.modelList === "none" ? node.prefix : modelRows[0] ? `${node.prefix}/${modelRows[0].model}` : "";
 
   // Kind-specific fields, kept as strings so an empty box is a field the caller simply did not set.
@@ -46,6 +50,8 @@ export function ExampleCard({ node }: { node: UpstreamNode }) {
   const [format, setFormat] = useState("markdown");
   const [maxChars, setMaxChars] = useState("0");
   const [prompt, setPrompt] = useState("a watercolor fox in a foggy forest");
+  const [message, setMessage] = useState("Reply with exactly: pong");
+  const [maxTokens, setMaxTokens] = useState("64");
 
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ status: number; ms: number; body: string } | null>(null);
@@ -64,6 +70,11 @@ export function ExampleCard({ node }: { node: UpstreamNode }) {
       case "webSearch": {
         const body: Record<string, unknown> = { model: usedModel, query };
         if (maxResults.trim() !== "") body.max_results = Number(maxResults);
+        return body;
+      }
+      case "llm": {
+        const body: Record<string, unknown> = { model: usedModel, messages: [{ role: "user", content: message }] };
+        if (maxTokens.trim() !== "" && Number(maxTokens) > 0) body.max_tokens = Number(maxTokens);
         return body;
       }
       case "embedding": return { model: usedModel, input };
@@ -177,6 +188,19 @@ export function ExampleCard({ node }: { node: UpstreamNode }) {
         )}
         {kind === "image" && (
           <Row label="Prompt"><Input value={prompt} onChange={(e) => setPrompt(e.target.value)} /></Row>
+        )}
+        {kind === "llm" && (
+          <>
+            <Row label="Message">
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                rows={3}
+                className="w-full rounded border border-border-subtle bg-background px-3 py-2 font-mono text-sm text-text-main focus:outline-none focus:border-accent"
+              />
+            </Row>
+            <Row label="Max tokens"><Input value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)} /></Row>
+          </>
         )}
         {info.modelList !== "none" && (
           <Row label="Model">
