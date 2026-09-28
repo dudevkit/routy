@@ -1,5 +1,6 @@
 import { useParams, Link, Navigate } from "react-router-dom";
 import { useMediaCatalog, useNodes } from "../api/hooks";
+import { MediaProviderSettings } from "../components/MediaProviderSettings";
 import { MEDIA_KIND_INFO, type ResolvedNodeMedia } from "../api/types";
 import { KeysTab, ModelsTab } from "./ProviderDetail";
 import { Badge } from "../components/ui/Badge";
@@ -68,9 +69,6 @@ export function MediaProvider() {
               <Button size="sm" variant="outline">Get a key</Button>
             </a>
           )}
-          <Link to={`/upstreams/${node.id}`}>
-            <Button size="sm" variant="ghost">Advanced settings</Button>
-          </Link>
         </div>
       </div>
 
@@ -96,6 +94,10 @@ export function MediaProvider() {
           </div>
         )}
       </Card>
+
+      {/* Endpoint, credential style and the "no key" switch — the media provider's own advanced
+          settings, which never route out of this menu. */}
+      <MediaProviderSettings node={node} />
 
       {/* The same key UI a text-generation provider gets — multiple keys, priority, per-key test. */}
       <KeysTab node={node} />

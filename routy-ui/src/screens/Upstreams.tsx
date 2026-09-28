@@ -190,6 +190,9 @@ export function Upstreams() {
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return (nodes.data ?? []).filter((n) => {
+      // Media providers are the OTHER thing: they are added from the Media menu and live there,
+      // so this screen shows only what the user added by hand for text generation.
+      if (n.media?.provider) return false;
       if (filter !== "all" && n.status !== filter) return false;
       if (!needle) return true;
       return `${n.name} ${n.baseUrl} ${n.prefix}`.toLowerCase().includes(needle);
@@ -212,7 +215,7 @@ export function Upstreams() {
     );
   }
 
-  const total = nodes.data?.length ?? 0;
+  const total = (nodes.data ?? []).filter((n) => !n.media?.provider).length;
 
   return (
     <div className="flex flex-col gap-4">
