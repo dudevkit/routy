@@ -90,6 +90,15 @@ function useRoutableModels(): ModelsState {
 
 // Every strategy the core implements. Offering only three of the five meant `fastest` and
 // `cheapest` existed, were tested, and could not be selected from the dashboard.
+const COMBO_KINDS = [
+  { value: "llm", label: "Chat" },
+  { value: "webSearch", label: "Web Search" },
+  { value: "webFetch", label: "Web Fetch" },
+  { value: "embedding", label: "Embeddings — combos not enabled yet" },
+  { value: "image", label: "Text to Image — combos not enabled yet" },
+  { value: "tts", label: "Text to Speech — combos not enabled yet" },
+];
+
 const STRATEGIES = [
   { value: "fallback", label: "Fallback (in order)" },
   { value: "round-robin", label: "Round robin" },
@@ -262,6 +271,9 @@ function ComboCard({ combo, suggestions }: { combo: Combo; suggestions: string[]
             </Badge>
             {/* The strategy is on the card, not only inside the select: whether a combo
                 spreads or pins its first member is the thing you need to see at rest. */}
+            <Badge variant={combo.kind && combo.kind !== "llm" ? "primary" : "default"} size="sm">
+              {COMBO_KINDS.find((k) => k.value === combo.kind)?.label.split(" — ")[0] ?? "Chat"}
+            </Badge>
             <Badge variant="default" size="sm">
               {combo.strategy === "sticky" ? `sticky · ${combo.stickyLimit}` : combo.strategy}
             </Badge>
@@ -396,6 +408,9 @@ function NewComboModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
   // The strategy is chosen here rather than inherited silently: a combo created as `fallback`
   // and only configured later is a combo whose first request already behaved the old way.
   const [strategy, setStrategy] = useState("fallback");
+  // The endpoint the combo serves. Chosen up front because a combo's members are resolved for
+  // exactly one kind — a chat combo is unreachable from a media request, and vice versa.
+  const [kind, setKind] = useState("llm");
   const trimmed = name.trim();
   const valid = trimmed.length > 0 && /^[a-zA-Z0-9_.-]+$/.test(trimmed);
 
@@ -416,12 +431,13 @@ function NewComboModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
             loading={create.isPending}
             onClick={() =>
               create.mutate(
-                { name: trimmed, models: [], strategy },
+                { name: trimmed, models: [], strategy, kind },
                 {
                   onSuccess: (combo) => {
                     toast(`Combo created · ${combo?.strategy ?? strategy}`);
                     setName("");
                     setStrategy("fallback");
+                    setKind("llm");
                     onClose();
                   },
                   onError: (err) => toastApiError(toast, err, "Create failed"),
@@ -446,6 +462,7 @@ function NewComboModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
           error={trimmed.length > 0 && !valid ? "Invalid characters in name" : undefined}
         />
         <div className="flex flex-col gap-1.5">
+          <Select label="Serves" value={kind} options={COMBO_KINDS} onChange={(e) => setKind(e.target.value)} />
           <Select label="Strategy" value={strategy} options={STRATEGIES} onChange={(e) => setStrategy(e.target.value)} />
           <p className="text-[11px] text-text-subtle">{STRATEGY_HINT[strategy] ?? ""} Add models after creating.</p>
         </div>

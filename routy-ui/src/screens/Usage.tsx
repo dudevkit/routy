@@ -13,6 +13,7 @@ import { useDetails, useDetailsForEvent, useGateway, useHistory, useNodes, useSt
 import type { RequestDetail, UsageHistoryRow } from "../api/types";
 import { fmtAgo, fmtClock, fmtCost, fmtMs, fmtTokens } from "../utils/format";
 import { Card } from "../components/ui/Card";
+import { Select } from "../components/ui/Select";
 import { Drawer } from "../components/ui/Drawer";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -394,6 +395,16 @@ function QuotaTab({ rows }: { rows: UsageHistoryRow[] }) {
 }
 
 /* ── screen ────────────────────────────────────────────────────────────────── */
+const KIND_FILTER = [
+  { value: "all", label: "All kinds" },
+  { value: "llm", label: "Chat" },
+  { value: "embedding", label: "Embeddings" },
+  { value: "image", label: "Text to Image" },
+  { value: "tts", label: "Text to Speech" },
+  { value: "webSearch", label: "Web Search" },
+  { value: "webFetch", label: "Web Fetch" },
+];
+
 const TABS = [
   { value: "overview", label: "Overview" },
   { value: "details", label: "Details" },
@@ -405,6 +416,13 @@ export function Usage() {
   const tab = TABS.some((t) => t.value === params.get("tab")) ? (params.get("tab") as string) : "overview";
   const weekAgo = useMemo(() => Date.now() - 7 * 24 * 3600_000, []);
   const history = useHistory({ since: weekAgo, limit: 1000 });
+  // usage_events carries a kind per row, so this filters what was already fetched — chat traffic
+  // and a web fetch are different questions, and one mixed list answers neither.
+  const [kindFilter, setKindFilter] = useState("all");
+  const rows = useMemo(() => {
+    const all = history.data ?? [];
+    return kindFilter === "all" ? all : all.filter((r) => r.kind === kindFilter);
+  }, [history.data, kindFilter]);
   const gateway = useGateway();
 
   const setTab = (next: string) => {
@@ -436,9 +454,22 @@ export function Usage() {
         </span>
       </div>
 
-      {tab === "overview" && <OverviewTab rows={history.data ?? []} />}
-      {tab === "details" && <DetailsTab rows={history.data ?? []} />}
-      {tab === "quota" && <QuotaTab rows={history.data ?? []} />}
+      <div className="flex flex-wrap items-center gap-3 border-t border-border-subtle pt-3">
+        <Select
+          label="Kind"
+          value={kindFilter}
+          options={KIND_FILTER}
+          onChange={(e) => setKindFilter(e.target.value)}
+        />
+        <span className="text-[11px] text-text-muted">
+          {rows.length} of {(history.data ?? []).length} requests
+          {kindFilter !== "all" ? ` · ${KIND_FILTER.find((k) => k.value === kindFilter)?.label ?? kindFilter}` : ""}
+        </span>
+      </div>
+
+      {tab === "overview" && <OverviewTab rows={rows} />}
+      {tab === "details" && <DetailsTab rows={rows} />}
+      {tab === "quota" && <QuotaTab rows={rows} />}
     </div>
   );
 }

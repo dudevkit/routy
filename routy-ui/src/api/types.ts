@@ -242,6 +242,8 @@ export interface UsageHistoryRow {
   id: number;
   ts: number;
   at: string;
+  /** which endpoint served it: llm, embedding, image, tts, webSearch, webFetch */
+  kind?: string;
   node_id: string | null;
   connection_id: string | null;
   api_key_id: string | null;
@@ -284,6 +286,8 @@ export interface GatewayHealth {
 
 /* ── routing: combos + aliases ─────────────────────────────────────────────── */
 export interface Combo {
+  /** which endpoint it serves: "llm" (chat) or a media kind; absent = chat */
+  kind?: string;
   id: string;
   name: string;
   /** ordered "model" or "prefix/model" entries — first = primary, rest = fallback */
@@ -297,6 +301,8 @@ export interface ComboInput {
   name: string;
   models?: string[];
   strategy?: string;
+  /** which endpoint this combo serves: "llm" (chat) or a media kind. Absent = chat. */
+  kind?: string;
   stickyLimit?: number;
 }
 
