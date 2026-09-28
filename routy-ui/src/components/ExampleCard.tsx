@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useGateway, useKeys, useNodeModels } from "../api/hooks";
 import { MEDIA_KIND_INFO, type MediaKind, type UpstreamNode } from "../api/types";
+import { COPY_FAILED_HINT, useCopy } from "../hooks/useCopy";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
 import { Input } from "./ui/Input";
@@ -55,6 +56,10 @@ export function ExampleCard({ node, kind: kindProp }: { node: UpstreamNode; kind
 
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ status: number; ms: number; body: string } | null>(null);
+  // The raw clipboard API does not exist over plain HTTP on a LAN address — which is exactly where
+  // this dashboard is used — and my own navigator-only version threw and toasted "could not copy".
+  // This is the repo's shared path: clipboard first, execCommand fallback, a real verdict either way.
+  const { state: copyState, copy } = useCopy();
 
   if (!info || !kind) return null;
 
@@ -92,13 +97,10 @@ export function ExampleCard({ node, kind: kindProp }: { node: UpstreamNode; kind
     `  -d '${JSON.stringify(body)}'`,
   ].join("\n");
 
-  const copyCurl = async () => {
-    try {
-      await navigator.clipboard.writeText(curl);
-      toast("curl copied");
-    } catch {
-      toast("Could not copy — select the text instead");
-    }
+  const copyCurl = () => {
+    // The button itself reports the outcome (Copied / Copy blocked) — no toast read from state
+    // captured before the copy resolved.
+    void copy(curl);
   };
 
   const run = async () => {
@@ -216,7 +218,9 @@ export function ExampleCard({ node, kind: kindProp }: { node: UpstreamNode; kind
       <div className="flex items-center justify-between gap-3">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">Request</span>
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={copyCurl}>Copy</Button>
+          <Button size="sm" variant="outline" onClick={copyCurl} title={copyState === "fail" ? COPY_FAILED_HINT : undefined}>
+            {copyState === "ok" ? "Copied" : copyState === "fail" ? "Copy blocked" : "Copy"}
+          </Button>
           <Button size="sm" variant="primary" loading={busy} onClick={run}>Run</Button>
         </div>
       </div>
