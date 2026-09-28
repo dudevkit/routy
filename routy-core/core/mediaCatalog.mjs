@@ -180,8 +180,6 @@ const EMBEDDING = Object.freeze([
   p("nebius", "Nebius AI", "https://api.tokenfactory.nebius.com/v1/embeddings", null, { models: ["Qwen/Qwen3-Embedding-8B"] }),
   p("nvidia", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1/embeddings", "bearer", { models: ["nvidia/nv-embedqa-e5-v5"] }),
   p("github", "GitHub Models", "https://models.github.ai/inference/embeddings", "bearer", { models: ["text-embedding-3-small", "text-embedding-3-large"] }),
-  p("tokenrouter", "TokenRouter", "https://api.tokenrouter.com/v1/embeddings", "bearer", { models: [] }),
-  p("venice", "Venice AI", "https://api.venice.ai/api/v1/embeddings", "bearer", { models: ["text-embedding-3-large"] }),
   p("vercel-ai-gateway", "Vercel AI Gateway", "https://ai-gateway.vercel.sh/v1/embeddings", null, { models: [] }),
   p("selfhosted-embedding", "Self-hosted Embedding", "http://localhost:8080/v1/embeddings", "bearer", { models: ["embedding"] }),
   p("gemini", "Gemini", "https://generativelanguage.googleapis.com/v1beta/models", "key", {
@@ -196,8 +194,6 @@ const IMAGE = Object.freeze([
   p("openai", "OpenAI", "https://api.openai.com/v1/images/generations", "bearer", { models: ["gpt-image-2.5", "gpt-image-2", "gpt-image-1.5"] }),
   p("xai", "xAI (Grok)", "https://api.x.ai/v1/images/generations", "bearer", { models: ["grok-2-image-1212"] }),
   p("recraft", "Recraft", "https://external.api.recraft.ai/v1/images/generations", "bearer", { models: ["recraftv3", "recraftv2"] }),
-  p("venice", "Venice AI", "https://api.venice.ai/api/v1/images/generations", "bearer", { models: ["venice-sd35", "flux-2-pro"] }),
-  p("tokenrouter", "TokenRouter", "https://api.tokenrouter.com/v1/images/generations", "bearer", { models: [] }),
   p("vercel-ai-gateway", "Vercel AI Gateway", "https://ai-gateway.vercel.sh/v1/images/generations", null, { models: [] }),
   p("minimax", "Minimax", "https://api.minimaxi.com/v1/images/generations", "bearer", { models: ["minimax-image-01"] }),
   ...[
@@ -213,7 +209,6 @@ const IMAGE = Object.freeze([
     ["comfyui", "ComfyUI", "a local workflow API (imageProviders/comfyui.js)"],
     ["cloudflare-ai", "Cloudflare AI", "account-scoped paths and a bespoke body (imageProviders/cloudflareAi.js)"],
     ["antigravity", "Antigravity", "an OAuth-backed internal endpoint (imageProviders/antigravity.js)"],
-    ["topaz", "Topaz", "not implemented in 9Router either — registry entry only"],
   ].map(([id, name, why]) => p(id, name, null, null, { supported: false, why })),
 ]);
 
@@ -232,7 +227,6 @@ const TTS = Object.freeze([
     ["inworld", "Inworld", "https://api.inworld.ai/tts/v1/voice", "inworld", "basic auth and base64 audio"],
     ["playht", "PlayHT", "https://api.play.ht/api/v2/tts/stream", "playht", "a streaming protocol with its own auth pair"],
     ["fish-audio", "Fish Audio", "https://api.fish.audio/v1/tts", "fish-audio", "its own body"],
-    ["aws-polly", "AWS Polly", "https://polly.{region}.amazonaws.com/v1/speech", "aws-sigv4", "SigV4 request signing"],
     ["edge-tts", "Edge TTS", "edge-tts", "edge-tts", "a local binary, not an HTTP endpoint"],
     ["google-tts", "Google TTS", "google-tts", "google-tts", "a local integration, not an HTTP endpoint"],
     ["local-device", "Local Device", "local-device", "local-device", "shells out to the OS speech engine"],
@@ -251,6 +245,64 @@ export const MEDIA_CATALOG = Object.freeze({
   image: IMAGE,
   tts: TTS,
 });
+
+/**
+ * Card metadata a Media screen needs and 9Router ships: where to GET a key, the provider's own
+ * notice (free tier, pricing, quirks) and whether it has a free tier. Keyed by id because the
+ * answer is the same in every kind it appears in — one OpenAI key page, one set of rules.
+ */
+const META = Object.freeze({
+  "brave-search": { keyUrl: "https://api-dashboard.search.brave.com/app/keys", },
+  cartesia: { keyUrl: "https://play.cartesia.ai/keys" },
+  "cloudflare-ai": { keyUrl: "https://dash.cloudflare.com/profile/api-tokens", free: true, notice: "Workers AI free tier. Requires a Cloudflare API token and Account ID." },
+  coqui: { },
+  elevenlabs: { keyUrl: "https://elevenlabs.io/app/settings/api-keys" },
+  exa: { keyUrl: "https://dashboard.exa.ai/api-keys" },
+  "fal-ai": { keyUrl: "https://fal.ai/dashboard/keys", free: true },
+  firecrawl: { keyUrl: "https://www.firecrawl.dev/app/api-keys" },
+  fireworks: { keyUrl: "https://fireworks.ai/account/api-keys" },
+  "fish-audio": { keyUrl: "https://fish.audio/app/api-keys/" },
+  gemini: { keyUrl: "https://aistudio.google.com/app/apikey", free: true },
+  glm: { keyUrl: "https://open.bigmodel.cn/usercenter/apikeys" },
+  "google-pse": { keyUrl: "https://programmablesearchengine.google.com/controlpanel/create" },
+  "huggingface": { keyUrl: "https://huggingface.co/settings/tokens", free: true },
+  inworld: { keyUrl: "https://platform.inworld.ai/api-keys", notice: "Free tier: 40 minutes/month TTS. Paid: TTS-1.5 Mini $0.01/min, TTS-1.5 Max $0.025/min." },
+  "jina-ai": { keyUrl: "https://jina.ai/?sui=apikey", notice: "10M free tokens on signup (non-commercial), no credit card required." },
+  "jina-reader": { keyUrl: "https://jina.ai/?sui=apikey", free: true },
+  kimi: { keyUrl: "https://platform.moonshot.ai/console/api-keys" },
+  linkup: { keyUrl: "https://app.linkup.so/api-keys" },
+  minimax: { keyUrl: "https://platform.minimaxi.com/user-center/basic-information/interface-key" },
+  "minimax-cn": { keyUrl: "https://platform.minimaxi.com/user-center/basic-information/interface-key" },
+  mistral: { keyUrl: "https://console.mistral.ai/api-keys" },
+  nanobanana: { keyUrl: "https://nanobananaapi.ai/dashboard", free: true, notice: "3rd-party proxy for Google Nano Banana. For the official one, use the Gemini provider." },
+  nebius: { keyUrl: "https://studio.nebius.com/settings/api-keys" },
+  nvidia: { keyUrl: "https://build.nvidia.com/settings/api-keys", free: true, notice: "Free access for NVIDIA Developer Program members (prototyping & testing)." },
+  ollama: { keyUrl: "https://ollama.com/settings/keys", free: true, notice: "Free tier: light usage, 1 cloud model at a time (limits reset every 5h and 7d)." },
+  "ollama-search": { keyUrl: "https://ollama.com/settings/keys", notice: "Web search via Ollama Cloud. Reuses the API key from the Ollama (chat) provider." },
+  openai: { keyUrl: "https://platform.openai.com/api-keys" },
+  openrouter: { keyUrl: "https://openrouter.ai/settings/keys", free: true, notice: "Free tier: 27+ free models, no credit card, 200 req/day." },
+  perplexity: { keyUrl: "https://www.perplexity.ai/settings/api" },
+  "perplexity-agent": { keyUrl: "https://www.perplexity.ai/settings/api", notice: "Perplexity Agent exposes GPT, Claude, Gemini, Grok, GLM, Kimi and Sonar through one API." },
+  playht: { keyUrl: "https://play.ht/studio/api-access" },
+  recraft: { keyUrl: "https://www.recraft.ai/profile/api" },
+  searchapi: { keyUrl: "https://www.searchapi.io/dashboard" },
+  searxng: { notice: "Self-hosted. No key — point the URL at your instance." },
+  serper: { keyUrl: "https://serper.dev/api-key" },
+  "stability-ai": { keyUrl: "https://platform.stability.ai/account/keys" },
+  tavily: { keyUrl: "https://app.tavily.com/home", free: true, notice: "1,000 free searches/month on signup." },
+  together: { keyUrl: "https://api.together.xyz/settings/api-keys" },
+  "vercel-ai-gateway": { keyUrl: "https://vercel.com/dashboard/~/ai-gateway", notice: "Unified OpenAI-compatible endpoint; one AI Gateway key covers every model it fronts." },
+  "voyage-ai": { keyUrl: "https://dash.voyageai.com/api-keys" },
+  xai: { keyUrl: "https://console.x.ai" },
+  youcom: { keyUrl: "https://api.you.com" },
+  xquik: { keyUrl: "https://xquik.com", notice: "Searches public X posts. Billing uses 1 Xquik credit per returned post." },
+});
+
+/** The card metadata for one provider id (empty when the provider says nothing). */
+export function catalogMeta(id) {
+  return META[id] ?? {};
+}
+
 
 /** Every entry of a kind (empty for a kind with no catalogue — chat). */
 export function catalogFor(kind) {
@@ -276,7 +328,7 @@ export function catalogSummary(kind) {
 export function presetFor(kind, id) {
   const entry = catalogEntry(kind, id);
   if (!entry || entry.supported === false) return null;
-  const data = { media: { kinds: [kind] } };
+  const data = { media: { kinds: [kind], provider: entry.id } };
   if (entry.url) data.media.urls = { [kind]: entry.url };
   if (entry.auth) data.media.auth = { [kind]: { style: entry.auth } };
   if (entry.map) data.media.map = { [kind]: entry.map };

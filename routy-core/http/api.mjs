@@ -4,7 +4,7 @@
 import { json, readBody } from "../lib/router.mjs";
 import { COMBO_STRATEGIES, listModels, toolModelIds } from "../core/routing.mjs";
 import { CHAT_KIND, MEDIA_KIND_IDS, authStyleFor, expandKind, mediaConfigOf, mediaKindsOf, mediaUrlFor, validateMediaConfig } from "../core/media.mjs";
-import { catalogFor, presetFor } from "../core/mediaCatalog.mjs";
+import { catalogFor, catalogMeta, presetFor } from "../core/mediaCatalog.mjs";
 import { budgetSpent } from "../core/budget.mjs";
 import { probeNode, probeKey, probeModel, mapLimit } from "../core/probe.mjs";
 import { clearLogs, log, recentLogs, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
@@ -193,6 +193,9 @@ function nodeView(repos, node, now = Date.now()) {
         // Web kinds are configured by a mapping, not by convention — the dashboard has to be able
         // to show what the operator wrote.
         map: cfg.map,
+        // Which catalogue entry created this node, so the Media screen can put the card next to
+        // its node instead of showing "Add" for a provider that is already configured.
+        provider: cfg.provider,
       };
     })(),
     keyMasked: maskKey(primary?.credentials?.apiKey),
@@ -408,6 +411,9 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
         models: entry.models ?? [],
         requires: entry.requires ?? [],
         preset: presetFor(kind, entry.id)?.data ?? null,
+        // Where to get a key, the provider's own notice, whether it has a free tier — what a card
+        // needs to be worth looking at rather than just a name.
+        ...catalogMeta(entry.id),
       }));
     }
     json(res, 200, { kinds });

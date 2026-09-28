@@ -242,7 +242,8 @@ const TH = "px-4 py-2 text-left text-[11px] font-medium uppercase tracking-wider
 const TD = "px-4 py-2.5 text-sm text-text-main align-middle";
 
 /* ── Models ────────────────────────────────────────────────────────────────── */
-function ModelsTab({ node }: { node: UpstreamNode }) {
+/** Exported for the media provider page — the same model-row UI, no second implementation. */
+export function ModelsTab({ node }: { node: UpstreamNode }) {
   const toast = useToast();
   const models = useNodeModels(node.id);
   const connections = useConnections(node.id);
@@ -583,8 +584,11 @@ function ModelsTab({ node }: { node: UpstreamNode }) {
   );
 }
 
-/* ── API keys ──────────────────────────────────────────────────────────────── */
-function KeysTab({ node }: { node: UpstreamNode }) {
+/* ── API keys ────────────────────────────────────────────────────────────────────── */
+/** Exported so a media provider's page can show the EXACT key UI a text-generation provider
+ *  shows — the user's requirement is that adding an account must be the same method, and the
+ *  surest way to keep two UIs the same is to have only one. */
+export function KeysTab({ node }: { node: UpstreamNode }) {
   const toast = useToast();
   const connections = useConnections(node.id);
   const addConnection = useAddConnection();

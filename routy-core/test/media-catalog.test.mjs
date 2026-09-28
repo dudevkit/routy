@@ -15,7 +15,7 @@ import { createRepos } from "../db/repos.mjs";
 import { buildApiRoutes } from "../http/api.mjs";
 import { createRouter } from "../lib/router.mjs";
 import { MEDIA_KIND_IDS, AUTH_STYLES, validateMediaConfig } from "../core/media.mjs";
-import { MEDIA_CATALOG, catalogFor, catalogSummary, presetFor } from "../core/mediaCatalog.mjs";
+import { MEDIA_CATALOG, catalogEntry, catalogFor, catalogSummary, presetFor } from "../core/mediaCatalog.mjs";
 
 const ALL = MEDIA_KIND_IDS.flatMap((kind) => catalogFor(kind).map((p) => ({ kind, ...p })));
 
@@ -77,6 +77,27 @@ describe("the catalogue as data", () => {
         expect(p.format, `${p.kind}/${p.id}`).toBeTruthy();
       }
       expect(presetFor(p.kind, p.id), `${p.kind}/${p.id}`).toBeNull();
+    }
+  });
+
+  it("omits the providers 9Router itself cannot serve", () => {
+    // These are registered for their kind in 9Router but have no adapter there — its own cores
+    // answer 400 for them (embeddingsCore.js:32-35, imageGenerationCore.js:45-48, ttsCore.js:67-70).
+    // Listing them would copy a bug that looks like support.
+    const dead = [
+      ["embedding", "tokenrouter"],
+      ["embedding", "venice"],
+      ["image", "tokenrouter"],
+      ["image", "venice"],
+      ["image", "topaz"],
+      ["tts", "aws-polly"],
+    ];
+    for (const [kind, id] of dead) {
+      expect(catalogEntry(kind, id), `${kind}/${id}`).toBeNull();
+    }
+    // …and every provider that IS listed for an OpenAI-shaped kind still carries a usable preset.
+    for (const [kind] of dead) {
+      for (const p of catalogFor(kind)) if (p.supported !== false) expect(presetFor(kind, p.id), `${kind}/${p.id}`).toBeTruthy();
     }
   });
 

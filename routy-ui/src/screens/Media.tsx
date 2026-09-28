@@ -1,40 +1,58 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { useModelsForKind, useNodes } from "../api/hooks";
-import { MEDIA_KIND_INFO, derivedMediaUrl, type MediaKind } from "../api/types";
+import { Link, useNavigate } from "react-router-dom";
+import { useAddNode, useMediaCatalog, useModelsForKind, useNodes } from "../api/hooks";
+import { MEDIA_KIND_INFO, derivedMediaUrl, type MediaCatalogEntry, type MediaKind } from "../api/types";
+import { toastApiError } from "../utils/errors";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Skeleton } from "../components/ui/Skeleton";
 import { Tabs } from "../components/ui/Tabs";
+import { useToast } from "../components/ui/Toast";
 
 /**
- * Media: the six non-chat kinds routy serves, one tab each.
+ * Media: one tab per kind, and inside each tab EVERY provider 9Router ships for it.
  *
- * What the screen is FOR is answering the question a gateway client actually asks — "which of
- * these does this gateway serve, under which ids, and through which provider" — so each tab
- * shows the endpoint, the providers that declare the kind, and the ids that come out of it.
- * A kind a node has not declared is not a candidate for it, which is why the provider list here
- * is filtered rather than merely highlighted.
+ * The screen is where media providers live, deliberately separate from the text-generation
+ * providers: a code agent connects to those, while these are the accounts behind `/v1/search`,
+ * `/v1/embeddings` and friends. Two consequences the layout encodes:
  *
- * Declaring a kind happens on the provider's own Media tab (the tab was added with this screen)
- * — this is the read surface, and it says so in its empty state instead of leaving the user
- * guessing where the button went.
+ *   · The list is the CATALOGUE, not the configured subset. An unconfigured provider is the normal
+ *     state, not an empty state — a card says "key needed", not "nothing here yet".
+ *   · Adding one writes endpoint + credential style + request mapping from the catalogue (there is
+ *     nothing to type), and the keys go on the provider's own page through the same component a
+ *     text-generation provider uses. One key editor, two menus.
+ *
+ * Nodes created from a preset carry `media.provider`, which is how a card finds its node — and
+ * why they are excluded from the "also serving" list below rather than appearing twice.
  */
 export function Media() {
   const [kind, setKind] = useState<MediaKind>("embedding");
+  const toast = useToast();
+  const navigate = useNavigate();
   const nodes = useNodes();
   const models = useModelsForKind(kind);
+  const catalog = useMediaCatalog();
+  const addNode = useAddNode();
 
   const info = MEDIA_KIND_INFO.find((k) => k.id === kind) ?? MEDIA_KIND_INFO[0];
-  const serving = useMemo(() => (nodes.data ?? []).filter((n) => (n.mediaKinds ?? []).includes(kind)), [nodes.data, kind]);
-  const entries = models.data?.data ?? [];
+  const entries = catalog.data?.kinds?.[kind] ?? [];
+  // Nodes serving this kind that were configured by hand (no catalogue entry behind them).
+  const serving = useMemo(
+    () => (nodes.data ?? []).filter((n) => (n.mediaKinds ?? []).includes(kind) && !n.media?.provider),
+    [nodes.data, kind],
+  );
+  const nodeFor = (entry: MediaCatalogEntry) =>
+    nodes.data?.find((n) => n.media?.provider === entry.id && (n.mediaKinds ?? []).includes(kind)) ?? null;
+  const configured = entries.filter((entry) => nodeFor(entry)).length;
 
-  // Group ids by the node that carries them, in node order — the same order the cards above use,
+  const entriesByKind = models.data?.data ?? [];
+
+  // Group ids by the node that carries them, in node order — the same order the cards below use,
   // so a reader can match them without counting rows.
   const byNode = useMemo(() => {
     const groups = new Map<string, { id: string; ownedBy?: string }[]>();
-    for (const e of entries) {
+    for (const e of entriesByKind) {
       const owner = e.owned_by ?? "";
       const key = owner.startsWith("routy-node:") ? owner.slice("routy-node:".length) : owner;
       const list = groups.get(key) ?? [];
@@ -42,16 +60,41 @@ export function Media() {
       groups.set(key, list);
     }
     return groups;
-  }, [entries]);
+  }, [entriesByKind]);
 
   const noModelList = info.modelList !== "node";
+
+  /** Create the provider's node straight from the preset: kinds, endpoint, credential style and
+   *  mapping all come from the catalogue. No key yet — 9Router's own cards say "No connections"
+   *  too, and the next screen is where keys are added. */
+  const addProvider = async (entry: MediaCatalogEntry) => {
+    const preset = entry.preset?.media;
+    if (!preset) return;
+    let prefix = entry.id;
+    let n = 2;
+    while (nodes.data?.some((x) => x.prefix === prefix)) prefix = `${entry.id}-${n++}`;
+    let baseUrl = "http://127.0.0.1:9";
+    try { baseUrl = new URL(preset.urls?.[kind] ?? "").origin; } catch { /* keep the stub */ }
+    // await the mutation rather than wiring a per-call onSuccess: the callback form created the
+    // provider and then never navigated (verified in a browser), while this path either lands on
+    // the new provider's page or reports why it did not — no silent middle state.
+    try {
+      const created = await addNode.mutateAsync({ name: entry.name, prefix, baseUrl, apiKey: "", data: { media: preset } });
+      toast(`${entry.name} added — add its key next`);
+      navigate(`/media/${created.id}`);
+    } catch (err) {
+      toastApiError(toast, err, `Failed to add ${entry.name}`);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-semibold text-text-main">Media</h1>
         <p className="mt-1 text-sm text-text-muted">
-          The gateway serves each kind on its own endpoint. A provider reaches an endpoint only after the kind is declared on its Media tab — chat stays always-on and is not listed here.
+          Every media provider the gateway can reach, grouped by the endpoint it answers. Adding one here
+          configures it; keys are added on its own page, exactly like a provider&apos;s. Chat providers
+          stay on <Link to="/upstreams" className="text-accent hover:underline">Providers</Link>.
         </p>
       </div>
 
@@ -72,33 +115,86 @@ export function Media() {
             {info.modelList === "voices" && "The model field names a voice on the provider. Routy does not enumerate voices yet — add a voice id as a model row."}
           </div>
         </div>
-        <Badge variant="default" size="sm">
-          {serving.length} provider{serving.length === 1 ? "" : "s"}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="default" size="sm">{configured} of {entries.length} added</Badge>
+          <Badge variant="default" size="sm">
+            {serving.length} custom{serving.length === 1 ? "" : "s"}
+          </Badge>
+        </div>
       </Card>
 
-      {serving.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 rounded border border-dashed border-border-subtle px-6 py-12 text-center">
-          <p className="text-sm text-text-main">No provider declares {info.label} yet.</p>
-          <p className="max-w-xl text-[11px] text-text-muted">
-            Open a provider, then its Media tab, and turn the kind on. The endpoint starts accepting
-            requests against that provider as soon as it is declared — nothing else is required.
-          </p>
-          <Link to="/upstreams">
-            <Button size="sm" variant="outline">
-              Open providers
-            </Button>
-          </Link>
-        </div>
+      {entries.length === 0 ? (
+        <Skeleton className="h-32 w-full" />
       ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {entries.map((entry) => {
+            const node = nodeFor(entry);
+            const usable = Boolean(node) || Boolean(entry.supported && entry.preset);
+            return (
+              <div
+                key={entry.id}
+                className={`flex flex-col gap-1.5 rounded border border-border-subtle p-3 ${usable ? "" : "opacity-60"}`}
+                title={!usable ? entry.why ?? undefined : undefined}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-text-main">{entry.name}</div>
+                    <div className="truncate font-mono text-[11px] text-text-muted">
+                      {entry.preset?.media.urls?.[kind] ?? entry.id}
+                    </div>
+                  </div>
+                  {node ? (
+                    <Badge variant="success" size="sm">added</Badge>
+                  ) : usable ? (
+                    <Badge variant={entry.free ? "success" : "default"} size="sm">
+                      {entry.free ? "free tier" : entry.keyUrl ? "key needed" : "ready"}
+                    </Badge>
+                  ) : (
+                    <Badge variant="warning" size="sm">not yet</Badge>
+                  )}
+                </div>
+
+                {entry.notice && (
+                  <div className="line-clamp-2 text-[11px] text-text-muted">{entry.notice}</div>
+                )}
+                {!usable && entry.why && (
+                  <div className="line-clamp-2 text-[11px] text-text-muted">{entry.why}</div>
+                )}
+
+                <div className="mt-auto flex items-center justify-between gap-2 pt-1">
+                  {node ? (
+                    <Link to={`/media/${node.id}`}>
+                      <Button size="sm" variant="outline">Open · add keys</Button>
+                    </Link>
+                  ) : usable ? (
+                    <Button size="sm" disabled={addNode.isPending} onClick={() => addProvider(entry)}>
+                      Add
+                    </Button>
+                  ) : (
+                    <span className="text-[11px] text-text-muted">unsupported for now</span>
+                  )}
+                  {node && entry.keyUrl && (
+                    <a href={entry.keyUrl} target="_blank" rel="noreferrer" className="text-[11px] text-text-muted hover:text-accent">
+                      get a key →
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {serving.length > 0 && (
         <div className="flex flex-col gap-4">
+          <div className="text-sm font-semibold text-text-main">Also serving {info.label}</div>
           {serving.map((node) => {
             const ids = byNode.get(node.prefix) ?? [];
             return (
               <Card key={node.id} padding="sm" className="flex flex-col gap-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2">
-                    <Link to={`/upstreams/${node.id}`} className="truncate text-sm font-medium text-text-main hover:text-accent">
+                    <Link to={`/media/${node.id}`} className="truncate text-sm font-medium text-text-main hover:text-accent">
                       {node.name}
                     </Link>
                     <span className="font-mono text-[11px] text-text-muted">{node.prefix}</span>
@@ -107,11 +203,7 @@ export function Media() {
                     <Badge variant={node.status === "healthy" ? "success" : node.status === "down" ? "error" : node.status === "degraded" ? "warning" : "default"} size="sm">
                       {node.status}
                     </Badge>
-                    {(node.media?.noAuth ?? false) && (
-                      <Badge variant="default" size="sm">
-                        no auth
-                      </Badge>
-                    )}
+                    {(node.media?.noAuth ?? false) && <Badge variant="default" size="sm">no auth</Badge>}
                   </div>
                 </div>
 
@@ -128,7 +220,7 @@ export function Media() {
                     {ids.map((e) => (
                       <Link
                         key={e.id}
-                        to={`/upstreams/${node.id}`}
+                        to={`/media/${node.id}`}
                         className="rounded border border-border-subtle px-2 py-0.5 font-mono text-[11px] text-text-main hover:border-accent"
                       >
                         {e.id}

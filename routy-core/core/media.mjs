@@ -76,12 +76,15 @@ export function describeKind(kind) {
  */
 export function mediaConfigOf(node) {
   const raw = node?.data?.media;
-  if (!raw || typeof raw !== "object") return { kinds: [], urls: {}, auth: {}, noAuth: false, map: {} };
+  if (!raw || typeof raw !== "object") return { kinds: [], urls: {}, auth: {}, noAuth: false, map: {}, provider: null };
   return {
     kinds: Array.isArray(raw.kinds) ? raw.kinds.filter((k) => isMediaKind(k)) : [],
     urls: raw.urls && typeof raw.urls === "object" ? raw.urls : {},
     auth: raw.auth && typeof raw.auth === "object" ? raw.auth : {},
     noAuth: raw.noAuth === true,
+    // Which catalogue entry created this node (`core/mediaCatalog.mjs`). How the Media screen
+    // finds "tavily" again after a preset made it; null for a node a user configured by hand.
+    provider: typeof raw.provider === "string" && raw.provider ? raw.provider : null,
     // The per-provider mapping (core/mediaMap.mjs) is config the handlers READ, so it has to
     // survive this filter — it is returned as written, because the write path is what validated
     // it and the engine is what interprets it. Dropping it here is not benign: every web request
@@ -157,7 +160,7 @@ export function validateMediaConfig(value) {
     return { ok: false, detail: "media must be an object" };
   }
 
-  const known = new Set(["kinds", "urls", "auth", "noAuth", "map"]);
+  const known = new Set(["kinds", "urls", "auth", "noAuth", "map", "provider"]);
   for (const key of Object.keys(value)) {
     if (!known.has(key)) {
       return { ok: false, detail: `media.${key} is not a setting (expected one of: ${[...known].join(", ")})` };
@@ -174,6 +177,19 @@ export function validateMediaConfig(value) {
       }
     }
     out.kinds = [...new Set(value.kinds)];
+  }
+
+  // Which catalogue entry created this node (`core/mediaCatalog.mjs`). It is an id rather than a
+  // name because the Media screen matches a card to its node by it — a typo would orphan the
+  // provider and leave the user wondering why the card says "Add" for a provider that answers.
+  if (value.provider !== undefined) {
+    if (typeof value.provider !== "string" || !value.provider.trim()) {
+      return { ok: false, detail: "media.provider must be a provider id" };
+    }
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(value.provider)) {
+      return { ok: false, detail: "media.provider may only contain letters, digits, dot, dash and underscore" };
+    }
+    out.provider = value.provider;
   }
 
   if (value.urls !== undefined) {

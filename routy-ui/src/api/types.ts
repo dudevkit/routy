@@ -90,8 +90,14 @@ export interface MediaCatalogEntry {
   models: string[];
   /** settings the operator must supply, e.g. Google PSE's `cx` */
   requires: string[];
-  /** the node fragment applying this preset writes; null when unsupported */
+  /** the node fragment applying this preset; null when unsupported */
   preset: { media: NodeMediaConfig } | null;
+  /** where to get a key (9Router's own notice.apiKeyUrl) */
+  keyUrl?: string | null;
+  /** the provider's own words: free tier, pricing, quirks */
+  notice?: string | null;
+  /** whether the provider has a free tier, as 9Router flags it */
+  free?: boolean | null;
 }
 
 /** What the gateway's node view resolves for display: the kinds as written, each kind's URL
@@ -104,6 +110,8 @@ export interface ResolvedNodeMedia {
   /** the web kinds' mappings, as written — the dashboard has to be able to show what the
    *  operator configured, since for those kinds the mapping IS the provider support */
   map?: Partial<Record<MediaKind, Record<string, unknown>>>;
+  /** which catalogue entry created this node (`core/mediaCatalog.mjs`); null for a hand-made one */
+  provider?: string | null;
   noAuth: boolean;
 }
 
