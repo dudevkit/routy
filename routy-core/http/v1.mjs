@@ -106,6 +106,12 @@ export function buildProxyRoutes(repos, { chatHandler, handlers = {} }) {
     ...(handlers.stt
       ? [{ method: "POST", pattern: /^\/v1\/audio\/transcriptions$/, handler: handlers.stt }]
       : []),
+    ...(handlers.search
+      ? [{ method: "POST", pattern: /^\/v1\/search$/, handler: handlers.search }]
+      : []),
+    ...(handlers.fetch
+      ? [{ method: "POST", pattern: /^\/v1\/web\/fetch$/, handler: handlers.fetch }]
+      : []),
 
     // Chat traffic. Both paths land on the same handler (source format is detected per
     // request from the endpoint and the body).

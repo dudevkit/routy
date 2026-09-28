@@ -9,7 +9,7 @@ import {
   classifyConnectionError, recordConnectionFailure, recordConnectionSuccess,
   earliestRecovery,
 } from "../key-health.mjs";
-import { pickConnections, recent429For, recordFailure, recordSuccess } from "../dispatch.mjs";
+import { pickConnections, recent429For, recordFailure, recordSuccess, comboTurn, describeCombo } from "../dispatch.mjs";
 import { stripUnsupportedParams } from "../translate/concerns/paramSupport.js";
 import { observeTtft } from "../latency.mjs";
 import { maskKey } from "../../lib/mask.mjs";
@@ -624,73 +624,6 @@ async function withIdleTimeout(promise, timeoutMs, onTimeout) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-// Per-combo dispatch cursor (RAM; a restart merely restarts the cycle). Only the
-// strategies that rotate consult it, so switching a combo to `fastest` and back does
-// not leave the rotation mid-cycle.
-const comboCursor = new Map();
-
-/**
- * Which turn of the rotation this request is.
- *   round-robin — advances every request
- *   sticky      — advances every `stickyLimit` requests, so a conversation keeps
- *                 hitting the same member (prompt-cache affinity) before moving on
- * Every other strategy ignores the cursor and keeps declared/ranked order.
- */
-function comboTurn(comboName, strategy, stickyLimit = 1) {
-  if (strategy !== "round-robin" && strategy !== "sticky") return 0;
-  const n = comboCursor.get(comboName) ?? 0;
-  comboCursor.set(comboName, n + 1);
-  return strategy === "sticky" ? Math.floor(n / Math.max(1, stickyLimit || 1)) : n;
-}
-
-// Round-robin cursor per node (RAM; resets on restart, which merely restarts the
-// rotation). Connections.list is ORDER BY priority, created_at, so the rotation
-// preserves the user's priority order within each turn.
-const rrCursor = new Map();
-
-/**
- * What a combo request is about to do, for the log.
- *
- * The strategy is the load-bearing field: with `fallback` the first member carrying every
- * request is correct behaviour, with `round-robin` it is a bug — and nothing else in the log
- * distinguishes the two. `skipped` is the other half: a member with an open breaker or one
- * dropped by the budget ceiling would otherwise vanish from the story entirely.
- */
-function describeCombo(repos, route, ordered, routes, candidates) {
-  const now = Date.now();
-  const nameOf = (r) => `${r.node.prefix}/${r.model}`;
-  const serving = new Set(candidates);
-  const inFlight = new Set(routes);
-
-  const skipped = [];
-  for (const r of ordered) {
-    if (r.kind !== "node" || serving.has(r)) continue;
-    if (!inFlight.has(r)) {
-      skipped.push({ model: nameOf(r), why: "daily budget ceiling reached" });
-      continue;
-    }
-    const open = repos.breakers.get(`node:${r.node.id}`);
-    const until = open?.openUntil ? Date.parse(open.openUntil) : NaN;
-    skipped.push({
-      model: nameOf(r),
-      why: Number.isFinite(until) && until > now ? `breaker open until ${new Date(until).toISOString()}` : "unhealthy",
-    });
-  }
-
-  const order = candidates.map(nameOf);
-  const sticky = route.strategy === "sticky" ? ` (${route.stickyLimit ?? 1} per member)` : "";
-  const skippedText = skipped.length ? ` · skipped: ${skipped.map((s) => `${s.model} (${s.why})`).join(", ")}` : "";
-  return {
-    name: route.name,
-    strategy: route.strategy,
-    stickyLimit: route.stickyLimit ?? 1,
-    of: order.length,
-    order,
-    skipped,
-    line: `${route.name} · ${route.strategy}${sticky} · ${order.length} member(s): ${order.join(", ")}${skippedText}`,
-  };
 }
 
 function recordUsage(repos, log, route, connection, clientModel, { status, usage, durationMs, apiKeyId, attempts = 1, pool = null, combo = null }) {

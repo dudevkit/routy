@@ -15,6 +15,8 @@ import { createEmbeddingsHandler } from "./core/handlers/embeddings.mjs";
 import { createImagesHandler } from "./core/handlers/images.mjs";
 import { createTtsHandler } from "./core/handlers/tts.mjs";
 import { createSttHandler } from "./core/handlers/stt.mjs";
+import { createSearchHandler } from "./core/handlers/search.mjs";
+import { createFetchHandler } from "./core/handlers/fetch.mjs";
 import { closePools } from "./core/executors/pool.mjs";
 import { seedBudget } from "./core/budget.mjs";
 import { seedTtft } from "./core/latency.mjs";
@@ -84,6 +86,8 @@ const embeddingsHandler = createEmbeddingsHandler(repos);
 const imagesHandler = createImagesHandler(repos);
 const ttsHandler = createTtsHandler(repos);
 const sttHandler = createSttHandler(repos);
+const searchHandler = createSearchHandler(repos);
+const fetchHandler = createFetchHandler(repos);
 
 // ── invalidate stored probe verdicts when probe semantics changed ───────────
 // A result produced by an older probe describes a probe that no longer exists,
@@ -159,7 +163,7 @@ const routes = [
   ...buildApiRoutes(repos, cfg, VERSION, { shutdown }),
   createMetricsRoute(repos, VERSION, () => ({ inflight, startedAt: globalThis.__bootedAt })),
   // ── proxy surface (/v1) — source format detected per request (endpoint + body) ──
-  ...buildProxyRoutes(repos, { chatHandler, handlers: { embeddings: embeddingsHandler, images: imagesHandler, tts: ttsHandler, stt: sttHandler } }),
+  ...buildProxyRoutes(repos, { chatHandler, handlers: { embeddings: embeddingsHandler, images: imagesHandler, tts: ttsHandler, stt: sttHandler, search: searchHandler, fetch: fetchHandler } }),
 ];
 
 const dispatch = createRouter(routes);

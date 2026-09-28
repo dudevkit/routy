@@ -189,6 +189,9 @@ function nodeView(repos, node, now = Date.now()) {
         urls: Object.fromEntries(cfg.kinds.map((k) => [k, mediaUrlFor(node, k)])),
         auth: Object.fromEntries(cfg.kinds.map((k) => [k, authStyleFor(node, k)])),
         noAuth: cfg.noAuth,
+        // Web kinds are configured by a mapping, not by convention — the dashboard has to be able
+        // to show what the operator wrote.
+        map: cfg.map,
       };
     })(),
     keyMasked: maskKey(primary?.credentials?.apiKey),

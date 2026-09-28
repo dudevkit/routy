@@ -74,12 +74,17 @@ export function describeKind(kind) {
  */
 export function mediaConfigOf(node) {
   const raw = node?.data?.media;
-  if (!raw || typeof raw !== "object") return { kinds: [], urls: {}, auth: {}, noAuth: false };
+  if (!raw || typeof raw !== "object") return { kinds: [], urls: {}, auth: {}, noAuth: false, map: {} };
   return {
     kinds: Array.isArray(raw.kinds) ? raw.kinds.filter((k) => isMediaKind(k)) : [],
     urls: raw.urls && typeof raw.urls === "object" ? raw.urls : {},
     auth: raw.auth && typeof raw.auth === "object" ? raw.auth : {},
     noAuth: raw.noAuth === true,
+    // The per-provider mapping (core/mediaMap.mjs) is config the handlers READ, so it has to
+    // survive this filter — it is returned as written, because the write path is what validated
+    // it and the engine is what interprets it. Dropping it here is not benign: every web request
+    // then answers "no mapping" for a mapping the operator can see in the dashboard.
+    map: raw.map && typeof raw.map === "object" ? raw.map : {},
   };
 }
 
@@ -143,7 +148,7 @@ export function validateMediaConfig(value) {
     return { ok: false, detail: "media must be an object" };
   }
 
-  const known = new Set(["kinds", "urls", "auth", "noAuth"]);
+  const known = new Set(["kinds", "urls", "auth", "noAuth", "map"]);
   for (const key of Object.keys(value)) {
     if (!known.has(key)) {
       return { ok: false, detail: `media.${key} is not a setting (expected one of: ${[...known].join(", ")})` };
@@ -199,6 +204,110 @@ export function validateMediaConfig(value) {
   if (value.noAuth !== undefined) {
     if (typeof value.noAuth !== "boolean") return { ok: false, detail: "media.noAuth must be true or false" };
     out.noAuth = value.noAuth;
+  }
+
+  /**
+   * The web kinds need a per-provider mapping (core/mediaMap.mjs): they share no wire format, so
+   * the differences are configuration. Validated hard and early for the reason every other field
+   * here is — a malformed mapping would otherwise fail as a provider 400 that looks like the
+   * provider's fault, or send a header a typo invented.
+   */
+  if (value.map !== undefined) {
+    if (typeof value.map !== "object" || value.map === null || Array.isArray(value.map)) {
+      return { ok: false, detail: "media.map must be an object of kind → mapping" };
+    }
+    out.map = {};
+    for (const [kind, spec] of Object.entries(value.map)) {
+      if (!isMediaKind(kind)) return { ok: false, detail: `media.map.${kind} is not a kind` };
+      if (typeof spec !== "object" || spec === null || Array.isArray(spec)) {
+        return { ok: false, detail: `media.map.${kind} must be an object` };
+      }
+      const knownMap = ["method", "in", "headers", "request", "response", "raw"];
+      for (const k of Object.keys(spec)) {
+        if (!knownMap.includes(k)) {
+          return { ok: false, detail: `media.map.${kind}.${k} is not a setting (expected one of: ${knownMap.join(", ")})` };
+        }
+      }
+      const specOut = {};
+
+      if (spec.method !== undefined && spec.method !== "POST" && spec.method !== "GET") {
+        return { ok: false, detail: `media.map.${kind}.method must be POST or GET` };
+      }
+      if (spec.method !== undefined) specOut.method = spec.method;
+      if (spec.in !== undefined && spec.in !== "body" && spec.in !== "query") {
+        return { ok: false, detail: `media.map.${kind}.in must be body or query` };
+      }
+      if (spec.in !== undefined) specOut.in = spec.in;
+      if (spec.raw !== undefined) {
+        if (typeof spec.raw !== "boolean") return { ok: false, detail: `media.map.${kind}.raw must be true or false` };
+        specOut.raw = spec.raw;
+      }
+
+      /** A rename table: every value a non-empty string, no CR/LF where a header is built. */
+      const stringMap = (obj, label, { headerSafe = false } = {}) => {
+        if (typeof obj !== "object" || obj === null || Array.isArray(obj)) {
+          return { ok: false, detail: `media.map.${kind}.${label} must be an object of strings` };
+        }
+        const built = {};
+        for (const [k, v] of Object.entries(obj)) {
+          if (typeof v !== "string") return { ok: false, detail: `media.map.${kind}.${label}.${k} must be a string` };
+          if (headerSafe) {
+            // A header value is not a free-form string: CR/LF lets a caller end one header and
+            // start another, and an empty name is a header nobody can read. `authorization` is
+            // refused because credentials belong to the connection, not to a config the operator
+            // edits once — a static one would silently override every key on the node.
+            if (k.trim().length === 0 || /[\r\n]/.test(k) || /[\r\n]/.test(v)) {
+              return { ok: false, detail: `media.map.${kind}.headers needs a name and a value without newlines` };
+            }
+            if (/^authorization$/i.test(k.trim())) {
+              return { ok: false, detail: `media.map.${kind}.headers cannot set authorization — the credential comes from the connection` };
+            }
+          } else if (!v.trim()) {
+            return { ok: false, detail: `media.map.${kind}.${label}.${k} maps to an empty path` };
+          }
+          built[k] = v;
+        }
+        return { ok: true, value: built };
+      };
+
+      if (spec.headers !== undefined) {
+        const r = stringMap(spec.headers, "headers", { headerSafe: true });
+        if (!r.ok) return r;
+        specOut.headers = r.value;
+      }
+      if (spec.request !== undefined) {
+        const r = stringMap(spec.request, "request");
+        if (!r.ok) return r;
+        specOut.request = r.value;
+      }
+      if (spec.response !== undefined) {
+        const resp = spec.response;
+        if (typeof resp !== "object" || resp === null || Array.isArray(resp)) {
+          return { ok: false, detail: `media.map.${kind}.response must be an object` };
+        }
+        const knownResp = ["results", "fields", "top"];
+        for (const k of Object.keys(resp)) {
+          if (!knownResp.includes(k)) {
+            return { ok: false, detail: `media.map.${kind}.response.${k} is not a setting (expected one of: ${knownResp.join(", ")})` };
+          }
+        }
+        const respOut = {};
+        if (resp.results !== undefined) {
+          if (typeof resp.results !== "string" || !resp.results) {
+            return { ok: false, detail: `media.map.${kind}.response.results must be a non-empty path string` };
+          }
+          respOut.results = resp.results;
+        }
+        for (const label of ["fields", "top"]) {
+          if (resp[label] === undefined) continue;
+          const r = stringMap(resp[label], `response.${label}`);
+          if (!r.ok) return r;
+          respOut[label] = r.value;
+        }
+        specOut.response = respOut;
+      }
+      out.map[kind] = specOut;
+    }
   }
 
   return { ok: true, value: out };

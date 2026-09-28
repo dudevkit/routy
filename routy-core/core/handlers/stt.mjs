@@ -15,10 +15,9 @@ import { readBody, json } from "../../lib/router.mjs";
 import { extractBearer } from "../../lib/auth.mjs";
 import { log as rootLog } from "../../lib/log.mjs";
 import { resolveRoute } from "../routing.mjs";
-import { pickConnections, recent429For, recordFailure, recordSuccess, recordMediaUsage, saveMediaDetail, settleFailure } from "../dispatch.mjs";
+import { pickConnections, recent429For, recordFailure, recordSuccess, recordMediaUsage, saveMediaDetail, settleFailure , dispatchPlan, unavailableResponse } from "../dispatch.mjs";
 import { recordConnectionSuccess, earliestRecovery } from "../key-health.mjs";
 import { resolveNodeProxy } from "../proxy.mjs";
-import { budgetState } from "../budget.mjs";
 import { isMetered } from "../pricing.mjs";
 import { DefaultExecutor } from "../executors/default.mjs";
 import { mediaUrlFor, authStyleFor, mediaKindsOf } from "../media.mjs";
@@ -96,12 +95,14 @@ export function createSttHandler(repos, { timeoutMs = STT_TIMEOUT_MS, maxBytes =
     if (route.kind === "combo") {
       return json(res, 400, { error: { message: "bad_request", detail: `"${route.name}" is a combo — combos for stt are not enabled yet` } });
     }
+    // Availability comes from the same plan chat uses (dispatch.mjs): strategy order, the daily
+    // budget, whether the node is enabled, and — the part this handler used to miss — an OPEN
+    // BREAKER. A node the dashboard shows as down must not keep answering media requests.
+    const plan = dispatchPlan(repos, route, { settings });
+    if (plan.candidates.length === 0) return unavailableResponse(res, { route, plan });
     const node = route.node;
-    if (!node.enabled) {
-      return json(res, 503, { error: { message: "node_disabled", detail: `${node.prefix} is disabled` } });
-    }
 
-    const budget = budgetState(settings.budgetUsdPerDay);
+    const budget = plan.budget;
     if (budget.over && isMetered(node)) {
       return json(res, 429, {
         error: { message: "budget_exhausted", detail: "the daily budget is reached and this node bills per request", retryAfterMs: budget.resetInMs ?? null },
