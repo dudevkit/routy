@@ -125,15 +125,30 @@ export function ExampleCard({ node }: { node: UpstreamNode }) {
     <Card padding="sm" className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-text-main">Example</h3>
-        <span className="text-[11px] text-text-muted">Run sends a real request — it spends the provider&apos;s quota</span>
+        <span className="max-w-md text-right text-[11px] text-text-muted">
+          Runs through routy — the gateway key authenticates your call, this provider&apos;s own key
+          authenticates upstream. <b>Run spends the provider&apos;s quota.</b>
+        </span>
       </div>
 
       <div className="grid grid-cols-1 gap-2">
         <Row label="Endpoint">
           <Input value={endpoint} readOnly />
         </Row>
-        <Row label="API Key">
+        <Row label="Gateway key">
           <Input value={masked} readOnly />
+        </Row>
+        <Row label="Provider key">
+          <Input
+            readOnly
+            value={
+              node.media?.noAuth === true
+                ? "— none needed —"
+                : node.keyMasked && node.keyMasked !== "—"
+                  ? `${node.keyMasked} — sent upstream as this provider's credential`
+                  : "no key added yet — add it under Keys below"
+            }
+          />
         </Row>
 
         {kind === "webFetch" && (
