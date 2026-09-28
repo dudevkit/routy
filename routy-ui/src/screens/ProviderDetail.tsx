@@ -607,6 +607,11 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
   const [allResults, setAllResults] = useState<KeyTestResult[] | null>(null);
 
   const conns = connections.data ?? [];
+  // A media provider (made from the Media menu's catalogue) has no OpenAI endpoint. The key probe
+  // is `GET <baseUrl>/models`, which Exa — and every other search/fetch/embedding host — answers
+  // 404 to, so a "failed" test says nothing about the key. There is nothing honest to probe it
+  // with, and a real request would spend the provider's quota: status comes from real traffic.
+  const probeless = Boolean(node.media?.provider);
   const parsedBulk = useMemo(
     () =>
       bulk
@@ -642,7 +647,7 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
           toast(`${r.created} keys added`);
           setBulk("");
           setBulkOpen(false);
-          if (testAfter) runAll();
+          if (testAfter && !probeless) runAll();
         },
         onError: (err) => toastApiError(toast, err, "Bulk add failed"),
       },
@@ -690,17 +695,23 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
           <Button variant="outline" size="sm" icon={<Plus size={14} />} onClick={() => setBulkOpen(true)}>
             Add bulk
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="ml-auto"
-            icon={<WifiHigh size={14} />}
-            loading={testAll.isPending}
-            disabled={conns.length === 0}
-            onClick={runAll}
-          >
-            Test all keys
-          </Button>
+          {probeless ? (
+            <span className="ml-auto text-[11px] text-text-muted" title="The key probe speaks the chat API (GET /models), which this provider does not have. Key health is shown from real requests in the Live Console.">
+              no probe for a media provider — status comes from real requests
+            </span>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-auto"
+              icon={<WifiHigh size={14} />}
+              loading={testAll.isPending}
+              disabled={conns.length === 0}
+              onClick={runAll}
+            >
+              Test all keys
+            </Button>
+          )}
         </div>
 
         <div className="w-full overflow-x-auto">
@@ -756,13 +767,19 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
                     </select>
                   </td>
                   <td className={cn(TD, "hidden md:table-cell")}>
-                    <TestCell at={c.lastTestAt} ok={c.lastTestOk} ms={c.lastTestTtftMs} error={c.lastError} />
+                    {probeless ? (
+                      <span className="text-xs text-text-subtle">from traffic</span>
+                    ) : (
+                      <TestCell at={c.lastTestAt} ok={c.lastTestOk} ms={c.lastTestTtftMs} error={c.lastError} />
+                    )}
                   </td>
                   <td className={`${TD} text-right`}>
                     <div className="inline-flex items-center gap-1">
-                      <Button variant="outline" size="sm" icon={<WifiHigh size={13} />} loading={testingId === c.id} onClick={() => runOne(c)}>
-                        Test
-                      </Button>
+                      {!probeless && (
+                        <Button variant="outline" size="sm" icon={<WifiHigh size={13} />} loading={testingId === c.id} onClick={() => runOne(c)}>
+                          Test
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="sm"
@@ -829,12 +846,14 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
               {parsedBulk.some((k) => k.name) ? ` · ${parsedBulk.filter((k) => k.name).length} with a label` : ""}
             </p>
           </div>
-          <Toggle
-            label="Test each key after adding"
-            hint="Probes every new key against the provider. Diagnostics only — it never counts as traffic."
-            checked={testAfter}
-            onChange={setTestAfter}
-          />
+          {!probeless && (
+            <Toggle
+              label="Test each key after adding"
+              hint="Probes every new key against the provider. Diagnostics only — it never counts as traffic."
+              checked={testAfter}
+              onChange={setTestAfter}
+            />
+          )}
         </div>
       </Modal>
 
