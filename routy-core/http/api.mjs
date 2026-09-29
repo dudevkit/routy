@@ -5,6 +5,7 @@ import { json, readBody } from "../lib/router.mjs";
 import { COMBO_STRATEGIES, listModels, toolModelIds } from "../core/routing.mjs";
 import { CHAT_KIND, MEDIA_KIND_IDS, authStyleFor, expandKind, mediaConfigOf, mediaKindsOf, mediaUrlFor, validateMediaConfig } from "../core/media.mjs";
 import { catalogFor, catalogMeta, presetFor } from "../core/mediaCatalog.mjs";
+import { FREE_TIER } from "../core/freeTierCatalog.mjs";
 import { budgetSpent } from "../core/budget.mjs";
 import { probeNode, probeKey, probeModel, mapLimit } from "../core/probe.mjs";
 import { clearLogs, log, recentLogs, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
@@ -418,6 +419,15 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       }));
     }
     json(res, 200, { kinds });
+  });
+  /**
+   * The free-tier chat catalogue: the 9Router registry's `category === "freeTier"` providers as
+   * addable cards, kept separate from the operator's own nodes. Entries routy cannot serve carry
+   * their transport reason and no preset — same honesty rule as the media catalogue, and the chat
+   * route posts to `baseUrl` verbatim (core/routing.mjs), so a supported baseUrl is the endpoint.
+   */
+  route("GET", /^\/api\/providers\/catalog$/, (req, res) => {
+    json(res, 200, { providers: FREE_TIER });
   });
   // ── models (P6) ───────────────────────────────────────────────────────────
   // The list is discovery-only: it feeds /v1/models and the UI. Routing still

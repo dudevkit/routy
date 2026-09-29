@@ -1,12 +1,15 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
+  useAddModel,
+  useAddNode,
   useNodes,
+  useProviderCatalog,
   useRemoveNode,
   useTestAllKeys,
   useUpdateNode,
 } from "../api/hooks";
-import type { NodeStatus, UpstreamNode } from "../api/types";
+import type { FreeTierProvider, NodeStatus, UpstreamNode } from "../api/types";
 import { toastApiError } from "../utils/errors";
 import { fmtMs } from "../utils/format";
 import { Broadcast, CaretRight, Check, CheckCircle, Plus, Prohibit, WifiHigh, XCircle } from "../components/icons";
@@ -181,11 +184,96 @@ function NodeRow({ node }: { node: UpstreamNode }) {
   );
 }
 
+/**
+ * One free-tier preset card — catalogue inventory, deliberately its own thing: what 9Router
+ * ships and routy can add. It is not a live node row (those are the table below); once added,
+ * the card flips to "added" and links to the node's page for keys, models and probing.
+ */
+function FreeTierCard({ entry, node, onAdd }: { entry: FreeTierProvider; node?: UpstreamNode; onAdd: () => void }) {
+  return (
+    <div
+      className={`flex flex-col gap-1.5 rounded border border-border-subtle p-3 ${entry.supported ? "" : "opacity-60"}`}
+      title={entry.supported ? undefined : entry.why ?? undefined}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <span className="min-w-0 truncate text-sm font-medium text-text-main">{entry.name}</span>
+        {node ? (
+          <Badge variant="success" size="sm">added</Badge>
+        ) : entry.supported ? (
+          <Badge variant="default" size="sm">free</Badge>
+        ) : (
+          <Badge variant="default" size="sm">not yet</Badge>
+        )}
+      </div>
+      <p className="truncate font-mono text-[11px] text-text-muted" title={entry.baseUrl ?? entry.why ?? undefined}>
+        {entry.baseUrl ?? entry.why}
+      </p>
+      <p className="text-[11px] text-text-subtle">
+        {entry.supported
+          ? `${entry.models.length} model${entry.models.length === 1 ? "" : "s"} · ${entry.format}`
+          : entry.why}
+      </p>
+      {entry.requires.length > 0 && <p className="text-[11px] text-text-muted">{entry.requires.join("; ")}</p>}
+      <div className="mt-auto flex items-center justify-between gap-2 pt-1">
+        {entry.keyUrl ? (
+          <a href={entry.keyUrl} target="_blank" rel="noreferrer" className="text-[11px] text-accent hover:underline">
+            Get a key
+          </a>
+        ) : (
+          <span />
+        )}
+        {node ? (
+          <Link to={`/upstreams/${node.id}`} className="text-[11px] text-accent hover:underline">
+            Open
+          </Link>
+        ) : entry.supported ? (
+          <Button variant="secondary" size="sm" onClick={onAdd}>
+            Add
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function Upstreams() {
   const nodes = useNodes();
+  const toast = useToast();
+  const navigate = useNavigate();
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  const catalog = useProviderCatalog();
+  const addNode = useAddNode();
+  const addModel = useAddModel();
+
+  const freeTier = catalog.data?.providers ?? [];
+  const freeTierNode = (entry: FreeTierProvider) => (nodes.data ?? []).find((n) => n.data?.preset === entry.id);
+
+  /** Add from the preset: endpoint, model rows and the `data.preset` marker that keeps this node
+   *  on its card and out of the table below. No key yet — the node's own page is where keys go. */
+  const addFreeTier = async (entry: FreeTierProvider) => {
+    if (!entry.supported || !entry.baseUrl) return;
+    let prefix = entry.id;
+    let n = 2;
+    while ((nodes.data ?? []).some((x) => x.prefix === prefix)) prefix = `${entry.id}-${n++}`;
+    let created: UpstreamNode;
+    try {
+      created = await addNode.mutateAsync({ name: entry.name, prefix, baseUrl: entry.baseUrl, apiKey: "", data: { preset: entry.id } });
+    } catch (err) {
+      toastApiError(toast, err, `Failed to add ${entry.name}`);
+      return;
+    }
+    // Model rows are separate writes; a rejected row must not fail an add that already worked —
+    // the node routes by <prefix>/<model> regardless, and its Models tab edits rows anyway.
+    for (const m of entry.models) {
+      try {
+        await addModel.mutateAsync({ nodeId: created.id, model: m.id });
+      } catch { /* keep going */ }
+    }
+    toast(`${entry.name} added — add its key next`);
+    navigate(`/upstreams/${created.id}`);
+  };
 
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -193,6 +281,9 @@ export function Upstreams() {
       // Media providers are the OTHER thing: they are added from the Media menu and live there,
       // so this screen shows only what the user added by hand for text generation.
       if (n.media?.provider) return false;
+      // Free-tier adds live on their catalogue cards, not in this table — two kinds of thing,
+      // two lists, exactly like the media providers above.
+      if (n.data?.preset) return false;
       if (filter !== "all" && n.status !== filter) return false;
       if (!needle) return true;
       return `${n.name} ${n.baseUrl} ${n.prefix}`.toLowerCase().includes(needle);
@@ -215,10 +306,43 @@ export function Upstreams() {
     );
   }
 
-  const total = (nodes.data ?? []).filter((n) => !n.media?.provider).length;
+  const total = (nodes.data ?? []).filter((n) => !n.media?.provider && !n.data?.preset).length;
+  const freeTierAdded = freeTier.filter((e) => freeTierNode(e)).length;
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Free tier: catalogue cards, deliberately separate from the operator's own providers
+          below. The table stays hand-added nodes only — one mixed list would answer neither. */}
+      <section className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-text-main">Free tier</h2>
+            <p className="text-xs text-text-muted">
+              Chat providers 9Router ships, added straight from the catalogue — endpoint and models come
+              with the preset; the key goes on the provider&apos;s page next. Entries marked "not yet"
+              name the transport routy does not speak yet.
+            </p>
+          </div>
+          <Badge variant="default" size="sm">
+            {freeTierAdded} of {freeTier.length} added
+          </Badge>
+        </div>
+        {catalog.isLoading ? (
+          <Skeleton rows={4} />
+        ) : freeTier.length === 0 ? null : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {freeTier.map((entry) => (
+              <FreeTierCard key={entry.id} entry={entry} node={freeTierNode(entry)} onAdd={() => void addFreeTier(entry)} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <div className="flex flex-col gap-1 border-t border-border-subtle pt-4">
+        <h2 className="text-sm font-semibold text-text-main">Your providers</h2>
+        <p className="text-xs text-text-muted">Text-generation providers you added yourself — health, keys and probing live in the table.</p>
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Tabs value={filter} onChange={setFilter} items={filterTabs} size="sm" />
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -244,7 +368,7 @@ export function Upstreams() {
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
             <Broadcast size={40} className="text-text-subtle" />
             <p className="text-sm text-text-muted">
-              {total === 0 ? "No providers yet. Add one to start routing." : "No providers match this filter."}
+              {total === 0 ? "No providers of your own yet — use Add Provider, or pick a free-tier card above." : "No providers match this filter."}
             </p>
             {total === 0 && (
               <Button variant="primary" icon={<Plus size={16} />} onClick={() => setAddOpen(true)}>

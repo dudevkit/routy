@@ -18,6 +18,7 @@ import type {
   NewNodeInput,
   KeyTestResult,
   MediaKind,
+  FreeTierProvider,
   MediaCatalogEntry,
   MediaModelEntry,
   ModelBulkAction,
@@ -276,6 +277,25 @@ export const api = {
       }
     }
     return { object: "list", data };
+  },
+
+  /** Free-tier chat catalogue — two representative rows (addable + not) so both card states
+   *  render in offline dev; the real list is shipped data the gateway serves. */
+  async providerCatalog(): Promise<{ providers: FreeTierProvider[] }> {
+    return {
+      providers: [
+        {
+          id: "example-free", name: "Example Free", baseUrl: "https://api.example.com/v1/chat/completions",
+          format: "openai", models: [{ id: "demo-model", name: "Demo" }], keyUrl: "https://example.com",
+          requires: [], supported: true, why: null,
+        },
+        {
+          id: "local-device", name: "Local Device", baseUrl: null, format: "openai", models: [],
+          keyUrl: null, requires: [], supported: false,
+          why: "runs on your device — no published endpoint (its own registry entry has no baseUrl)",
+        },
+      ],
+    };
   },
 
   /**

@@ -138,6 +138,26 @@ export interface UpstreamNode {
   lastError?: string;
 }
 
+/** A free-tier chat provider from 9Router's registry — `GET /api/providers/catalog`.
+ *  Kept separate from media catalogue entries: these are chat endpoints, they preset a whole
+ *  node (endpoint + models), and `supported: false` names a transport routy's chat handler
+ *  does not speak — no preset, no Add. */
+export interface FreeTierProvider {
+  id: string;
+  name: string;
+  /** FULL chat endpoint — routy posts to node.baseUrl verbatim. null for local/no-endpoint entries. */
+  baseUrl: string | null;
+  /** wire format routy must speak; supported entries are always "openai" */
+  format: string;
+  models: { id: string; name: string }[];
+  /** where to get a key (the registry's notice.apiKeyUrl / website) */
+  keyUrl: string | null;
+  /** what the operator must still fill in (e.g. cloudflare's {accountId}) */
+  requires: string[];
+  supported: boolean;
+  why: string | null;
+}
+
 export interface NewNodeInput {
   name: string;
   baseUrl: string;
