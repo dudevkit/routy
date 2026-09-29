@@ -157,6 +157,9 @@ export interface ProviderPreset {
   keyUrl: string | null;
   /** what the operator must still fill in (e.g. cloudflare's {accountId}) */
   requires: string[];
+  /** node-`data` fragment the preset writes on Add: chatUrl (the full registry endpoint)
+   *  or { executor: "opencode" } for the ported bespoke executor */
+  data?: Record<string, unknown> | null;
   supported: boolean;
   why: string | null;
 }

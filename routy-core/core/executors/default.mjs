@@ -84,6 +84,10 @@ export class DefaultExecutor {
 
   buildUrl() {
     const base = (this.node.baseUrl || "").replace(/\/+$/, "");
+    // A preset endpoint (catalogue `data.chatUrl`) is a FULL URL — the registry's baseUrl
+    // already names the path (`…/v1/chat/completions`), and9Router posts to it as-is. The
+    // append below is the hand-created-node convention (`https://host/v1` + `/chat/completions`).
+    if (this.node.data?.chatUrl) return this.node.data.chatUrl;
     if (this.node.apiType === "responses") return `${base}/responses`;
     return `${base}/chat/completions`;
   }

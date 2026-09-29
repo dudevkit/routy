@@ -17,6 +17,7 @@ import { resolveNodeProxy } from "../proxy.mjs";
 import { costOf, isMetered } from "../pricing.mjs";
 import { addSpend, budgetState } from "../budget.mjs";
 import { DefaultExecutor } from "../executors/default.mjs";
+import { OpenCodeExecutor } from "../executors/opencode.mjs";
 import { formatSse } from "../sse/parser.mjs";
 import { pumpSse, UsageTracker, LogBuffer } from "../sse/stream.mjs";
 import { parseSSEToOpenAIResponse } from "../sse/sseToJson.mjs";
@@ -310,11 +311,19 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           });
         }
 
-        const executor = new DefaultExecutor(r.node, connection, { proxy });
+        // One node can name its own executor: opencode's endpoint is composed per request
+        // (core/executors/opencode.mjs); every other node keeps the default wire.
+        const Executor = r.node.data?.executor === "opencode" ? OpenCodeExecutor : DefaultExecutor;
+        const executor = new Executor(r.node, connection, { proxy });
         // Per-node stall budget; 0 disables the watchdog.
         const idleTimeoutMs = r.node.data?.streamIdleTimeoutMs ?? globalIdleTimeoutMs;
         attempts++;
-        const result = await executor.execute({ model: r.model, body: outbound, stream, signal: clientAbort.signal, log });
+        const result = await executor.execute({
+          model: r.model, body: outbound, stream, signal: clientAbort.signal, log,
+          // When the downstream client IS the opencode app it carries its own session,
+          // project and UA — they pass through; anyone else gets the node's stable session.
+          clientHeaders: req.headers,
+        });
 
         if (!result.ok) {
           // A client walking away (or a client-side timeout) says nothing about the

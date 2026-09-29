@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { PROVIDERS } from "../core/providerCatalog.mjs";
 
 const FREE_TIER_IDS = ["api-airforce", "bazaarlink", "byteplus", "cloudflare-ai", "kilo-gateway", "nvidia", "openrouter", "poolside"];
-const FREE_IDS = ["mimo-free"];
+const FREE_IDS = ["mimo-free", "opencode"];
 
 const byCategory = (cat) => PROVIDERS.filter((e) => e.category === cat);
 
@@ -28,8 +28,10 @@ describe("provider preset catalogue", () => {
       expect(e.format, e.id).toBe("openai");
       expect(e.baseUrl, e.id).toMatch(/^https:\/\//);
       expect(() => new URL(e.baseUrl), e.id).not.toThrow();
-      // routing.mjs sends chat to node.baseUrl verbatim — an endpoint, not a directory,
-      // and nothing appended later (the generator rejects urlSuffix entries outright).
+      // routy's default buildUrl APPENDS /chat/completions (a hand-created node's convention
+      // is a base path), so every preset except opencode carries its full registry endpoint
+      // as data.chatUrl — posted to exactly as9Router posts it.
+      if (e.id !== "opencode") expect(e.data, e.id).toEqual({ chatUrl: e.baseUrl });
       expect(e.why, e.id).toBeNull();
       expect(e.requires, e.id).toBeDefined();
     }
@@ -44,10 +46,11 @@ describe("provider preset catalogue", () => {
 
   it("every entry routy cannot serve names the transport it lacks and carries no preset", () => {
     const unsupported = PROVIDERS.filter((e) => !e.supported);
-    expect(unsupported.length).toBe(14);
+    expect(unsupported.length).toBe(13);
     for (const e of unsupported) {
       expect(e.why, e.id).toBeTruthy();
       expect(e.why.length, e.id).toBeGreaterThan(20);
+      expect(e.data, e.id).toBeFalsy();
     }
   });
 
@@ -59,14 +62,17 @@ describe("provider preset catalogue", () => {
     }
   });
 
-  it("the no-auth category: only mimo-free survives (stdio, wire dialects and a website URL do not)", () => {
+  it("the no-auth category: mimo-free and opencode survive (stdio and wire dialects do not)", () => {
     const free = byCategory("free");
     expect(free.filter((e) => e.supported).map((e) => e.id)).toEqual(FREE_IDS);
     const devin = PROVIDERS.find((e) => e.id === "devin-cli");
     expect(devin.baseUrl).toMatch(/^devin:\/\//);
-    const opencode = PROVIDERS.find((e) => e.id === "opencode");
-    expect(opencode.supported).toBe(false);
-    expect(new URL(opencode.baseUrl).pathname).toBe("/"); // the website, not an endpoint
+    // opencode's root URL is not the endpoint — it selects the ported executor instead
+    // (core/executors/opencode.mjs composes /zen/v1/... per model).
+    const oc = PROVIDERS.find((e) => e.id === "opencode");
+    expect(oc.supported).toBe(true);
+    expect(oc.data).toEqual({ executor: "opencode" });
+    expect(new URL(oc.baseUrl).pathname).toBe("/");
   });
 
   it("cloudflare's {accountId} placeholder is declared on the card, not discovered after adding", () => {

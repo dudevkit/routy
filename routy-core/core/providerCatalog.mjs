@@ -2,9 +2,11 @@
 // rigs/gen-provider-catalog.mjs from rigs/provider-catalog.json
 // (9router/open-sse/providers/registry, categories freeTier + free). Regenerate, do not hand-edit.
 //
-// routy posts chat straight to `baseUrl` (core/routing.mjs: `url: ... node.baseUrl`) with a
-// bearer Authorization header, so each supported baseUrl here is the FULL endpoint. Categories
-// are 9Router's own registry vocabulary: freeTier (18) = key-required free usage, free (5) =
+// routy's chat executor appends /chat/completions to a node's baseUrl, so each supported
+// entry carries its full registry endpoint as `data.chatUrl` (posted to exactly as 9Router
+// posts); opencode instead carries `data.executor` — its baseUrl is the website root and
+// the ported executor composes /zen/v1/... per model. Categories are 9Router's own registry
+// vocabulary: freeTier (18) = key-required free usage, free (5) =
 // no credentials. `supported: false` names the transport routy does not speak (a local TTS
 // service, generateContent, a stdio process, OAuth) and carries no preset — an entry that looks
 // addable and then fails would be worse than the gap.
@@ -33,6 +35,9 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": "https://api.airforce",
     "requires": [],
+    "data": {
+      "chatUrl": "https://api.airforce/v1/chat/completions"
+    },
     "supported": true,
     "why": null
   },
@@ -142,6 +147,9 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": "https://bazaarlink.ai",
     "requires": [],
+    "data": {
+      "chatUrl": "https://bazaarlink.ai/api/v1/chat/completions"
+    },
     "supported": true,
     "why": null
   },
@@ -183,6 +191,9 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": "https://console.byteplus.com/ark/region:ark+ap-southeast-1/apiKey",
     "requires": [],
+    "data": {
+      "chatUrl": "https://ark.ap-southeast.bytepluses.com/api/coding/v3/chat/completions"
+    },
     "supported": true,
     "why": null
   },
@@ -294,6 +305,9 @@ export const PROVIDERS = Object.freeze(
     "requires": [
       "replace {accountId} in the node's URL with your Cloudflare account id"
     ],
+    "data": {
+      "chatUrl": "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/chat/completions"
+    },
     "supported": true,
     "why": null
   },
@@ -306,6 +320,7 @@ export const PROVIDERS = Object.freeze(
     "models": [],
     "keyUrl": "https://github.com/coqui-ai/TTS",
     "requires": [],
+    "data": null,
     "supported": false,
     "why": "a local TTS service — no chat endpoint exists (its own registry entry has no baseUrl)"
   },
@@ -318,6 +333,7 @@ export const PROVIDERS = Object.freeze(
     "models": [],
     "keyUrl": null,
     "requires": [],
+    "data": null,
     "supported": false,
     "why": "a local TTS service — no chat endpoint exists (its own registry entry has no baseUrl)"
   },
@@ -435,6 +451,7 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": "https://aistudio.google.com/app/apikey",
     "requires": [],
+    "data": null,
     "supported": false,
     "why": "9Router speaks Google's generateContent format; routy's chat speaks OpenAI/Claude/Responses"
   },
@@ -447,6 +464,7 @@ export const PROVIDERS = Object.freeze(
     "models": [],
     "keyUrl": null,
     "requires": [],
+    "data": null,
     "supported": false,
     "why": "a local TTS service — no chat endpoint exists (its own registry entry has no baseUrl)"
   },
@@ -484,6 +502,9 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": "https://kilo.ai/dashboard?tab=apiKeys",
     "requires": [],
+    "data": {
+      "chatUrl": "https://api.kilo.ai/api/gateway/chat/completions"
+    },
     "supported": true,
     "why": null
   },
@@ -529,6 +550,7 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": "https://app.kimchi.dev",
     "requires": [],
+    "data": null,
     "supported": false,
     "why": "needs a 9Router OAuth login; routy has no OAuth flows"
   },
@@ -541,6 +563,7 @@ export const PROVIDERS = Object.freeze(
     "models": [],
     "keyUrl": null,
     "requires": [],
+    "data": null,
     "supported": false,
     "why": "runs on your device — no published endpoint (its own registry entry has no baseUrl)"
   },
@@ -598,6 +621,9 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": "https://build.nvidia.com/settings/api-keys",
     "requires": [],
+    "data": {
+      "chatUrl": "https://integrate.api.nvidia.com/v1/chat/completions"
+    },
     "supported": true,
     "why": null
   },
@@ -639,6 +665,7 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": "https://ollama.com/settings/keys",
     "requires": [],
+    "data": null,
     "supported": false,
     "why": "9Router speaks Ollama's native /api/chat wire; routy's chat speaks OpenAI/Claude/Responses"
   },
@@ -720,6 +747,9 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": "https://openrouter.ai/settings/keys",
     "requires": [],
+    "data": {
+      "chatUrl": "https://openrouter.ai/api/v1/chat/completions"
+    },
     "supported": true,
     "why": null
   },
@@ -741,6 +771,9 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": "https://platform.poolside.ai/api-keys",
     "requires": [],
+    "data": {
+      "chatUrl": "https://inference.poolside.ai/v1/chat/completions"
+    },
     "supported": true,
     "why": null
   },
@@ -753,6 +786,7 @@ export const PROVIDERS = Object.freeze(
     "models": [],
     "keyUrl": "https://docs.searxng.org",
     "requires": [],
+    "data": null,
     "supported": false,
     "why": "a search engine you host yourself — no endpoint in the registry"
   },
@@ -765,6 +799,7 @@ export const PROVIDERS = Object.freeze(
     "models": [],
     "keyUrl": "https://github.com/neonbjb/tortoise-tts",
     "requires": [],
+    "data": null,
     "supported": false,
     "why": "a local TTS service — no chat endpoint exists (its own registry entry has no baseUrl)"
   },
@@ -810,6 +845,7 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": "https://console.cloud.google.com/iam-admin/serviceaccounts",
     "requires": [],
+    "data": null,
     "supported": false,
     "why": "9Router signs Vertex requests its own way; routy's chat speaks OpenAI/Claude/Responses"
   },
@@ -963,6 +999,7 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": "https://cli.devin.ai",
     "requires": [],
+    "data": null,
     "supported": false,
     "why": "a stdio/ACP process (devin://acp/stdio), not an HTTP endpoint routy can post to"
   },
@@ -1004,6 +1041,7 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": "https://github.com/google-gemini/gemini-cli",
     "requires": [],
+    "data": null,
     "supported": false,
     "why": "9Router speaks the Gemini CLI v1internal dialect (9Router marks the entry deprecated); routy's chat speaks OpenAI/Claude/Responses"
   },
@@ -1193,6 +1231,7 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": "https://kiro.dev",
     "requires": [],
+    "data": null,
     "supported": false,
     "why": "9Router speaks Kiro's ConversationState wire over AWS eventstream (9Router marks the entry deprecated); routy's chat speaks OpenAI/Claude/Responses"
   },
@@ -1210,6 +1249,9 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": null,
     "requires": [],
+    "data": {
+      "chatUrl": "https://api.xiaomimimo.com/api/free-ai/openai/chat"
+    },
     "supported": true,
     "why": null
   },
@@ -1231,8 +1273,11 @@ export const PROVIDERS = Object.freeze(
     ],
     "keyUrl": null,
     "requires": [],
-    "supported": false,
-    "why": "its URL is the website, not a chat endpoint — 9Router's free-tier routing stands in front of it; routy posts to the URL it is given"
+    "data": {
+      "executor": "opencode"
+    },
+    "supported": true,
+    "why": null
   }
 ].map((e) => Object.freeze({ ...e, models: Object.freeze(e.models), requires: Object.freeze(e.requires) })),
 );

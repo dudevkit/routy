@@ -309,7 +309,7 @@ export function Upstreams() {
     while ((nodes.data ?? []).some((x) => x.prefix === prefix)) prefix = `${entry.id}-${n++}`;
     let created: UpstreamNode;
     try {
-      created = await addNode.mutateAsync({ name: entry.name, prefix, baseUrl: entry.baseUrl, apiKey: "", data: { preset: entry.id } });
+      created = await addNode.mutateAsync({ name: entry.name, prefix, baseUrl: entry.baseUrl, apiKey: "", data: { preset: entry.id, ...(entry.data ?? {}) } });
     } catch (err) {
       toastApiError(toast, err, `Failed to add ${entry.name}`);
       return;
@@ -321,7 +321,7 @@ export function Upstreams() {
         await addModel.mutateAsync({ nodeId: created.id, model: m.id });
       } catch { /* keep going */ }
     }
-    toast(`${entry.name} added — add its key next`);
+    toast(entry.category === "free" ? `${entry.name} added — no key needed` : `${entry.name} added — add its key next`);
     navigate(`/upstreams/${created.id}`);
   };
 
