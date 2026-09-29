@@ -18,8 +18,11 @@ Type=simple
 # ever noticing — and a release that fails to come up gets rolled back instead of
 # leaving the service dead.
 #
-# If node is not on systemd's PATH (nvm, volta, asdf), replace this with the
-# absolute path: /root/.nvm/versions/node/v22.x.x/bin/node
+# scripts/install-service.sh rewrites this line with node's absolute path, so a node
+# from nvm, volta or asdf needs nothing from you — it is the path the installer found.
+# Installing this unit by hand instead? Then /usr/bin/env is resolved against systemd's
+# own PATH, which does not read your shell profile; replace it with the absolute path:
+# /home/you/.nvm/versions/node/v22.x.x/bin/node
 ExecStart=/usr/bin/env node /root/.local/share/routy/routy.mjs serve
 
 # Explicit, because $HOME is not set for a system service and the fallback is
