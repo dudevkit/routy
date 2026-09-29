@@ -13,6 +13,7 @@ import {
   usePools,
   useRemoveModel,
   useRemoveNode,
+  useProviderCatalog,
   useResetBreaker,
   useTestAllKeys,
   useTestKey,
@@ -262,6 +263,13 @@ export function ModelsTab({ node }: { node: UpstreamNode }) {
 
   const rows = models.data?.models ?? [];
   const hasKey = (connections.data?.length ?? 0) > 0;
+  // A keyless preset (registry category "free") probes with its own auth or none — the backend
+  // allows it (isKeyless, probeModel accepts a null connection) so the button must not demand a
+  // key that cannot exist. Derived from the shipped catalogue, like the backend, so a node saved
+  // before data.noAuth existed counts too.
+  const catalog = useProviderCatalog();
+  const keyless = Boolean(node.data?.noAuth || catalog.data?.providers.find((p) => p.id === node.data?.preset)?.data?.noAuth);
+  const probeable = hasKey || keyless;
   const allSelected = rows.length > 0 && selected.size === rows.length;
   const selectedRows = rows.filter((r) => selected.has(r.id));
 
@@ -354,7 +362,7 @@ export function ModelsTab({ node }: { node: UpstreamNode }) {
             loading={importModels.isPending}
             disabled={!hasKey}
             onClick={runImport}
-            title={hasKey ? "Fetch the model list from this provider" : "Add an API key first"}
+            title={hasKey ? "Fetch the model list from this provider" : keyless ? "Keyless provider — its model list came from the catalogue" : "Add an API key first"}
           >
             Import from provider
           </Button>
@@ -392,7 +400,7 @@ export function ModelsTab({ node }: { node: UpstreamNode }) {
               <Button variant="ghost" size="sm" onClick={toggleAll}>
                 {allSelected ? "Clear all" : "Select all"}
               </Button>
-              <Button variant="outline" size="sm" icon={<WifiHigh size={13} />} disabled={selected.size === 0 || !hasKey} loading={bulkModels.isPending && bulkModels.variables?.action === "test"} onClick={() => runBulk("test")}>
+              <Button variant="outline" size="sm" icon={<WifiHigh size={13} />} disabled={selected.size === 0 || !probeable} loading={bulkModels.isPending && bulkModels.variables?.action === "test"} onClick={() => runBulk("test")}>
                 Test
               </Button>
               <Button variant="outline" size="sm" icon={<Prohibit size={13} />} disabled={selected.size === 0} loading={bulkModels.isPending && bulkModels.variables?.action === "hide"} onClick={() => runBulk("hide")}>
@@ -484,9 +492,9 @@ export function ModelsTab({ node }: { node: UpstreamNode }) {
                         size="sm"
                         icon={<WifiHigh size={13} />}
                         loading={testingId === row.id}
-                        disabled={!hasKey}
+                        disabled={!probeable}
                         onClick={() => runTest(row)}
-                        title={hasKey ? "Send a real one-token stream" : "Add an API key first"}
+                        title={probeable ? "Send a real one-token stream" : "Add an API key first"}
                       >
                         Test
                       </Button>
