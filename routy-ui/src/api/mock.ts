@@ -453,7 +453,7 @@ export const api = {
   },
 
   /* usage — fresh install is all zeros */
-  async getStats(): Promise<UsageStats> {
+  async getStats(_params: { since?: number } = {}): Promise<UsageStats> {
     return { ...freshStats };
   },
   async getFailures(_limit = 20): Promise<RecentFailure[]> {

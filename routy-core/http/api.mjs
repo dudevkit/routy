@@ -238,10 +238,16 @@ function startOfToday() {
   return d.getTime();
 }
 
-function usageStats(repos) {
-  const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
+// `since` scopes every aggregate below to a caller-chosen window (the Usage screen's date
+// range); without it the window is the last 7 days — the shape and meaning every other
+// consumer sees today, unchanged. A caller-chosen window asks for no practical cap (the
+// "All" range's contract); the default keeps its 100000 ceiling like before. Every preset
+// the UI sends starts at or before local midnight, so `requestsToday` (counted inside the
+// window) is complete for all of them.
+export function usageStats(repos, since = null) {
   const today = startOfToday();
-  const week = repos.usage.query({ since: weekAgo, limit: 100000 });
+  const windowStart = since === null ? Date.now() - 7 * 24 * 3600 * 1000 : since;
+  const week = repos.usage.query({ since: windowStart, limit: since === null ? 100000 : 1000000 });
   let tokens7d = 0, costUsd7d = 0, errors = 0, ttfts = [];
   let requestsToday = 0;
   for (const e of week) {
@@ -615,7 +621,12 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   });
 
   // usage
-  route("GET", /^\/api\/usage\/stats$/, (req, res) => json(res, 200, usageStats(repos)));
+  route("GET", /^\/api\/usage\/stats$/, (req, res, p, url) => {
+    // `since` is optional: absent = the 7-day default every other consumer sees; 0 = All.
+    const raw = url.searchParams.get("since");
+    const parsed = raw === null ? null : Number(raw);
+    json(res, 200, usageStats(repos, parsed !== null && Number.isFinite(parsed) && parsed >= 0 ? parsed : null));
+  });
   route("GET", /^\/api\/usage\/failures$/, (req, res, p, url) => {
     const limit = parseInt(url.searchParams.get("limit") || "20", 10);
     json(res, 200, failures(repos, limit));

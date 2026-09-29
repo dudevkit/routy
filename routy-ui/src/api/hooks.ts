@@ -33,8 +33,15 @@ export const useNodeModels = (nodeId: string | null) =>
     enabled: !!nodeId,
   });
 
-export const useStats = () =>
-  useQuery({ queryKey: ["usage", "stats"], queryFn: api.getStats, refetchInterval: 10000 });
+/** `since` scopes the window (the Usage screen's date range); undefined = the default
+ *  7-day window — a different cache key, so the dashboard home and a range selection never
+ *  share one cached answer. */
+export const useStats = (since?: number) =>
+  useQuery({
+    queryKey: ["usage", "stats", since ?? "default"],
+    queryFn: () => api.getStats(since === undefined ? {} : { since }),
+    refetchInterval: 10000,
+  });
 
 export const useFailures = (limit = 20) =>
   useQuery({ queryKey: ["usage", "failures", limit], queryFn: () => api.getFailures(limit) });

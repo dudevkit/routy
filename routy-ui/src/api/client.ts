@@ -305,7 +305,9 @@ export const api = {
     postJson<BatchConnectionResult>(`/api/nodes/${enc(id)}/connections/batch`, input),
 
   /* usage */
-  getStats: (): Promise<UsageStats> => getJson<UsageStats>("/api/usage/stats"),
+  /** `since` scopes the window (the Usage screen's date range); omitted = the default 7 days. */
+  getStats: (params: { since?: number } = {}): Promise<UsageStats> =>
+    getJson<UsageStats>(`/api/usage/stats${qs(params)}`),
   getFailures: (limit = 20): Promise<RecentFailure[]> => getJson<RecentFailure[]>(`/api/usage/failures${qs({ limit })}`),
   getHistory: (params: { since?: number; limit?: number } = {}): Promise<UsageHistoryRow[]> =>
     getJson<UsageHistoryRow[]>(`/api/usage/history${qs(params)}`),

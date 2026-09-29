@@ -49,8 +49,8 @@ function JsonBlock({ text, truncated }: { text: string; truncated?: boolean }) {
 }
 
 /* ── Overview tab ──────────────────────────────────────────────────────────── */
-function OverviewTab({ rows }: { rows: UsageHistoryRow[] }) {
-  const stats = useStats();
+function OverviewTab({ rows, since, range }: { rows: UsageHistoryRow[]; since: number; range: string }) {
+  const stats = useStats(since);
   const [metric, setMetric] = useState("tokens");
 
   const series = useMemo(() => {
@@ -86,11 +86,13 @@ function OverviewTab({ rows }: { rows: UsageHistoryRow[] }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 sm:gap-4">
+        {/* "Requests · today" is a calendar fact the server always computes; every other
+            tile aggregates over the SELECTED window, so its label says which one. */}
         <StatTile label="Requests · today" value={(s?.requestsToday ?? 0).toLocaleString()} />
-        <StatTile label="Tokens · 7d" value={fmtTokens(s?.tokens7d ?? 0)} />
-        <StatTile label="Cost · 7d" value={fmtCost(s?.costUsd7d ?? 0)} />
-        <StatTile label="Error rate · 7d" value={`${(s?.errorRatePct ?? 0).toFixed(1)}%`} />
-        <StatTile label="TTFT · p50" value={s && s.ttftP50Ms > 0 ? `${s.ttftP50Ms}ms` : "—"} sub={s?.ttftP50Ms ? undefined : "no successful probe yet"} />
+        <StatTile label={`Tokens · ${RANGE_LABEL[range]}`} value={fmtTokens(s?.tokens7d ?? 0)} />
+        <StatTile label={`Cost · ${RANGE_LABEL[range]}`} value={fmtCost(s?.costUsd7d ?? 0)} />
+        <StatTile label={`Error rate · ${RANGE_LABEL[range]}`} value={`${(s?.errorRatePct ?? 0).toFixed(1)}%`} />
+        <StatTile label={`TTFT · p50 · ${RANGE_LABEL[range]}`} value={s && s.ttftP50Ms > 0 ? `${s.ttftP50Ms}ms` : "—"} sub={s?.ttftP50Ms ? undefined : "no successful probe yet"} />
       </div>
 
       <Card padding="sm">
@@ -405,6 +407,39 @@ const KIND_FILTER = [
   { value: "webFetch", label: "Web Fetch" },
 ];
 
+/** Date ranges, as the filter pill shows them. `7d` is the default — the window this screen
+ *  always had, so existing ?tab= links keep their exact meaning. */
+const RANGE_TABS = [
+  { value: "today", label: "Today" },
+  { value: "24h", label: "24h" },
+  { value: "7d", label: "7D" },
+  { value: "30d", label: "30D" },
+  { value: "60d", label: "60D" },
+  { value: "all", label: "All" },
+];
+const RANGE_LABEL: Record<string, string> = { today: "Today", "24h": "24h", "7d": "7D", "30d": "30D", "60d": "60D", all: "All" };
+
+/** Window start for a preset. Today is local midnight — a calendar fact, deliberately not
+ *  "the last 12 hours"; everything else is rolling; `all` is 0, which the history route
+ *  reads as no lower bound. Computed once per selection and pinned, so a page left open
+ *  across midnight keeps the window it started with rather than silently growing. */
+const rangeToSince = (range: string): number => {
+  const now = Date.now();
+  switch (range) {
+    case "today": { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }
+    case "24h": return now - 24 * 3600_000;
+    case "30d": return now - 30 * 24 * 3600_000;
+    case "60d": return now - 60 * 24 * 3600_000;
+    case "all": return 0;
+    default: return now - 7 * 24 * 3600_000;
+  }
+};
+
+/** Row budget per preset: the detail rows the client fetches. `all` fetches everything
+ *  (1e6 is the route's ceiling, not a display cut — it is never meant to be reached); the
+ *  count line says "latest N" if any cap is actually hit, so a slice cannot read as a range. */
+const RANGE_LIMIT: Record<string, number> = { today: 1000, "24h": 1000, "7d": 2000, "30d": 5000, "60d": 5000, all: 1_000_000 };
+
 const TABS = [
   { value: "overview", label: "Overview" },
   { value: "details", label: "Details" },
@@ -414,8 +449,10 @@ const TABS = [
 export function Usage() {
   const [params, setParams] = useSearchParams();
   const tab = TABS.some((t) => t.value === params.get("tab")) ? (params.get("tab") as string) : "overview";
-  const weekAgo = useMemo(() => Date.now() - 7 * 24 * 3600_000, []);
-  const history = useHistory({ since: weekAgo, limit: 1000 });
+  const range = RANGE_TABS.some((t) => t.value === params.get("range")) ? (params.get("range") as string) : "7d";
+  const since = useMemo(() => rangeToSince(range), [range]);
+  const limit = RANGE_LIMIT[range] ?? RANGE_LIMIT["7d"];
+  const history = useHistory({ since, limit });
   // usage_events carries a kind per row, so this filters what was already fetched — chat traffic
   // and a web fetch are different questions, and one mixed list answers neither.
   const [kindFilter, setKindFilter] = useState("all");
@@ -428,6 +465,13 @@ export function Usage() {
   const setTab = (next: string) => {
     const sp = new URLSearchParams(params);
     sp.set("tab", next);
+    setParams(sp, { replace: true });
+  };
+
+  // The range rides the URL like the tab does: reload and share keep the window.
+  const setRange = (next: string) => {
+    const sp = new URLSearchParams(params);
+    sp.set("range", next);
     setParams(sp, { replace: true });
   };
 
@@ -455,6 +499,7 @@ export function Usage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3 border-t border-border-subtle pt-3">
+        <Tabs size="sm" value={range} onChange={setRange} items={RANGE_TABS} />
         <Select
           label="Kind"
           value={kindFilter}
@@ -462,12 +507,15 @@ export function Usage() {
           onChange={(e) => setKindFilter(e.target.value)}
         />
         <span className="text-[11px] text-text-muted">
-          {rows.length} of {(history.data ?? []).length} requests
+          {rows.length} of {(history.data ?? []).length} requests · {RANGE_LABEL[range]}
           {kindFilter !== "all" ? ` · ${KIND_FILTER.find((k) => k.value === kindFilter)?.label ?? kindFilter}` : ""}
+          {/* The cap is a fact, not a detail: when the route's ceiling was actually hit, say
+              so instead of letting a quiet slice read as the whole range. */}
+          {(history.data ?? []).length >= limit ? ` · latest ${limit.toLocaleString()}` : ""}
         </span>
       </div>
 
-      {tab === "overview" && <OverviewTab rows={rows} />}
+      {tab === "overview" && <OverviewTab rows={rows} since={since} range={range} />}
       {tab === "details" && <DetailsTab rows={rows} />}
       {tab === "quota" && <QuotaTab rows={rows} />}
     </div>
