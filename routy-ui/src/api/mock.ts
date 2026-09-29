@@ -18,7 +18,7 @@ import type {
   NewNodeInput,
   KeyTestResult,
   MediaKind,
-  FreeTierProvider,
+  ProviderPreset,
   MediaCatalogEntry,
   MediaModelEntry,
   ModelBulkAction,
@@ -279,20 +279,27 @@ export const api = {
     return { object: "list", data };
   },
 
-  /** Free-tier chat catalogue — two representative rows (addable + not) so both card states
-   *  render in offline dev; the real list is shipped data the gateway serves. */
-  async providerCatalog(): Promise<{ providers: FreeTierProvider[] }> {
+  /** Provider preset catalogue — three representative rows (both categories, addable + not) so
+   *  every card state renders in offline dev; the real list is shipped data from the gateway. */
+  async providerCatalog(): Promise<{ providers: ProviderPreset[] }> {
     return {
       providers: [
         {
-          id: "example-free", name: "Example Free", baseUrl: "https://api.example.com/v1/chat/completions",
+          id: "example-free", category: "freeTier", name: "Example Free",
+          baseUrl: "https://api.example.com/v1/chat/completions",
           format: "openai", models: [{ id: "demo-model", name: "Demo" }], keyUrl: "https://example.com",
           requires: [], supported: true, why: null,
         },
         {
-          id: "local-device", name: "Local Device", baseUrl: null, format: "openai", models: [],
-          keyUrl: null, requires: [], supported: false,
+          id: "local-device", category: "freeTier", name: "Local Device", baseUrl: null,
+          format: "openai", models: [], keyUrl: null, requires: [], supported: false,
           why: "runs on your device — no published endpoint (its own registry entry has no baseUrl)",
+        },
+        {
+          id: "mimo-free", category: "free", name: "MiMo Code Free",
+          baseUrl: "https://api.xiaomimimo.com/api/free-ai/openai/chat",
+          format: "openai", models: [{ id: "mimo", name: "MiMo" }], keyUrl: null,
+          requires: [], supported: true, why: null,
         },
       ],
     };

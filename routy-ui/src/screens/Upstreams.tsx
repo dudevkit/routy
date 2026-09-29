@@ -9,7 +9,7 @@ import {
   useTestAllKeys,
   useUpdateNode,
 } from "../api/hooks";
-import type { FreeTierProvider, NodeStatus, UpstreamNode } from "../api/types";
+import type { ProviderPreset, NodeStatus, UpstreamNode } from "../api/types";
 import { toastApiError } from "../utils/errors";
 import { fmtMs } from "../utils/format";
 import { Broadcast, CaretRight, Check, CheckCircle, Plus, Prohibit, WifiHigh, XCircle } from "../components/icons";
@@ -43,10 +43,10 @@ const filterTabs = [
 ];
 
 /**
- * A row is for scanning and navigating; the detail page is for doing. The only
- * inline action that still makes sense at list level is probing every key at once.
+ * A card is for scanning and navigating; the detail page is for doing. The mutating actions
+ * (Test keys, Enable/Disable, Remove) stay on the card — there is room now, unlike a table row.
  */
-function NodeRow({ node }: { node: UpstreamNode }) {
+function NodeCard({ node }: { node: UpstreamNode }) {
   const toast = useToast();
   const navigate = useNavigate();
   const testAll = useTestAllKeys();
@@ -59,94 +59,85 @@ function NodeRow({ node }: { node: UpstreamNode }) {
   const open = () => navigate(`/upstreams/${node.id}`);
 
   return (
-    <tr
+    <div
       onClick={open}
-      className="cursor-pointer border-t border-border-subtle transition-colors hover:bg-surface-2/60"
+      className="flex cursor-pointer flex-col gap-1.5 rounded border border-border-subtle p-3 transition-colors hover:bg-surface-2/60"
     >
-      <td className="px-4 py-2.5">
-        <div className="flex items-center gap-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <StatusDot tone={meta.dot} />
           <Link
             to={`/upstreams/${node.id}`}
             onClick={(e) => e.stopPropagation()}
-            className="text-sm font-medium text-text-main hover:text-primary hover:underline"
+            className="truncate text-sm font-medium text-text-main hover:text-primary hover:underline"
           >
             {node.name}
           </Link>
         </div>
-      </td>
-      <td className="px-4 py-2.5">
         <Badge variant={meta.badge} size="sm" dot>
           {meta.label}
         </Badge>
-      </td>
-      <td className="hidden max-w-[280px] px-4 py-2.5 lg:table-cell">
-        <span className="block truncate font-mono text-xs text-text-muted">{node.baseUrl}</span>
-      </td>
-      <td className="px-4 py-2.5 font-mono text-xs text-text-muted">{node.prefix || "—"}</td>
-      <td className="px-4 py-2.5 text-right font-mono text-xs tabular">
-        {node.modelCount === 0 ? (
-          <span className="text-text-subtle" title="Open the provider to import or add models">
-            0
-          </span>
-        ) : (
-          <span className="text-text-main">{node.modelCount}</span>
-        )}
-      </td>
-      <td className="hidden px-4 py-2.5 text-right font-mono text-xs text-text-muted tabular md:table-cell">
-        {fmtMs(node.latencyMs)}
-      </td>
-      <td className="hidden px-4 py-2.5 font-mono text-xs text-text-muted xl:table-cell">{node.keyMasked}</td>
-      {/* Below md the whole row is the tap target (it navigates), so the mutating
-          actions — all of which exist on the provider page — give up their 278px. */}
-      <td className="hidden px-4 py-2.5 md:table-cell" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-end gap-1">
-          <Button
-            size="sm"
-            variant="secondary"
-            icon={<WifiHigh size={13} />}
-            loading={testAll.isPending}
-            onClick={() =>
-              testAll.mutate(
-                { nodeId: node.id },
-                {
-                  onSuccess: (r) => toast(`${r.ok}/${r.tested} keys ok`, r.ok === r.tested ? "success" : "error"),
-                  onError: (err) => toastApiError(toast, err, "Key test failed"),
-                },
-              )
-            }
-          >
-            Test keys
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            aria-label={disabled ? `Enable ${node.name}` : `Disable ${node.name}`}
-            icon={disabled ? <Check size={13} /> : <Prohibit size={13} />}
-            disabled={updateNode.isPending}
-            onClick={() =>
-              updateNode.mutate(
-                { id: node.id, patch: { enabled: disabled } },
-                {
-                  onSuccess: () => toast(disabled ? "Provider enabled" : "Provider disabled"),
-                  onError: (err) => toastApiError(toast, err, disabled ? "Failed to enable" : "Failed to disable"),
-                },
-              )
-            }
-          >
-            {disabled ? "Enable" : "Disable"}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            aria-label={`Remove ${node.name}`}
-            className="hover:bg-danger/10 hover:text-danger"
-            icon={<XCircle size={14} />}
-            onClick={() => setConfirmRemove(true)}
-          />
-          <Button size="sm" variant="ghost" icon={<CaretRight size={13} />} aria-label={`Manage ${node.name}`} onClick={open} />
-        </div>
-      </td>
+      </div>
+      <p className="truncate font-mono text-[11px] text-text-muted" title={node.baseUrl}>
+        {node.baseUrl}
+      </p>
+      <p className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-text-subtle">
+        <span className="font-mono">{node.prefix || "—"}</span>
+        <span>·</span>
+        <span title={node.modelCount === 0 ? "Open the provider to import or add models" : undefined}>
+          {node.modelCount} model{node.modelCount === 1 ? "" : "s"}
+        </span>
+        <span>·</span>
+        <span>{fmtMs(node.latencyMs)}</span>
+        <span>·</span>
+        <span className="font-mono">{node.keyMasked}</span>
+      </p>
+      <div className="mt-auto flex flex-wrap items-center justify-end gap-1 pt-1" onClick={(e) => e.stopPropagation()}>
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={<WifiHigh size={13} />}
+          loading={testAll.isPending}
+          onClick={() =>
+            testAll.mutate(
+              { nodeId: node.id },
+              {
+                onSuccess: (r) => toast(`${r.ok}/${r.tested} keys ok`, r.ok === r.tested ? "success" : "error"),
+                onError: (err) => toastApiError(toast, err, "Key test failed"),
+              },
+            )
+          }
+        >
+          Test keys
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          aria-label={disabled ? `Enable ${node.name}` : `Disable ${node.name}`}
+          icon={disabled ? <Check size={13} /> : <Prohibit size={13} />}
+          disabled={updateNode.isPending}
+          onClick={() =>
+            updateNode.mutate(
+              { id: node.id, patch: { enabled: disabled } },
+              {
+                onSuccess: () => toast(disabled ? "Provider enabled" : "Provider disabled"),
+                onError: (err) => toastApiError(toast, err, disabled ? "Failed to enable" : "Failed to disable"),
+              },
+            )
+          }
+        >
+          {disabled ? "Enable" : "Disable"}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          aria-label={`Remove ${node.name}`}
+          className="hover:bg-danger/10 hover:text-danger"
+          icon={<XCircle size={14} />}
+          onClick={() => setConfirmRemove(true)}
+        />
+        <Button size="sm" variant="ghost" icon={<CaretRight size={13} />} aria-label={`Manage ${node.name}`} onClick={open} />
+      </div>
 
       <Modal
         isOpen={confirmRemove}
@@ -180,16 +171,17 @@ function NodeRow({ node }: { node: UpstreamNode }) {
           <span className="font-mono"> {node.prefix}/…</span> will stop resolving.
         </p>
       </Modal>
-    </tr>
+    </div>
   );
 }
 
 /**
- * One free-tier preset card — catalogue inventory, deliberately its own thing: what 9Router
- * ships and routy can add. It is not a live node row (those are the table below); once added,
- * the card flips to "added" and links to the node's page for keys, models and probing.
+ * One preset card — catalogue inventory, deliberately its own thing: what 9Router ships and
+ * routy can add, grouped by registry category (never a live node; those are the cards under
+ * "Your providers"). Once added, the card flips to "added" and links to the node's page for
+ * keys, models and probing.
  */
-function FreeTierCard({ entry, node, onAdd }: { entry: FreeTierProvider; node?: UpstreamNode; onAdd: () => void }) {
+function PresetCard({ entry, node, onAdd }: { entry: ProviderPreset; node?: UpstreamNode; onAdd: () => void }) {
   return (
     <div
       className={`flex flex-col gap-1.5 rounded border border-border-subtle p-3 ${entry.supported ? "" : "opacity-60"}`}
@@ -236,6 +228,62 @@ function FreeTierCard({ entry, node, onAdd }: { entry: FreeTierProvider; node?: 
   );
 }
 
+/** What each registry category is called on screen, in 9Router's own terms. */
+const CATEGORY_INFO: Record<string, { title: string; blurb: string }> = {
+  freeTier: {
+    title: "Free tier",
+    blurb:
+      "Chat providers 9Router ships under its free tier, added straight from the catalogue — endpoint and models come with the preset; the key goes on the provider's page next. Entries marked \"not yet\" name the transport routy does not speak yet.",
+  },
+  free: {
+    title: "Free (no auth)",
+    blurb:
+      "The registry's no-credential five — these send without any key at all. Only the ones routy can actually reach carry an Add.",
+  },
+};
+
+/** One category's card group: heading, honest blurb, added-count badge, grid. */
+function PresetSection({
+  title,
+  blurb,
+  entries,
+  nodeFor,
+  onAdd,
+  loading,
+}: {
+  title: string;
+  blurb: string;
+  entries: ProviderPreset[];
+  nodeFor: (entry: ProviderPreset) => UpstreamNode | undefined;
+  onAdd: (entry: ProviderPreset) => void;
+  loading: boolean;
+}) {
+  if (entries.length === 0 && !loading) return null;
+  const added = entries.filter((e) => nodeFor(e)).length;
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-text-main">{title}</h2>
+          <p className="text-xs text-text-muted">{blurb}</p>
+        </div>
+        <Badge variant="default" size="sm">
+          {added} of {entries.length} added
+        </Badge>
+      </div>
+      {loading ? (
+        <Skeleton rows={4} />
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {entries.map((entry) => (
+            <PresetCard key={entry.id} entry={entry} node={nodeFor(entry)} onAdd={() => onAdd(entry)} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function Upstreams() {
   const nodes = useNodes();
   const toast = useToast();
@@ -247,12 +295,14 @@ export function Upstreams() {
   const addNode = useAddNode();
   const addModel = useAddModel();
 
-  const freeTier = catalog.data?.providers ?? [];
-  const freeTierNode = (entry: FreeTierProvider) => (nodes.data ?? []).find((n) => n.data?.preset === entry.id);
+  // Catalogue cards group by 9Router's own registry category — one section per category.
+  const presets = catalog.data?.providers ?? [];
+  const categories = [...new Set(presets.map((p) => p.category))];
+  const presetNode = (entry: ProviderPreset) => (nodes.data ?? []).find((n) => n.data?.preset === entry.id);
 
   /** Add from the preset: endpoint, model rows and the `data.preset` marker that keeps this node
-   *  on its card and out of the table below. No key yet — the node's own page is where keys go. */
-  const addFreeTier = async (entry: FreeTierProvider) => {
+   *  on its card and out of the cards below. No key yet — the node's own page is where keys go. */
+  const addPreset = async (entry: ProviderPreset) => {
     if (!entry.supported || !entry.baseUrl) return;
     let prefix = entry.id;
     let n = 2;
@@ -307,36 +357,22 @@ export function Upstreams() {
   }
 
   const total = (nodes.data ?? []).filter((n) => !n.media?.provider && !n.data?.preset).length;
-  const freeTierAdded = freeTier.filter((e) => freeTierNode(e)).length;
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Free tier: catalogue cards, deliberately separate from the operator's own providers
-          below. The table stays hand-added nodes only — one mixed list would answer neither. */}
-      <section className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-end justify-between gap-2">
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-text-main">Free tier</h2>
-            <p className="text-xs text-text-muted">
-              Chat providers 9Router ships, added straight from the catalogue — endpoint and models come
-              with the preset; the key goes on the provider&apos;s page next. Entries marked "not yet"
-              name the transport routy does not speak yet.
-            </p>
-          </div>
-          <Badge variant="default" size="sm">
-            {freeTierAdded} of {freeTier.length} added
-          </Badge>
-        </div>
-        {catalog.isLoading ? (
-          <Skeleton rows={4} />
-        ) : freeTier.length === 0 ? null : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {freeTier.map((entry) => (
-              <FreeTierCard key={entry.id} entry={entry} node={freeTierNode(entry)} onAdd={() => void addFreeTier(entry)} />
-            ))}
-          </div>
-        )}
-      </section>
+      {/* Catalogue cards, deliberately separate from the operator's own below — one mixed
+          list would answer neither question. */}
+      {categories.map((cat) => (
+        <PresetSection
+          key={cat}
+          title={CATEGORY_INFO[cat]?.title ?? cat}
+          blurb={CATEGORY_INFO[cat]?.blurb ?? ""}
+          entries={presets.filter((p) => p.category === cat)}
+          nodeFor={presetNode}
+          onAdd={addPreset}
+          loading={catalog.isLoading}
+        />
+      ))}
 
       <div className="flex flex-col gap-1 border-t border-border-subtle pt-4">
         <h2 className="text-sm font-semibold text-text-main">Your providers</h2>
@@ -359,16 +395,16 @@ export function Upstreams() {
         </div>
       </div>
 
-      <Card padding="none" className="overflow-hidden">
-        {nodes.isLoading ? (
-          <div className="p-4">
-            <Skeleton rows={5} />
-          </div>
-        ) : visible.length === 0 ? (
+      {nodes.isLoading ? (
+        <Card padding="sm">
+          <Skeleton rows={5} />
+        </Card>
+      ) : visible.length === 0 ? (
+        <Card padding="none">
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
             <Broadcast size={40} className="text-text-subtle" />
             <p className="text-sm text-text-muted">
-              {total === 0 ? "No providers of your own yet — use Add Provider, or pick a free-tier card above." : "No providers match this filter."}
+              {total === 0 ? "No providers of your own yet — use Add Provider, or pick a preset card above." : "No providers match this filter."}
             </p>
             {total === 0 && (
               <Button variant="primary" icon={<Plus size={16} />} onClick={() => setAddOpen(true)}>
@@ -376,30 +412,14 @@ export function Upstreams() {
               </Button>
             )}
           </div>
-        ) : (
-          <div className="w-full min-w-0 overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-bg-alt text-left">
-                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Node</th>
-                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Status</th>
-                  <th className="hidden px-4 py-2 text-xs font-medium text-text-muted lg:table-cell">Base URL</th>
-                  <th className="px-4 py-2 text-xs font-medium text-text-muted">Prefix</th>
-                  <th className="px-4 py-2 text-right text-xs font-medium text-text-muted">Models</th>
-                  <th className="hidden px-4 py-2 text-right text-xs font-medium text-text-muted md:table-cell">TTFT</th>
-                  <th className="hidden px-4 py-2 text-xs font-medium text-text-muted xl:table-cell">Key</th>
-                  <th className="hidden px-4 py-2 text-right text-xs font-medium text-text-muted md:table-cell">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((n) => (
-                  <NodeRow key={n.id} node={n} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {visible.map((n) => (
+            <NodeCard key={n.id} node={n} />
+          ))}
+        </div>
+      )}
 
       <div className="flex items-center gap-2 px-1 text-xs text-text-subtle">
         <CheckCircle size={13} className="shrink-0" />

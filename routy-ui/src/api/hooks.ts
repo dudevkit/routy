@@ -86,8 +86,8 @@ export const useAliases = () => useQuery({ queryKey: ALIASES, queryFn: api.listA
 export const useMediaCatalog = () =>
   useQuery({ queryKey: ["media", "catalog"], queryFn: api.mediaCatalog, staleTime: 5 * 60_000 });
 
-/** Free-tier chat providers — the Providers screen's preset cards. Cached like the media one:
- *  the catalogue is shipped data that only changes with a release. */
+/** Provider preset catalogue (9Router's freeTier + free categories) — the Providers screen's
+ *  card sections. Cached like the media one: shipped data that only changes with a release. */
 export const useProviderCatalog = () =>
   useQuery({ queryKey: ["providers", "catalog"], queryFn: api.providerCatalog, staleTime: 5 * 60_000 });
 

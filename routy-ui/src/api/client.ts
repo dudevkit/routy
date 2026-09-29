@@ -23,7 +23,7 @@ import type {
   GatewayInfo,
   KeyTestResult,
   MediaKind,
-  FreeTierProvider,
+  ProviderPreset,
   MediaCatalogEntry,
   MediaModelEntry,
   ModelBulkAction,
@@ -269,9 +269,9 @@ export const api = {
    *  fragment a preset applies. Providers routy cannot serve yet carry a `why` instead. */
   mediaCatalog: (): Promise<{ kinds: Partial<Record<MediaKind, MediaCatalogEntry[]>> }> =>
     getJson("/api/media/catalog"),
-  /** The free-tier chat provider catalogue (9Router's registry, category === "freeTier").
-   *  Separate from the media catalogue: these are chat endpoints that preset a whole node. */
-  providerCatalog: (): Promise<{ providers: FreeTierProvider[] }> =>
+  /** The provider preset catalogue (9Router's freeTier + free categories). Separate from the
+   *  media catalogue: these are chat endpoints that preset a whole node. */
+  providerCatalog: (): Promise<{ providers: ProviderPreset[] }> =>
     getJson("/api/providers/catalog"),
   /** Restart the gateway. The server spawns its replacement BEFORE it exits (nothing supervises a
    *  locally started one), so a 202 here means the gateway will come back by itself. */

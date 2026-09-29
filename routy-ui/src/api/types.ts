@@ -138,12 +138,15 @@ export interface UpstreamNode {
   lastError?: string;
 }
 
-/** A free-tier chat provider from 9Router's registry — `GET /api/providers/catalog`.
- *  Kept separate from media catalogue entries: these are chat endpoints, they preset a whole
- *  node (endpoint + models), and `supported: false` names a transport routy's chat handler
- *  does not speak — no preset, no Add. */
-export interface FreeTierProvider {
+/** A chat provider preset from 9Router's registry — `GET /api/providers/catalog`.
+ *  Categories are 9Router's own: `freeTier` (key-required free usage) and `free` (no
+ *  credentials). Kept separate from media catalogue entries: these are chat endpoints, they
+ *  preset a whole node (endpoint + models), and `supported: false` names a transport routy's
+ *  chat handler does not speak — no preset, no Add. */
+export interface ProviderPreset {
   id: string;
+  /** which registry card group: "freeTier" | "free" */
+  category: string;
   name: string;
   /** FULL chat endpoint — routy posts to node.baseUrl verbatim. null for local/no-endpoint entries. */
   baseUrl: string | null;
