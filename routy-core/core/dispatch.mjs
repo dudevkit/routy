@@ -14,6 +14,7 @@ import { costOf, isMetered } from "./pricing.mjs";
 import { addSpend, budgetState } from "./budget.mjs";
 import { orderRoutes } from "./routing.mjs";
 import { MEDIA_KINDS } from "./media.mjs";
+import { isKeyless } from "./providerCatalog.mjs";
 
 // nodeId -> rotation cursor. Key rotation is per node and per process (RAM): a restart
 // forgetting the cursor merely starts the rotation over.
@@ -30,10 +31,21 @@ const rrCursor = new Map();
  *                           next key still happens inside the same request
  */
 export function pickConnections(repos, node) {
-  const usable = repos.connections.list(node.id)
+  const all = repos.connections.list(node.id);
+  const usable = all
     .filter((c) => c.status === "active")
     .filter((c) => isConnectionAvailable(connectionState(repos, c.id)));
-  if (usable.length === 0) return [];
+  if (usable.length === 0) {
+    // A keyless preset (registry category "free" — data.noAuth) has no connections BY DESIGN:
+    // opencode authenticates itself, mimo-free needs nothing. One anonymous attempt keeps the
+    // queue, health and logging pipeline in its single shape; `id: null` is what per-key
+    // recording skips on (key-health guards the null id), and executor auth ignores the empty
+    // key (`if (key)` is falsy) or is supplied by the preset's own executor.
+    if (all.length === 0 && isKeyless(node)) {
+      return Object.freeze([{ id: null, nodeId: node.id, name: "no-auth", status: "active", credentials: Object.freeze({ apiKey: "" }) }]);
+    }
+    return [];
+  }
   if (node.data?.keyStrategy === "fallback") return usable;
   const start = rrCursor.get(node.id) ?? 0;
   rrCursor.set(node.id, start + 1);

@@ -143,6 +143,10 @@ export function connectionState(repos, connectionId) {
  * out; `global`/`node` leave the connection untouched).
  */
 export function recordConnectionFailure(repos, connection, err, settings = {}, now = Date.now(), recent429 = null) {
+  // The anonymous connection of a keyless preset (id null): there is no key to charge a
+  // failure to. "node" is the verdict chat already handles by charging the node breaker —
+  // exactly where a keyless failure belongs.
+  if (connection?.id == null) return { verdict: "node", reason: "keyless connection — charged to the node", strikes: 0, cooldownMs: 0 };
   const scope = connectionScope(connection.id);
   const state = connectionState(repos, connection.id);
   const verdict = classifyConnectionError(err, { connection, recent429 });
@@ -185,6 +189,8 @@ export function recordConnectionFailure(repos, connection, err, settings = {}, n
 }
 
 export function recordConnectionSuccess(repos, connectionId) {
+  // id null = the anonymous connection of a keyless preset — per-key state never existed.
+  if (connectionId == null) return;
   const scope = connectionScope(connectionId);
   const state = connectionState(repos, connectionId);
   if (state.state === "closed" && state.failures === 0 && !state.openUntil && !state.cooldownStreak) return state;

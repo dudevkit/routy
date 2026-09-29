@@ -1250,7 +1250,8 @@ export const PROVIDERS = Object.freeze(
     "keyUrl": null,
     "requires": [],
     "data": {
-      "chatUrl": "https://api.xiaomimimo.com/api/free-ai/openai/chat"
+      "chatUrl": "https://api.xiaomimimo.com/api/free-ai/openai/chat",
+      "noAuth": true
     },
     "supported": true,
     "why": null
@@ -1274,10 +1275,22 @@ export const PROVIDERS = Object.freeze(
     "keyUrl": null,
     "requires": [],
     "data": {
-      "executor": "opencode"
+      "executor": "opencode",
+      "noAuth": true
     },
     "supported": true,
     "why": null
   }
 ].map((e) => Object.freeze({ ...e, models: Object.freeze(e.models), requires: Object.freeze(e.requires) })),
 );
+
+/** Is this node keyless? Decided against the CATALOGUE, not just the node's own data: a node
+ *  created before its entry gained `noAuth` must keep working, so the shipped catalogue is the
+ *  single source and `data.noAuth` is only its Add-time copy. */
+export function isKeyless(node) {
+  if (node?.data?.noAuth) return true;
+  const presetId = node?.data?.preset;
+  if (!presetId) return false;
+  const entry = PROVIDERS.find((e) => e.id === presetId);
+  return Boolean(entry?.data?.noAuth);
+}

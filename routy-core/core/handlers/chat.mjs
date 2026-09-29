@@ -17,7 +17,7 @@ import { resolveNodeProxy } from "../proxy.mjs";
 import { costOf, isMetered } from "../pricing.mjs";
 import { addSpend, budgetState } from "../budget.mjs";
 import { DefaultExecutor } from "../executors/default.mjs";
-import { OpenCodeExecutor } from "../executors/opencode.mjs";
+import { OpenCodeExecutor, opencodeSpeaksResponses } from "../executors/opencode.mjs";
 import { formatSse } from "../sse/parser.mjs";
 import { pumpSse, UsageTracker, LogBuffer } from "../sse/stream.mjs";
 import { parseSSEToOpenAIResponse } from "../sse/sseToJson.mjs";
@@ -56,9 +56,12 @@ function providerKeyFor(node) {
   return String(node?.data?.provider || node?.prefix || "").toLowerCase();
 }
 
-function targetFormatForNode(node) {
+function targetFormatForNode(node, model) {
   if (node.apiType === "anthropic") return FORMATS.CLAUDE;
   if (node.apiType === "responses") return FORMATS.OPENAI_RESPONSES;
+  // opencode's muse-spark free models speak the Responses dialect on /zen/v1/responses —
+  // decided per MODEL, not per node (its apiType stays "openai" for the rest of the list).
+  if (node.data?.executor === "opencode" && opencodeSpeaksResponses(model)) return FORMATS.OPENAI_RESPONSES;
   return FORMATS.OPENAI;
 }
 
@@ -255,7 +258,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         // else the provider's rotation. Resolved per attempt so a rotation to another
         // key can also rotate its proxy.
         const proxy = resolveNodeProxy(repos, r.node, connection, { settings });
-        const targetFormat = targetFormatForNode(r.node);
+        const targetFormat = targetFormatForNode(r.node, r.model);
         const translate = needsTranslation(sourceFormat, targetFormat);
 
         // `sourceBody` is what the caller sent — and on a retry, that same body with the optional
@@ -644,7 +647,7 @@ function recordUsage(repos, log, route, connection, clientModel, { status, usage
 
   const event = repos.usage.record({
     nodeId: route.node.id,
-    connectionId: connection.id,
+    connectionId: connection.id ?? null,
     apiKeyId: apiKeyId ?? null,
     model: clientModel,
     status,
@@ -670,7 +673,7 @@ function recordUsage(repos, log, route, connection, clientModel, { status, usage
     requestId: event.id,
     model: clientModel,
     nodeId: route.node.id,
-    connectionId: connection.id,
+    connectionId: connection.id ?? null,
     key: `${connection.name} (${maskKey(connection.credentials?.apiKey)})`,
     // How a combo request was served: which member, where it sat in the strategy's order, and
     // what the strategy skipped. Without these the line cannot tell a correct `fallback`

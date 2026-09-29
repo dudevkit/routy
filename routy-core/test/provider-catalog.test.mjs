@@ -3,7 +3,7 @@
 // endpoint shape (routy posts to node.baseUrl verbatim, no urlSuffix), and the no-preset rule
 // for what routy cannot serve.
 import { describe, expect, it } from "vitest";
-import { PROVIDERS } from "../core/providerCatalog.mjs";
+import { PROVIDERS, isKeyless } from "../core/providerCatalog.mjs";
 
 const FREE_TIER_IDS = ["api-airforce", "bazaarlink", "byteplus", "cloudflare-ai", "kilo-gateway", "nvidia", "openrouter", "poolside"];
 const FREE_IDS = ["mimo-free", "opencode"];
@@ -30,8 +30,11 @@ describe("provider preset catalogue", () => {
       expect(() => new URL(e.baseUrl), e.id).not.toThrow();
       // routy's default buildUrl APPENDS /chat/completions (a hand-created node's convention
       // is a base path), so every preset except opencode carries its full registry endpoint
-      // as data.chatUrl — posted to exactly as9Router posts it.
-      if (e.id !== "opencode") expect(e.data, e.id).toEqual({ chatUrl: e.baseUrl });
+      // as data.chatUrl — posted to exactly as9Router posts it. Category "free" is keyless:
+      // data.noAuth is what lets chat run it through the anonymous connection and probes run
+      // without a key.
+      if (e.id !== "opencode") expect(e.data?.chatUrl, e.id).toBe(e.baseUrl);
+      expect(Boolean(e.data?.noAuth), `${e.id} noAuth`).toBe(e.category === "free");
       expect(e.why, e.id).toBeNull();
       expect(e.requires, e.id).toBeDefined();
     }
@@ -71,7 +74,7 @@ describe("provider preset catalogue", () => {
     // (core/executors/opencode.mjs composes /zen/v1/... per model).
     const oc = PROVIDERS.find((e) => e.id === "opencode");
     expect(oc.supported).toBe(true);
-    expect(oc.data).toEqual({ executor: "opencode" });
+    expect(oc.data).toEqual({ executor: "opencode", noAuth: true });
     expect(new URL(oc.baseUrl).pathname).toBe("/");
   });
 
@@ -86,5 +89,15 @@ describe("provider preset catalogue", () => {
     for (const e of byCategory("freeTier").filter((x) => x.supported)) {
       expect(e.keyUrl, e.id).toBeTruthy();
     }
+  });
+
+  it("keylessness is decided from the catalogue, so a node saved before noAuth still runs", () => {
+    // The stale-node case: preset + executor only, no data.noAuth — created before the flag
+    // existed. Deriving from the shipped catalogue is what keeps it usable without surgery.
+    expect(isKeyless({ data: { preset: "opencode", executor: "opencode" } })).toBe(true);
+    expect(isKeyless({ data: { preset: "mimo-free" } })).toBe(true);
+    expect(isKeyless({ data: { preset: "nvidia" } })).toBe(false);
+    expect(isKeyless({ data: {} })).toBe(false);
+    expect(isKeyless(null)).toBe(false);
   });
 });

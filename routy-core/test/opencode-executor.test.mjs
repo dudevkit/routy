@@ -12,6 +12,7 @@ import path from "node:path";
 import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
 import { createChatHandler } from "../core/handlers/chat.mjs";
+import { probeModel } from "../core/probe.mjs";
 
 let tmp, db, repos, handlerServer, handlerPort, stubServer, stubPort, stubState;
 
@@ -60,9 +61,9 @@ afterEach(async () => {
   await new Promise((r) => stubServer.close(r));
 });
 
-function addNode({ prefix, baseUrl, data = {} }) {
+function addNode({ prefix, baseUrl, data = {}, withConnection = true }) {
   const node = repos.nodes.create({ name: prefix, prefix, apiType: "openai", baseUrl, data });
-  repos.connections.create({ nodeId: node.id, name: "k", credentials: { apiKey: "" } });
+  if (withConnection) repos.connections.create({ nodeId: node.id, name: "k", credentials: { apiKey: "" } });
   return node;
 }
 
@@ -93,9 +94,13 @@ describe("opencode executor (ported from 9Router's OpenCodeExecutor)", () => {
     expect(seen.path).toBe("/zen/v1/chat/completions");
     expect(seen.headers.authorization).toBe("Bearer public");
     expect(seen.headers["x-opencode-client"]).toBe("desktop");
-    expect(seen.headers["x-opencode-session"]).toBe(`ses_${node.id}`); // stable per node
-    expect(seen.headers["user-agent"]).toBe("opencode");
+    expect(seen.headers["x-opencode-session"]).toMatch(/^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/); // canonical, stable per node
+    expect(seen.headers["user-agent"]).toBe("opencode/1.18.31"); // bare "opencode" is a 403 upstream
     expect(seen.body.model).toBe("plain-model");
+    expect(seen.body.stream).toBe(true); // zen rejects non-streaming free requests
+    // The same node keeps the same session across requests (upstream caches it too).
+    await post("oc/another-model");
+    expect(stubState.requests[1].headers["x-opencode-session"]).toBe(seen.headers["x-opencode-session"]);
   });
 
   it("muse-spark models take /zen/v1/responses with the Responses body shape", async () => {
@@ -106,18 +111,31 @@ describe("opencode executor (ported from 9Router's OpenCodeExecutor)", () => {
     expect(seen.path).toBe("/zen/v1/responses");
     expect(seen.body.max_tokens).toBeUndefined();
     expect(seen.body.max_output_tokens).toBe(512);
-    expect(seen.body.reasoning).toEqual({ effort: "ultra", summary: "auto" });
+    // Ultra arrives as xhigh: the openai->responses translator clamps effort to its dialect
+    // table before the executor's own pass (which has no clamp — upstream's table is theirs).
+    expect(seen.body.reasoning).toEqual({ effort: "xhigh", summary: "auto" });
     expect(seen.body.reasoning_effort).toBeUndefined();
+    expect(seen.body.store).toBe(false); // pooled accounts: no server-side state
+    expect(seen.body.stream).toBe(true);
     expect(seen.headers.accept).toBe("text/event-stream");
   });
 
-  it("forwards the downstream client's own session, project and UA when it is opencode", async () => {
+  it("honours a downstream's canonical session, valid version and project; translates the rest", async () => {
     opencodeNode();
-    await post("oc/m", { "x-opencode-session": "ses_client42", "x-opencode-project": "proj9", "user-agent": "opencode/1.2" });
-    const seen = stubState.requests[0];
-    expect(seen.headers["x-opencode-session"]).toBe("ses_client42");
+    const canonical = "ses_0123456789abCdefGHIjklmn01"; // 12 hex + 14 base62
+    await post("oc/m", { "x-opencode-session": canonical, "x-opencode-project": "proj9", "user-agent": "opencode/1.18.0" });
+    let seen = stubState.requests[0];
+    expect(seen.headers["x-opencode-session"]).toBe(canonical);
+    expect(seen.headers["user-agent"]).toBe("opencode/1.18.0");
     expect(seen.headers["x-opencode-project"]).toBe("proj9");
-    expect(seen.headers["user-agent"]).toBe("opencode/1.2");
+
+    // A non-canonical session is hashed into shape, never forwarded raw; bare "opencode"
+    // is upgraded to the versioned UA — both raw values are documented 403 bait.
+    await post("oc/m", { "x-opencode-session": "ses_client42", "user-agent": "opencode" });
+    seen = stubState.requests[1];
+    expect(seen.headers["x-opencode-session"]).toMatch(/^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
+    expect(seen.headers["x-opencode-session"]).not.toBe("ses_client42");
+    expect(seen.headers["user-agent"]).toBe("opencode/1.18.31");
   });
 });
 
@@ -134,5 +152,44 @@ describe("chatUrl presets (the registry endpoint, posted to verbatim)", () => {
     const r = await post("n/m1");
     expect(r.status).toBe(200);
     expect(stubState.requests[0].path).toBe("/v1/chat/completions");
+  });
+});
+
+// data.noAuth (registry category "free") has NO connections by design — chat runs it through
+// pickConnections' anonymous attempt, and probes need no key. This is the whole reason a
+// free/no-auth preset is usable at all: without it every path answered no_credentials.
+describe("keyless presets (data.noAuth, zero connections)", () => {
+  it("serves opencode chat with no connection rows — anonymous attempt, public bearer", async () => {
+    addNode({ prefix: "oc", baseUrl: `http://127.0.0.1:${stubPort}`, data: { executor: "opencode", noAuth: true }, withConnection: false });
+    const r = await post("oc/plain-model");
+    expect(r.status).toBe(200);
+    const seen = stubState.requests[0];
+    expect(seen.path).toBe("/zen/v1/chat/completions");
+    expect(seen.headers.authorization).toBe("Bearer public");
+    expect(seen.headers["x-opencode-session"]).toBeTruthy();
+  });
+
+  it("serves a chatUrl preset with no connection rows and no auth header at all", async () => {
+    addNode({ prefix: "n", baseUrl: `http://127.0.0.1:${stubPort}/v1`, data: { chatUrl: `http://127.0.0.1:${stubPort}/custom/endpoint`, noAuth: true }, withConnection: false });
+    const r = await post("n/m1");
+    expect(r.status).toBe(200);
+    expect(stubState.requests[0].path).toBe("/custom/endpoint");
+    expect(stubState.requests[0].headers.authorization).toBeUndefined();
+  });
+
+  it("the model probe hits the same endpoint and auth chat sends", async () => {
+    const node = addNode({ prefix: "oc", baseUrl: `http://127.0.0.1:${stubPort}`, data: { executor: "opencode", noAuth: true }, withConnection: false });
+    const r = await probeModel(node, "muse-spark-1.3-contributor-free", null);
+    expect(r.ok, r.error).toBe(true);
+    const seen = stubState.requests[0];
+    expect(seen.path).toBe("/zen/v1/responses");
+    expect(seen.headers.authorization).toBe("Bearer public");
+  });
+
+  it("the model probe posts a chatUrl preset to its full endpoint (no append)", async () => {
+    const node = addNode({ prefix: "n", baseUrl: `http://127.0.0.1:${stubPort}/v1`, data: { chatUrl: `http://127.0.0.1:${stubPort}/custom/endpoint`, noAuth: true }, withConnection: false });
+    const r = await probeModel(node, "m1", null);
+    expect(r.ok, r.error).toBe(true);
+    expect(stubState.requests[0].path).toBe("/custom/endpoint");
   });
 });

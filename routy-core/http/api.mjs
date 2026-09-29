@@ -5,7 +5,7 @@ import { json, readBody } from "../lib/router.mjs";
 import { COMBO_STRATEGIES, listModels, toolModelIds } from "../core/routing.mjs";
 import { CHAT_KIND, MEDIA_KIND_IDS, authStyleFor, expandKind, mediaConfigOf, mediaKindsOf, mediaUrlFor, validateMediaConfig } from "../core/media.mjs";
 import { catalogFor, catalogMeta, presetFor } from "../core/mediaCatalog.mjs";
-import { PROVIDERS } from "../core/providerCatalog.mjs";
+import { PROVIDERS, isKeyless } from "../core/providerCatalog.mjs";
 import { budgetSpent } from "../core/budget.mjs";
 import { probeNode, probeKey, probeModel, mapLimit } from "../core/probe.mjs";
 import { clearLogs, log, recentLogs, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
@@ -506,7 +506,9 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const input = JSON.parse(body.toString("utf8") || "{}");
     const conns = repos.connections.list(node.id);
     const conn = (input.connectionId && conns.find((c) => c.id === input.connectionId)) || conns[0] || null;
-    if (!conn) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
+    // A keyless preset has no /models endpoint to import from — its model list came from the
+    // catalogue — so the refusal must say that instead of pointing at a key that cannot exist.
+    if (!conn) return json(res, 400, { error: { message: "no_credentials", detail: isKeyless(node) ? "this provider is keyless — its model list came from the catalogue" : "add an API key first" } });
 
     const result = await probeKey(node, conn, { log, proxy: resolveNodeProxy(repos, node, conn, { includeCooling: true, recordHealth: false }) });
     if (!result.ok) return json(res, 502, { error: { message: "upstream_error", detail: result.error, latencyMs: result.latencyMs } });
@@ -544,7 +546,9 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     // action === "test"
     const conns = repos.connections.list(node.id);
     const conn = conns[0] || null;
-    if (!conn) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
+    // A keyless preset (data.noAuth) probes with its own auth — executor headers or none —
+    // so no connection is required; probeModel accepts a null connection.
+    if (!conn && !isKeyless(node)) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
     const results = await mapLimit(rows, 4, async (row) => {
       const r = await probeModel(node, row.model, conn, { log, proxy: resolveNodeProxy(repos, node, conn, { includeCooling: true, recordHealth: false }) });
       repos.nodeModels.recordTest(row.id, r);
@@ -564,7 +568,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (!row || row.nodeId !== node.id) return json(res, 404, { error: { message: "not_found" } });
     const conns = repos.connections.list(node.id);
     const conn = (url.searchParams.get("connectionId") && conns.find((c) => c.id === url.searchParams.get("connectionId"))) || conns[0] || null;
-    if (!conn) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
+    if (!conn && !isKeyless(node)) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
 
     const result = await probeModel(node, row.model, conn, { log });
     json(res, 200, { ...repos.nodeModels.recordTest(row.id, result), result });

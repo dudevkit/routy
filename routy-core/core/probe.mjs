@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import diagnostics_channel from "node:diagnostics_channel";
 import { getDispatcher, originOf, undiciFetch } from "./executors/pool.mjs";
 import { getProxyAgent, primaryProxyUrl } from "./proxy.mjs";
+import { opencodeTarget, transformOpencodeBody } from "./executors/opencode.mjs";
 
 /**
  * Socket-level truth for a probe, via undici's diagnostics channels.
@@ -176,15 +177,28 @@ export async function probeModel(node, model, connection = null, { timeoutMs, lo
   let stage = "connect";
   const timer = setTimeout(() => controller.abort(), budget);
   const apiKey = connection?.credentials?.apiKey ?? null;
-  const url = node?.apiType === "responses"
-    ? `${trimBase(node.baseUrl)}/responses`
-    : `${trimBase(node.baseUrl)}/chat/completions`;
-  const payload = JSON.stringify({
+  // The endpoint rules chat follows: a preset's full endpoint (data.chatUrl), or the
+  // opencode executor's target (zen path + the canonical v0.5.91 headers) — otherwise a
+  // preset probe 404s, or 403s on a request shape chat would never send.
+  const isOpencode = node?.data?.executor === "opencode";
+  const rawBody = {
     model,
     stream: true,
     max_tokens: PROBE_MAX_TOKENS,
     messages: [{ role: "user", content: "ping" }],
-  });
+  };
+  // The SAME body transform chat runs (responses dialect, forced stream, fingerprint) —
+  // an untransformed probe body is exactly the request the free gate 403s.
+  const probeBody = isOpencode ? transformOpencodeBody(model, rawBody) : rawBody;
+  const target = isOpencode ? opencodeTarget({ node, model, body: probeBody, stream: true }) : null;
+  const url = node?.data?.chatUrl
+    ? node.data.chatUrl
+    : target
+      ? target.url
+      : node?.apiType === "responses"
+        ? `${trimBase(node.baseUrl)}/responses`
+        : `${trimBase(node.baseUrl)}/chat/completions`;
+  const payload = JSON.stringify(probeBody);
 
   // Track this probe's socket events so a failure can say where it died.
   observeUpstream();
@@ -210,6 +224,10 @@ export async function probeModel(node, model, connection = null, { timeoutMs, lo
         "content-length": String(Buffer.byteLength(payload)),
         [PROBE_ID_HEADER]: probeId,
         ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+        // opencode's canonical target headers (public bearer, versioned UA, canonical
+        // session) win over any stray key — that gateway is keyless, and the probe must
+        // send what the chat path sends.
+        ...(target ? target.headers : {}),
       },
       body: payload,
       signal: controller.signal,
@@ -247,7 +265,10 @@ export async function probeModel(node, model, connection = null, { timeoutMs, lo
         while ((idx = buffer.indexOf("\n\n")) !== -1) {
           const frame = buffer.slice(0, idx).trim();
           buffer = buffer.slice(idx + 2);
-          const data = frame.startsWith("data:") ? frame.slice(5).trim() : "";
+          // zen prefixes frames with `event: <type>` — the data line is not first, and a
+          // `startsWith("data:")` check silently skips every frame of such a stream.
+          const dataLine = frame.split("\n").find((l) => l.startsWith("data:"));
+          const data = dataLine ? dataLine.slice(5).trim() : "";
           if (!data || data === "[DONE]") continue;
           sawFrame = true;
           try {
@@ -258,6 +279,15 @@ export async function probeModel(node, model, connection = null, { timeoutMs, lo
               providerError = `${obj.status}: ${obj.msg || obj.message}`;
               break;
             }
+            // Responses-dialect frames (opencode zen on muse-spark): text arrives as
+            // output_text deltas, not choices — without this the probe reports "no token"
+            // on a perfectly healthy stream.
+            if (obj?.type === "response.output_text.delta" && typeof obj.delta === "string" && obj.delta) { tokenField = "delta"; break; }
+            if (obj?.type === "response.failed" || obj?.type === "response.error") {
+              providerError = obj?.response?.error?.message || obj?.error?.message || obj.type;
+              break;
+            }
+            if (obj?.type === "response.completed") { finishReason = "stop"; continue; }
             const choice = obj?.choices?.[0];
             const field = firstTokenIn(choice?.delta) ?? firstTokenIn(choice?.message);
             if (field) { tokenField = field; break; }

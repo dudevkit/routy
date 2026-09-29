@@ -46,7 +46,7 @@ const filterTabs = [
  * A card is for scanning and navigating; the detail page is for doing. The mutating actions
  * (Test keys, Enable/Disable, Remove) stay on the card — there is room now, unlike a table row.
  */
-function NodeCard({ node }: { node: UpstreamNode }) {
+function NodeCard({ node, keyless }: { node: UpstreamNode; keyless?: boolean }) {
   const toast = useToast();
   const navigate = useNavigate();
   const testAll = useTestAllKeys();
@@ -93,23 +93,27 @@ function NodeCard({ node }: { node: UpstreamNode }) {
         <span className="font-mono">{node.keyMasked}</span>
       </p>
       <div className="mt-auto flex flex-wrap items-center justify-end gap-1 pt-1" onClick={(e) => e.stopPropagation()}>
-        <Button
-          size="sm"
-          variant="secondary"
-          icon={<WifiHigh size={13} />}
-          loading={testAll.isPending}
-          onClick={() =>
-            testAll.mutate(
-              { nodeId: node.id },
-              {
-                onSuccess: (r) => toast(`${r.ok}/${r.tested} keys ok`, r.ok === r.tested ? "success" : "error"),
-                onError: (err) => toastApiError(toast, err, "Key test failed"),
-              },
-            )
-          }
-        >
-          Test keys
-        </Button>
+        {keyless || node.data?.noAuth ? (
+          <span className="text-[11px] text-text-subtle">no key needed</span>
+        ) : (
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<WifiHigh size={13} />}
+            loading={testAll.isPending}
+            onClick={() =>
+              testAll.mutate(
+                { nodeId: node.id },
+                {
+                  onSuccess: (r) => toast(`${r.ok}/${r.tested} keys ok`, r.ok === r.tested ? "success" : "error"),
+                  onError: (err) => toastApiError(toast, err, "Key test failed"),
+                },
+              )
+            }
+          >
+            Test keys
+          </Button>
+        )}
         <Button
           size="sm"
           variant="ghost"
@@ -416,7 +420,13 @@ export function Upstreams() {
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {visible.map((n) => (
-            <NodeCard key={n.id} node={n} />
+            <NodeCard
+              key={n.id}
+              node={n}
+              // Catalogue-derived like the backend (isKeyless): a node saved before its entry
+              // gained data.noAuth is still keyless.
+              keyless={Boolean(n.data?.noAuth || presets.find((p) => p.id === n.data?.preset)?.data?.noAuth)}
+            />
           ))}
         </div>
       )}
