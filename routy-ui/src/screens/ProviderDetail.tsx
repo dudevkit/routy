@@ -31,7 +31,6 @@ import {
   Plus, Prohibit, Trash, WifiHigh, XCircle,
 } from "../components/icons";
 import { NodeFormModal } from "../components/NodeFormModal";
-import { ExampleCard } from "../components/ExampleCard";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -1070,10 +1069,6 @@ export function ProviderDetail() {
       {tab === "models" && <ModelsTab node={node} />}
       {tab === "keys" && <KeysTab node={node} />}
       {tab === "settings" && <SettingsTab node={node} />}
-
-      {/* Run a real completion with this provider's key — the same card the media pages use, so a
-          request tester looks and behaves identically whether the endpoint is chat or media. */}
-      <ExampleCard node={node} kind="llm" />
     </div>
   );
 }
