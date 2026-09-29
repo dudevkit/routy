@@ -36,6 +36,12 @@ copied next to it automatically when `routy-ui/dist` exists.
 See [windows-service.md](./windows-service.md) — scheduled task with
 restart-on-failure, plus the graceful-stop story (Windows has no `SIGTERM`).
 
+### As a Linux service
+
+See [linux-service.md](./linux-service.md) — `sudo ./scripts/install-service.sh`
+writes the systemd unit, enables it at boot, and waits for `/api/health` before it
+reports success.
+
 ---
 
 ## First run
@@ -140,5 +146,6 @@ proxy.
 ## Next
 
 - [configuration.md](./configuration.md) — every env var, config key and node knob
+- [linux-service.md](./linux-service.md) — run it as a service
 - [windows-service.md](./windows-service.md) — run it as a service
 - `GET /metrics` — Prometheus text for requests, tokens, cost, TTFT, breakers, pools

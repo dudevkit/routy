@@ -125,7 +125,7 @@ routy-core/     the gateway — ESM, plain node:http, zero framework
   db/           node:sqlite driver, migrations, repositories
   http/         management API + Prometheus metrics
 routy-ui/       the dashboard — Vite + React + TypeScript + Tailwind
-scripts/        install.sh / install.ps1 — the one-liners above fetch these
+scripts/        install.sh / install.ps1 / install-service.sh — the one-liners above fetch these
 docs/           configuration, cli-tools, install, linux-service, quickstart, releasing, windows-service
 ```
 
@@ -153,8 +153,9 @@ Built and used daily, but young — treat it as beta. Known gaps, stated plainly
 
 - `/v1/messages/count_tokens` and `/v1/embeddings` are not implemented (404).
   Chat, tool calls and streaming are.
-- No packaged service installer; on Windows `scripts/routy-task.ps1` registers a
-  scheduled task that starts at boot.
+- Services are half packaged. Linux: `scripts/install-service.sh` writes, enables and
+  health-checks the systemd unit. Windows: `scripts/routy-task.ps1` registers a
+  scheduled task that starts at boot. macOS has neither.
 - **No release has been published yet**, so the installer and the updater currently
   find nothing. Cutting one is a single command — see [docs/releasing.md](./docs/releasing.md).
 
