@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useFailures, useGateway, useNodes, useResetBreaker, useStats, useTestAllKeys } from "../api/hooks";
+import { useFailures, useGateway, useKeys, useNodes, useResetBreaker, useStats, useTestAllKeys } from "../api/hooks";
 import type { UpstreamNode } from "../api/types";
 import { statusMeta } from "../utils/nodeStatus";
 import { toastApiError } from "../utils/errors";
@@ -96,6 +96,12 @@ export function Overview() {
   const stats = useStats();
   const failures = useFailures(5);
   const gateway = useGateway();
+  // The gateway endpoint reports only the MASK (plaintext never returns from /api/gateway), so
+  // the copy target comes from the keys list — and picks the SAME key the server does when it
+  // builds that mask: apiKeys.list()[0]. Falls back to the mask for keys created before their
+  // value was kept, which is what could be copied in the first place.
+  const keys = useKeys();
+  const routerKeyCopy = keys.data?.[0]?.key ?? undefined;
   const [addOpen, setAddOpen] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<UpstreamNode | null>(null);
 
@@ -112,7 +118,7 @@ export function Overview() {
           <span className="text-xs text-text-muted">Proxy endpoint</span>
           <CopyChip value={gateway.data.endpoint} />
           <span className="text-xs text-text-muted">Router key</span>
-          <CopyChip value={gateway.data.keyMasked} />
+          <CopyChip value={gateway.data.keyMasked} copyValue={routerKeyCopy} />
           <span className="ml-auto font-mono text-[10px] text-text-subtle">v{gateway.data.version}</span>
         </Card>
       )}

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useCheckUpdates, useDismissUpdate, useGateway, useHealth, usePutSettings, useRestartGateway, useSettings, useStats, useUpdates } from "../api/hooks";
+import { useCheckUpdates, useDismissUpdate, useGateway, useHealth, useKeys, usePutSettings, useRestartGateway, useSettings, useStats, useUpdates } from "../api/hooks";
 import { toastApiError } from "../utils/errors";
 import { fmtAgo, fmtCost } from "../utils/format";
 import { CopyChip } from "../components/CopyChip";
@@ -415,6 +415,10 @@ function RestartButton() {
 export function Settings() {
   const toast = useToast();
   const gateway = useGateway();
+  // Same rule as Overview's chip: the mask comes from /api/gateway, the full key from the keys
+  // list — index 0 is the key the server masked. See Overview for the fallback note.
+  const keys = useKeys();
+  const routerKeyCopy = keys.data?.[0]?.key ?? undefined;
   const health = useHealth();
   const settings = useSettings();
   const put = usePutSettings();
@@ -458,7 +462,7 @@ export function Settings() {
           </div>
           <div className="flex flex-col gap-1">
             <span className="text-[11px] text-text-muted">Router key</span>
-            {gateway.data ? <CopyChip value={gateway.data.keyMasked} /> : <Skeleton rows={1} />}
+            {gateway.data ? <CopyChip value={gateway.data.keyMasked} copyValue={routerKeyCopy} /> : <Skeleton rows={1} />}
           </div>
           <div className="flex flex-col gap-1">
             <span className="text-[11px] text-text-muted">Version · uptime</span>
