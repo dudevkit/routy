@@ -237,6 +237,30 @@ const TTS = Object.freeze([
   ].map(([id, name, url, format, why]) => p(id, name, url, null, { supported: false, format, why })),
 ]);
 
+// System One: a situation plus a set of questions in, typed answers out. The wire format is the
+// same at both ends, so unlike the web kinds there is no request/response to map — what an entry
+// carries is the ENDPOINT and the provider's static headers, which is the one part of `media.map`
+// this kind uses.
+//
+// OpenCode Zen appears twice on purpose, because it is two different things upstream: a keyed
+// account on `jev-1.13`, and an unkeyed one on `jev-1.13-free`. They are the same URL, which is
+// why they are two entries rather than one entry with two models — the credential style is what
+// differs, and a credential style belongs to the node.
+const SYSTEMONE = Object.freeze([
+  p("opencode", "OpenCode Zen", "https://opencode.ai/zen/v1/systemone", "bearer", {
+    models: ["jev-1.13"],
+    map: { headers: { "x-opencode-client": "desktop", "User-Agent": "opencode/1.18.31" } },
+  }),
+  p("opencode-free", "OpenCode Zen (free)", "https://opencode.ai/zen/v1/systemone", "none", {
+    models: ["jev-1.13-free"],
+    map: { headers: { "x-opencode-client": "desktop", "User-Agent": "opencode/1.18.31" } },
+  }),
+  p("openrouter", "OpenRouter", "https://openrouter.ai/api/v1/systemone", "bearer", {
+    models: ["typesafe/jev-1.13"],
+    map: { headers: { "HTTP-Referer": "https://endpoint-proxy.local", "X-Title": "Endpoint Proxy" } },
+  }),
+]);
+
 /** The catalogue, by kind. Frozen: this is data the API serves and the UI renders. */
 export const MEDIA_CATALOG = Object.freeze({
   webSearch: SEARCH,
@@ -244,6 +268,7 @@ export const MEDIA_CATALOG = Object.freeze({
   embedding: EMBEDDING,
   image: IMAGE,
   tts: TTS,
+  systemone: SYSTEMONE,
 });
 
 /**
@@ -279,6 +304,8 @@ const META = Object.freeze({
   nvidia: { keyUrl: "https://build.nvidia.com/settings/api-keys", free: true, notice: "Free access for NVIDIA Developer Program members (prototyping & testing)." },
   ollama: { keyUrl: "https://ollama.com/settings/keys", free: true, notice: "Free tier: light usage, 1 cloud model at a time (limits reset every 5h and 7d)." },
   "ollama-search": { keyUrl: "https://ollama.com/settings/keys", notice: "Web search via Ollama Cloud. Reuses the API key from the Ollama (chat) provider." },
+  opencode: { keyUrl: "https://opencode.ai/auth", notice: "Zen's rate-limited models need a workspace on the account; a key without one answers HTTP 401 'Rate-limited Zen models require a workspace'." },
+  "opencode-free": { keyUrl: "https://opencode.ai/auth", free: true, notice: "No key: the upstream answers `jev-1.13-free` unauthenticated, and the node is treated as keyless — add the model row and it serves." },
   openai: { keyUrl: "https://platform.openai.com/api-keys" },
   openrouter: { keyUrl: "https://openrouter.ai/settings/keys", free: true, notice: "Free tier: 27+ free models, no credit card, 200 req/day." },
   perplexity: { keyUrl: "https://www.perplexity.ai/settings/api" },

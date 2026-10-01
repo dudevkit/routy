@@ -4,12 +4,18 @@
 // `POST <path>` serves it, and a request's kind is decided by the path it arrived on —
 // never by inspecting the body.
 //
-// Scope is deliberately five kinds. `stt` was built and then removed: it was never asked for
+// Scope is deliberately six kinds. `stt` was built and then removed: it was never asked for
 // (the user's kind was text-to-speech), and 9Router's own stt providers each need their own
 // shape. `video` is absent because a video create is a billable upstream job and needs a
 // different rotation policy (never retry a create; rotate only on 401/403/429; never rotate a
 // poll) — that belongs in a change of its own, not in a list. 9Router also declares `music`,
 // but it has no route and no provider config there, so it is a placeholder we do not guess at.
+//
+// `systemone` is the one kind that is not a media asset at all: it is a classification call —
+// a situation in, a set of typed answers out (9Router's `Jev 1.13`). It is filed here rather
+// than beside chat because it is an endpoint with its own request shape and its own providers,
+// which is what a kind is; `modelList: "node"` because those providers register model rows
+// (`jev-1.13`, `jev-1.13-free`) the same way an embedding host does.
 
 /** The kinds routy serves. `modelList` says what discovery can enumerate for the kind:
  *   "node"   — the node's own model rows (a provider hosting several models)
@@ -23,6 +29,7 @@ export const MEDIA_KINDS = Object.freeze({
   tts: { label: "Text To Speech", method: "POST", path: "/v1/audio/speech", modelList: "voices", logTag: "TTS" },
   webSearch: { label: "Web Search", method: "POST", path: "/v1/search", modelList: "none", logTag: "SEARCH" },
   webFetch: { label: "Web Fetch", method: "POST", path: "/v1/web/fetch", modelList: "none", logTag: "FETCH" },
+  systemone: { label: "System One", method: "POST", path: "/v1/systemone", modelList: "node", logTag: "SYSTEMONE" },
 });
 
 export const MEDIA_KIND_IDS = Object.freeze(Object.keys(MEDIA_KINDS));
@@ -120,6 +127,22 @@ export function authStyleFor(node, kind) {
   const style = mediaConfigOf(node).auth[kind]?.style;
   if (typeof style === "string" && AUTH_STYLES.includes(style)) return style;
   return node?.data?.media?.noAuth === true ? "none" : "bearer";
+}
+
+/**
+ * Whether a node's media config asks for no credential at all.
+ *
+ * `authStyleFor` already answers this per kind and the handlers honour it — but a node with no
+ * connections never reaches a handler: the connection picker refuses it first
+ * (`dispatchPlan` → `pickConnections` → 503 no_credentials). So the keyless media providers
+ * 9Router ships — SearXNG, a local ComfyUI or Kokoro, OpenCode Zen's free half — were unusable
+ * without inventing a key that is then never sent. This is the same fact as `authStyleFor`,
+ * stated where the connection picker can read it.
+ */
+export function mediaIsKeyless(node) {
+  const cfg = mediaConfigOf(node);
+  if (cfg.noAuth) return true;
+  return cfg.kinds.some((kind) => cfg.auth[kind]?.style === "none");
 }
 
 /**

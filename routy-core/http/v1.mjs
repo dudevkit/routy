@@ -109,6 +109,9 @@ export function buildProxyRoutes(repos, { chatHandler, handlers = {} }) {
     ...(handlers.fetch
       ? [{ method: "POST", pattern: /^\/v1\/web\/fetch$/, handler: handlers.fetch }]
       : []),
+    ...(handlers.systemone
+      ? [{ method: "POST", pattern: /^\/v1\/systemone$/, handler: handlers.systemone }]
+      : []),
 
     // Chat traffic. Both paths land on the same handler (source format is detected per
     // request from the endpoint and the body).

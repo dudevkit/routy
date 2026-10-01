@@ -100,4 +100,17 @@ describe("provider preset catalogue", () => {
     expect(isKeyless({ data: {} })).toBe(false);
     expect(isKeyless(null)).toBe(false);
   });
+
+  it("counts a media provider that declares the none credential style as keyless", () => {
+    // The media catalogue's `auth: "none"` entries (SearXNG, a local ComfyUI, OpenCode Zen's free
+    // half) answer without a key, and their preset writes that as a per-kind auth style. Without
+    // this they had to be given a placeholder credential to get past the connection picker.
+    const media = (style) => ({
+      data: { media: { kinds: ["systemone"], urls: { systemone: "https://example.test/x" }, auth: { systemone: { style } } } },
+    });
+    expect(isKeyless(media("none"))).toBe(true);
+    expect(isKeyless(media("bearer"))).toBe(false);
+    // media.noAuth is the kind-agnostic form of the same statement.
+    expect(isKeyless({ data: { media: { kinds: [], noAuth: true } } })).toBe(true);
+  });
 });

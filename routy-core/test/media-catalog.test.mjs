@@ -46,6 +46,24 @@ describe("the catalogue as data", () => {
     }
   });
 
+  it("names every provider 9Router ships for System One", () => {
+    // 9Router's registry carries a `systemoneConfig` on exactly three providers. The free half of
+    // OpenCode Zen is its own entry there because it is its own card, and it is its own entry
+    // here for the same reason: an unkeyed provider is a different thing to configure. They
+    // share a URL — what differs is the credential style, and that belongs to the node.
+    expect(catalogFor("systemone").map((p) => p.id).sort()).toEqual(["opencode", "opencode-free", "openrouter"]);
+    for (const p of catalogFor("systemone")) {
+      // The endpoint is nearly the whole configuration for this kind — there is no request or
+      // response shape to map, which is why the only thing beside it is the provider's static
+      // headers. A systemone entry with a `request` mapping would be a config nobody reads.
+      expect(p.url, p.id).toMatch(/^https:\/\//);
+      expect(p.map?.headers, p.id).toBeTruthy();
+      expect(p.map?.request, p.id).toBeUndefined();
+      expect(p.map?.response, p.id).toBeUndefined();
+    }
+    expect(catalogSummary("systemone")).toEqual({ kind: "systemone", total: 3, supported: 3, unsupported: 0 });
+  });
+
   it("gives every supported provider a preset the API's own validator accepts", () => {
     let checked = 0;
     for (const p of ALL) {

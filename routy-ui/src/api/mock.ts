@@ -337,6 +337,15 @@ export const api = {
             preset: { media: { kinds: ["webFetch"], urls: { webFetch: "https://r.jina.ai/" }, map: { webFetch: { request: { url: "url" }, response: { text: true } } } } },
           },
         ],
+        systemone: [
+          {
+            id: "opencode-free", name: "OpenCode Zen (free)", supported: true, why: null, format: null, chatModel: null,
+            models: ["jev-1.13-free"], requires: [],
+            // No request/response mapping for this kind: the caller's body is the provider's body,
+            // so a preset carries only the endpoint and the provider's static headers.
+            preset: { media: { kinds: ["systemone"], urls: { systemone: "https://opencode.ai/zen/v1/systemone" }, auth: { systemone: { style: "none" } }, map: { systemone: { headers: { "x-opencode-client": "desktop" } } } } },
+          },
+        ],
       },
     };
   },
