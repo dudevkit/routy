@@ -273,8 +273,10 @@ export function ModelsTab({ node }: { node: UpstreamNode }) {
   const allSelected = rows.length > 0 && selected.size === rows.length;
   const selectedRows = rows.filter((r) => selected.has(r.id));
 
-  /** The routable id a client actually pastes — prefix included. */
-  const routableId = (m: string) => `${node.prefix}/${m}`;
+  /** The routable id a client actually pastes — prefix included, and NEVER twice: a row can
+   *  arrive already fully qualified (media presets and hand-typed adds store it that way), and
+   *  blind prepending produced `p/p/model` on Copy — label and clipboard both. */
+  const routableId = (m: string) => (m.startsWith(`${node.prefix}/`) ? m : `${node.prefix}/${m}`);
 
   const exitSelect = () => {
     setSelecting(false);
