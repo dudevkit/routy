@@ -4,7 +4,7 @@
 import { readBody, json } from "../../lib/router.mjs";
 import { extractBearer } from "../../lib/auth.mjs";
 import { log as rootLog } from "../../lib/log.mjs";
-import { resolveRoute, orderRoutes } from "../routing.mjs";
+import { resolveRoute, orderRoutes, qualifyModel } from "../routing.mjs";
 import {
   classifyConnectionError, recordConnectionFailure, recordConnectionSuccess,
   earliestRecovery,
@@ -182,7 +182,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             of: combo.of,
             order: combo.order,
             skipped: combo.skipped,
-            member: `${r.node.prefix}/${r.model}`,
+            member: qualifyModel(r.node.prefix, r.model),
             attempt: dispatchIndex,
           }
         : null;
