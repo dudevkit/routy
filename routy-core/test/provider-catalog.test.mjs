@@ -3,7 +3,8 @@
 // endpoint shape (routy posts to node.baseUrl verbatim, no urlSuffix), and the no-preset rule
 // for what routy cannot serve.
 import { describe, expect, it } from "vitest";
-import { PROVIDERS, isKeyless } from "../core/providerCatalog.mjs";
+import { PROVIDERS } from "../core/providerCatalog.mjs";
+import { isKeyless } from "../core/keyless.mjs";
 
 const FREE_TIER_IDS = ["api-airforce", "bazaarlink", "byteplus", "cloudflare-ai", "kilo-gateway", "nvidia", "openrouter", "poolside"];
 const FREE_IDS = ["mimo-free", "opencode"];

@@ -14,7 +14,7 @@ import { costOf, isMetered } from "./pricing.mjs";
 import { addSpend, budgetState } from "./budget.mjs";
 import { orderRoutes } from "./routing.mjs";
 import { MEDIA_KINDS } from "./media.mjs";
-import { isKeyless } from "./providerCatalog.mjs";
+import { isKeyless } from "./keyless.mjs";
 
 // nodeId -> rotation cursor. Key rotation is per node and per process (RAM): a restart
 // forgetting the cursor merely starts the rotation over.

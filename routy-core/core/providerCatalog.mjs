@@ -11,8 +11,6 @@
 // service, generateContent, a stdio process, OAuth) and carries no preset — an entry that looks
 // addable and then fails would be worse than the gap.
 
-import { mediaIsKeyless } from "./media.mjs";
-
 export const PROVIDERS = Object.freeze(
   [
   {
@@ -1285,20 +1283,3 @@ export const PROVIDERS = Object.freeze(
   }
 ].map((e) => Object.freeze({ ...e, models: Object.freeze(e.models), requires: Object.freeze(e.requires) })),
 );
-
-/** Is this node keyless? Decided against the CATALOGUE, not just the node's own data: a node
- *  created before its entry gained `noAuth` must keep working, so the shipped catalogue is the
- *  single source and `data.noAuth` is only its Add-time copy.
- *
- *  A MEDIA provider that declares the `none` credential style is keyless for the same reason a
- *  chat preset is — it has nothing to send — so it is answered here too. Every caller of this
- *  function (the connection picker and the three probe guards) then agrees on one answer, which
- *  is the point of asking it in one place. */
-export function isKeyless(node) {
-  if (node?.data?.noAuth) return true;
-  if (mediaIsKeyless(node)) return true;
-  const presetId = node?.data?.preset;
-  if (!presetId) return false;
-  const entry = PROVIDERS.find((e) => e.id === presetId);
-  return Boolean(entry?.data?.noAuth);
-}
