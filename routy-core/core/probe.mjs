@@ -15,6 +15,8 @@ import { randomUUID } from "node:crypto";
 import diagnostics_channel from "node:diagnostics_channel";
 import { getDispatcher, originOf, undiciFetch } from "./executors/pool.mjs";
 import { getProxyAgent, primaryProxyUrl } from "./proxy.mjs";
+import { authHeadersFor, authStyleFor, mediaConfigOf, mediaUrlFor } from "./media.mjs";
+import { headersFor } from "./mediaMap.mjs";
 import { opencodeTarget, transformOpencodeBody } from "./executors/opencode.mjs";
 
 /**
@@ -157,6 +159,66 @@ export async function probeNode(baseUrl, apiKey = null, { timeoutMs = DEFAULT_TI
 export async function probeKey(node, connection, opts = {}) {
   const apiKey = connection?.credentials?.apiKey ?? null;
   return probeNode(node?.baseUrl, apiKey, opts);
+}
+
+/**
+ * Prove a `systemone` row serves: a real (tiny) classification call on the KIND's endpoint.
+ *
+ * A chat probe cannot describe this row — observed, not hypothesized: POSTing the chat path on
+ * an OpenCode Zen node answered `HTTP 404` with the provider's homepage HTML, recording a
+ * failure for a provider whose systemone endpoint was healthy. The request here is the kind's
+ * own wire (`{ model, state, questions }`), the static map headers ride along, and the `none`
+ * credential style means no authorization header — exactly what the handler sends.
+ */
+export async function probeSystemone(node, model, connection = null, { timeoutMs = 15_000, log = null, proxy = null } = {}) {
+  const t0 = Date.now();
+  const url = mediaUrlFor(node, "systemone");
+  if (!url) {
+    return { ok: false, ttftMs: null, latencyMs: 0, stage: "config", error: "no URL for systemone — set media.urls.systemone on the node" };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const secret = connection?.credentials?.apiKey ?? connection?.credentials?.accessToken ?? null;
+  const headers = {
+    "content-type": "application/json",
+    ...headersFor(mediaConfigOf(node).map?.systemone ?? {}),
+    // `none` yields no header and a null secret sends nothing — a keyless probe is the point.
+    ...(secret ? authHeadersFor(authStyleFor(node, "systemone"), secret, null) : {}),
+  };
+  const payload = JSON.stringify({
+    model,
+    state: "ping",
+    questions: { probe: { type: "noul", instructions: "Answer with a number." } },
+  });
+
+  try {
+    const res = await undiciFetch(url, {
+      method: "POST",
+      headers,
+      body: payload,
+      signal: controller.signal,
+      dispatcher: getProxyAgent(primaryProxyUrl(proxy)) || getDispatcher(node),
+    });
+    const latencyMs = Date.now() - t0;
+    if (!res.ok) {
+      const raw = await res.text().catch(() => "");
+      return { ok: false, ttftMs: null, latencyMs, stage: "response", error: `HTTP ${res.status}${raw ? `: ${String(raw).slice(0, 160)}` : ""}` };
+    }
+    const text = await res.text().catch(() => "");
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch { /* not JSON below */ }
+    if (parsed === null || typeof parsed !== "object") {
+      return { ok: false, ttftMs: null, latencyMs, stage: "response", error: "provider returned a non-JSON body" };
+    }
+    // A JSON envelope answers whole — the round trip is the time to the answer, and the
+    // result column shows it as this probe's ms.
+    log?.info?.("PROBE", `→ ${node.prefix ?? "?"}/${model} (systemone)`, { url, latencyMs });
+    return { ok: true, ttftMs: latencyMs, latencyMs, error: null };
+  } catch (err) {
+    return { ok: false, ttftMs: null, latencyMs: Date.now() - t0, stage: "connect", error: shapeError(err) };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

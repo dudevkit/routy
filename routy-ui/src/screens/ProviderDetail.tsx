@@ -487,17 +487,22 @@ export function ModelsTab({ node }: { node: UpstreamNode }) {
                   </td>
                   <td className={`${TD} text-right`}>
                     <div className="inline-flex items-center gap-1">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        icon={<WifiHigh size={13} />}
-                        loading={testingId === row.id}
-                        disabled={!probeable}
-                        onClick={() => runTest(row)}
-                        title={probeable ? "Send a real one-token stream" : "Add an API key first"}
-                      >
-                        Test
-                      </Button>
+                      {/* Only kinds a probe can honestly describe keep the button: chat probes
+                          chat, systemone probes systemone, and anything else would record a
+                          failure for a healthy provider (the server refuses those rows too). */}
+                      {(!row.kind || row.kind === "llm" || row.kind === "systemone") && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          icon={<WifiHigh size={13} />}
+                          loading={testingId === row.id}
+                          disabled={!probeable}
+                          onClick={() => runTest(row)}
+                          title={probeable ? "Send a real one-token stream" : "Add an API key first"}
+                        >
+                          Test
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="sm"

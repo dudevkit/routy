@@ -324,3 +324,48 @@ describe("the media machinery System One inherits", () => {
     expect(repos.usage.query({ limit: 1 })[0].model).toBe("systemone-combo");
   });
 });
+
+// The model-row Test button, by kind. Proven broken before it was fixed: probing a systemone
+// row through the CHAT path answered `HTTP 404` with the provider's homepage HTML — a recorded
+// failure for a provider whose systemone endpoint was healthy. The probe must speak the kind.
+describe("probing a model row chooses the probe by kind", () => {
+  it("probes a systemone row with the kind's real wire, not a chat probe", async () => {
+    const node = repos.nodes.create({
+      name: "so", prefix: "so", apiType: "openai", baseUrl: `http://127.0.0.1:${stubPort}/v1`,
+      data: { media: { kinds: ["systemone"], urls: { systemone: `http://127.0.0.1:${stubPort}/zen/v1/systemone` }, auth: { systemone: { style: "none" } }, map: { systemone: { headers: { "x-opencode-client": "desktop" } } } } },
+    });
+    repos.nodeModels.create({ nodeId: node.id, model: "jev-1.13-free", kind: "systemone" });
+    const row = repos.nodeModels.list(node.id)[0];
+
+    const r = await post(`/api/nodes/${node.id}/models/${row.id}/test`, {});
+    expect(r.status).toBe(200);
+    expect(r.body.result.ok).toBe(true);
+
+    const call = stubState.calls[0];
+    expect(stubState.calls).toHaveLength(1);
+    expect(call.url).toBe("/zen/v1/systemone"); // the kind's endpoint, not /chat/completions
+    expect(call.body.state).toBe("ping");
+    expect(call.body.questions.probe.type).toBe("noul");
+    expect(call.headers["x-opencode-client"]).toBe("desktop"); // the map's static headers
+    expect(call.headers.authorization).toBeUndefined(); // auth style `none` — keyless stays keyless
+
+    const stored = repos.nodeModels.list(node.id)[0];
+    expect(stored.lastTestOk).toBe(true);
+  });
+
+  it("refuses another media kind instead of chat-probing it, and calls nobody", async () => {
+    const node = repos.nodes.create({
+      name: "img", prefix: "img", apiType: "openai", baseUrl: `http://127.0.0.1:${stubPort}/v1`,
+      data: { media: { kinds: ["image"], urls: { image: `http://127.0.0.1:${stubPort}/v1/images/generations` } } },
+    });
+    repos.connections.create({ nodeId: node.id, name: "k", credentials: { apiKey: "sk-img" } });
+    repos.nodeModels.create({ nodeId: node.id, model: "some-image-model", kind: "image" });
+    const row = repos.nodeModels.list(node.id)[0];
+
+    const r = await post(`/api/nodes/${node.id}/models/${row.id}/test`, {});
+    expect(r.status).toBe(200); // a probe result is 200 + ok:false, never an error status
+    expect(r.body.result.ok).toBe(false);
+    expect(r.body.result.error).toContain("Example card");
+    expect(stubState.calls).toHaveLength(0); // the refusal happens before any upstream call
+  });
+});

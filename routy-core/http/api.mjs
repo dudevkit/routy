@@ -8,7 +8,7 @@ import { catalogFor, catalogMeta, presetFor } from "../core/mediaCatalog.mjs";
 import { PROVIDERS } from "../core/providerCatalog.mjs";
 import { isKeyless } from "../core/keyless.mjs";
 import { budgetSpent } from "../core/budget.mjs";
-import { probeNode, probeKey, probeModel, mapLimit } from "../core/probe.mjs";
+import { probeNode, probeKey, probeModel, probeSystemone, mapLimit } from "../core/probe.mjs";
 import { clearLogs, log, recentLogs, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
 import {
   DEFAULT_PASSWORD,
@@ -557,7 +557,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     // so no connection is required; probeModel accepts a null connection.
     if (!conn && !isKeyless(node)) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
     const results = await mapLimit(rows, 4, async (row) => {
-      const r = await probeModel(node, row.model, conn, { log, proxy: resolveNodeProxy(repos, node, conn, { includeCooling: true, recordHealth: false }) });
+      const r = await probeModelRow(node, row, conn, log, resolveNodeProxy(repos, node, conn, { includeCooling: true, recordHealth: false }));
       repos.nodeModels.recordTest(row.id, r);
       return { modelId: row.id, model: row.model, ok: r.ok, ttftMs: r.ttftMs, error: r.error };
     });
@@ -566,6 +566,21 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       results, models: repos.nodeModels.list(node.id),
     });
   });
+
+  /**
+   * One row's probe, chosen by the row's KIND: chat rows keep the chat probe, systemone rows
+   * get a real classification call, and any other media kind honestly refuses — a chat probe
+   * to those endpoints records a failure for a healthy provider (observed: 404 HTML from the
+   * provider's own website) and calls it a verdict.
+   */
+  const probeModelRow = (node, row, conn, log, proxy = null) => {
+    if (row.kind === "systemone") return probeSystemone(node, row.model, conn, { log, proxy });
+    if (!row.kind || row.kind === CHAT_KIND) return probeModel(node, row.model, conn, { log, proxy });
+    return Promise.resolve({
+      ok: false, ttftMs: null, latencyMs: 0, stage: "config",
+      error: `${row.kind} rows are tested with the kind's own request — run it from the Example card on the provider's page`,
+    });
+  };
 
   // Prove one model id actually serves — a real (tiny) stream, recorded on the row.
   route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/models\/(?<modelId>[^/]+)\/test$/, async (req, res, p, url) => {
@@ -577,7 +592,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const conn = (url.searchParams.get("connectionId") && conns.find((c) => c.id === url.searchParams.get("connectionId"))) || conns[0] || null;
     if (!conn && !isKeyless(node)) return json(res, 400, { error: { message: "no_credentials", detail: "add an API key first" } });
 
-    const result = await probeModel(node, row.model, conn, { log });
+    const result = await probeModelRow(node, row, conn, log);
     json(res, 200, { ...repos.nodeModels.recordTest(row.id, result), result });
   });
 
