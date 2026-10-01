@@ -201,7 +201,7 @@ export function ExampleCard({ node }: { node: UpstreamNode }) {
                 onChange={(e) => setState(e.target.value)}
                 rows={3}
                 placeholder="Situation, support ticket, or text to evaluate"
-                className="w-full rounded border border-border-subtle bg-background px-3 py-2 font-mono text-sm text-text-main focus:outline-none focus:border-accent"
+                className="w-full rounded border border-border-subtle bg-surface-2 px-3 py-2 font-mono text-sm text-text-main focus:border-primary"
               />
             </Row>
             <Row label="Question"><Input value={question} onChange={(e) => setQuestion(e.target.value)} /></Row>

@@ -10,15 +10,14 @@ import { KeysCard } from "../components/KeysCard";
 import { UpdateCard } from "../components/UpdateCard";
 import { NodeFormModal } from "../components/NodeFormModal";
 import { StatTile } from "../components/StatTile";
-import { ArrowsClockwise, Broadcast, List, Plus } from "../components/icons";
+import { ArrowsClockwise, Broadcast, Plus } from "../components/icons";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
-import { Modal } from "../components/ui/Modal";
 import { StatusDot } from "../components/ui/StatusDot";
 import { useToast } from "../components/ui/Toast";
 
-function HealthCard({ node, onRemove }: { node: UpstreamNode; onRemove: (node: UpstreamNode) => void }) {
+function HealthCard({ node }: { node: UpstreamNode }) {
   const toast = useToast();
   const testNode = useTestAllKeys();
   const resetBreaker = useResetBreaker();
@@ -30,9 +29,13 @@ function HealthCard({ node, onRemove }: { node: UpstreamNode; onRemove: (node: U
         <StatusDot tone={meta.dot} />
         {/* Wraps instead of truncating on phones — a provider name cut at 164px of 304px
             is unreadable and (no hover on touch) unrecoverable. */}
-        <span className="min-w-0 break-words text-sm font-semibold text-text-main sm:truncate" title={node.name}>
+        <Link
+          to={`/upstreams/${node.id}`}
+          className="min-w-0 break-words text-sm font-semibold text-text-main transition-colors hover:text-primary sm:truncate"
+          title={node.name}
+        >
           {node.name}
-        </span>
+        </Link>
         <Badge variant={meta.badge} size="sm" dot>
           {meta.label}
         </Badge>
@@ -59,7 +62,7 @@ function HealthCard({ node, onRemove }: { node: UpstreamNode; onRemove: (node: U
 
       <div className="flex items-center gap-3 font-mono text-[11px] text-text-muted tabular">
         <span>{fmtMs(node.latencyMs)}</span>
-        <span>{node.modelCount === 0 ? "0 models" : `${node.modelCount} models`}</span>
+        <span>{node.modelCount} model{node.modelCount === 1 ? "" : "s"}</span>
         <span className="ml-auto">{node.keyMasked}</span>
       </div>
 
@@ -84,9 +87,12 @@ function HealthCard({ node, onRemove }: { node: UpstreamNode; onRemove: (node: U
         </Button>
       )}
 
-      <button onClick={() => onRemove(node)} className="self-start text-[11px] text-text-subtle underline decoration-border underline-offset-2 transition-colors hover:text-danger">
-        Manage in Upstreams
-      </button>
+      <Link
+        to={`/upstreams/${node.id}`}
+        className="self-start text-[11px] font-medium text-text-muted transition-colors hover:text-primary hover:underline"
+      >
+        Configure provider →
+      </Link>
     </Card>
   );
 }
@@ -103,7 +109,6 @@ export function Overview() {
   const keys = useKeys();
   const routerKeyCopy = keys.data?.[0]?.key ?? undefined;
   const [addOpen, setAddOpen] = useState(false);
-  const [pendingRemove, setPendingRemove] = useState<UpstreamNode | null>(null);
 
   const s = stats.data;
   const quiet = !!s && s.requestsToday === 0 && s.tokens7d === 0;
@@ -172,7 +177,7 @@ export function Overview() {
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 sm:gap-4">
             {nodes.data?.map((n) => (
-              <HealthCard key={n.id} node={n} onRemove={setPendingRemove} />
+              <HealthCard key={n.id} node={n} />
             ))}
           </div>
         )}
@@ -225,26 +230,6 @@ export function Overview() {
 
       <NodeFormModal isOpen={addOpen} onClose={() => setAddOpen(false)} />
 
-      <Modal
-        isOpen={!!pendingRemove}
-        onClose={() => setPendingRemove(null)}
-        title={pendingRemove ? `Manage ${pendingRemove.name}?` : "manage"}
-        size="sm"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setPendingRemove(null)}>
-              Cancel
-            </Button>
-            <Link to="/upstreams">
-              <Button variant="primary" icon={<List size={14} />}>
-                Open Upstreams
-              </Button>
-            </Link>
-          </>
-        }
-      >
-        <p className="text-sm text-text-muted">Removal is handled on the Upstreams screen, where the node's keys live.</p>
-      </Modal>
     </div>
   );
 }

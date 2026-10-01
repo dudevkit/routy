@@ -201,9 +201,13 @@ function OverviewTab({ rows, since, range }: { rows: UsageHistoryRow[]; since: n
 function DetailsTab({ rows }: { rows: UsageHistoryRow[] }) {
   const nodes = useNodes();
   const [open, setOpen] = useState<UsageHistoryRow | null>(null);
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 50;
+  const totalPages = Math.ceil(rows.length / PAGE_SIZE) || 1;
+  const safePage = Math.min(page, totalPages - 1);
+  const pagedRows = rows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
   const details = useDetails(200);
   const exact = useDetailsForEvent(open?.id ?? null);
-
   const nodeNameById = useMemo(() => {
     const map: Record<string, string> = {};
     for (const n of nodes.data ?? []) map[n.id] = n.name;
@@ -250,13 +254,13 @@ function DetailsTab({ rows }: { rows: UsageHistoryRow[] }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {pagedRows.map((r) => (
                   <tr
                     key={r.id}
                     tabIndex={0}
                     onClick={() => setOpen(r)}
                     onKeyDown={(e) => e.key === "Enter" && setOpen(r)}
-                    className="cursor-pointer border-t border-border-subtle transition-colors hover:bg-surface-2/60 focus:bg-surface-2/60 focus:outline-none"
+                    className="cursor-pointer border-t border-border-subtle transition-colors hover:bg-surface-2/60 focus:bg-surface-2/60"
                   >
                     <td className="px-4 py-2 font-mono text-xs text-text-muted tabular">{fmtClock(r.at)}</td>
                     <td className="px-4 py-2 font-mono text-xs text-text-main">{r.model ?? "—"}</td>
@@ -290,6 +294,34 @@ function DetailsTab({ rows }: { rows: UsageHistoryRow[] }) {
                 ))}
               </tbody>
             </table>
+            {rows.length > PAGE_SIZE && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle bg-bg-alt px-4 py-2 text-xs text-text-muted">
+                <span>
+                  Showing {safePage * PAGE_SIZE + 1}–{Math.min(rows.length, (safePage + 1) * PAGE_SIZE)} of {rows.length.toLocaleString()} requests
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={safePage === 0}
+                    onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  >
+                    Previous
+                  </Button>
+                  <span className="font-mono text-text-main">
+                    {safePage + 1} / {totalPages}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={safePage >= totalPages - 1}
+                    onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Card>
@@ -348,7 +380,7 @@ function DetailsTab({ rows }: { rows: UsageHistoryRow[] }) {
 }
 
 /* ── Quota tab ─────────────────────────────────────────────────────────────── */
-function QuotaTab({ rows }: { rows: UsageHistoryRow[] }) {
+function QuotaTab({ rows, range }: { rows: UsageHistoryRow[]; range: string }) {
   const nodes = useNodes();
   const gateway = useGateway();
 
@@ -373,7 +405,7 @@ function QuotaTab({ rows }: { rows: UsageHistoryRow[] }) {
       <Card padding="sm" className="flex flex-col gap-2">
         <div className="flex flex-col items-start gap-3 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-text-main">Token share by node · 7d</h3>
+            <h3 className="text-sm font-semibold text-text-main">Token share by node · {RANGE_LABEL[range] ?? "7D"}</h3>
             <p className="text-xs text-text-muted">
               Per-provider quota limits arrive with embedded providers — custom compatible nodes expose no quota API,
               so this is measured usage, not remaining allowance.
@@ -387,7 +419,7 @@ function QuotaTab({ rows }: { rows: UsageHistoryRow[] }) {
             <XCircle size={28} className="text-text-subtle" />
             <p className="text-sm text-text-muted">Nothing routed yet — no quota to show.</p>
             <p className="text-xs text-text-subtle">
-              Mint a client key in <span className="text-text-main">Settings</span>, then send traffic.
+              Mint a client key on <span className="text-text-main">Overview</span>, then send traffic.
             </p>
           </div>
         ) : (
@@ -519,7 +551,7 @@ export function Usage() {
 
       {tab === "overview" && <OverviewTab rows={rows} since={since} range={range} />}
       {tab === "details" && <DetailsTab rows={rows} />}
-      {tab === "quota" && <QuotaTab rows={rows} />}
+      {tab === "quota" && <QuotaTab rows={rows} range={range} />}
     </div>
   );
 }

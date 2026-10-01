@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useClearLogs, useLogStream, usePutSettings, useSettings } from "../api/hooks";
 import type { LogRecord } from "../api/types";
 import type { StreamLevel } from "../api/transport";
@@ -71,9 +72,10 @@ function LogRow({ line }: { line: LogRecord }) {
 }
 
 export function ConsoleLog() {
+  const [searchParams] = useSearchParams();
   const [levels, setLevels] = useState<Record<Level, boolean>>({ debug: true, info: true, warn: true, error: true });
-  const [tag, setTag] = useState("all");
-  const [search, setSearch] = useState("");
+  const [tag, setTag] = useState(() => searchParams.get("tag") || "all");
+  const [search, setSearch] = useState(() => searchParams.get("q") || searchParams.get("search") || "");
   const [follow, setFollow] = useState(true);
   const scroller = useRef<HTMLDivElement | null>(null);
   const toast = useToast();
@@ -164,7 +166,7 @@ export function ConsoleLog() {
           <select
             value={tag}
             onChange={(e) => setTag(e.target.value)}
-            className="h-6 min-w-0 max-w-full rounded-full border border-border-subtle bg-surface-2 px-2 font-mono text-[11px] text-text-muted focus:outline-none sm:text-[10px]"
+            className="h-6 min-w-0 max-w-full rounded-full border border-border-subtle bg-surface-2 px-2 font-mono text-[11px] text-text-muted sm:text-[10px]"
           >
             <option value="all">all tags</option>
             {tags.map((t) => (
@@ -185,7 +187,7 @@ export function ConsoleLog() {
               value={capture}
               onChange={(e) => setCaptureLevel(e.target.value as Level)}
               disabled={put.isPending}
-              className="h-6 rounded-full border border-border-subtle bg-surface-2 px-2 font-mono text-[11px] normal-case tracking-normal text-text-main focus:outline-none sm:text-[10px]"
+              className="h-6 rounded-full border border-border-subtle bg-surface-2 px-2 font-mono text-[11px] normal-case tracking-normal text-text-main sm:text-[10px]"
             >
               {LEVELS.map((l) => (
                 <option key={l} value={l}>
@@ -222,7 +224,7 @@ export function ConsoleLog() {
             <StatusDot tone={connected ? "green" : "red"} pulse={connected} />
             <span>{connected ? "streaming" : "disconnected"}</span>
             <span className="font-mono tabular">
-              {visible.length.toLocaleString()} lines{visible.length > RENDER_CAP ? ` (showing last ${RENDER_CAP})` : ""}
+              {visible.length.toLocaleString()} {visible.length === 1 ? "line" : "lines"}{visible.length > RENDER_CAP ? ` (showing last ${RENDER_CAP})` : ""}
             </span>
           </div>
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
@@ -245,10 +247,9 @@ export function ConsoleLog() {
           )}
           {!usingMock && lines.length === 0 && raw.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-              <p className="text-sm text-text-muted">No lines in the gateway ring since boot or the last clear.</p>
+              <p className="text-sm text-text-muted">No lines in the gateway ring buffer since boot or the last clear.</p>
               <p className="text-xs text-text-subtle">
-                The gateway buffers only at its own <code className="font-mono">ROUTY_LOG_LEVEL</code> floor, and the
-                healthy-path REQ line is still pending (contract-requests §5) — so silence here does not mean no traffic.
+                Listening for incoming requests, upstream dispatches, and diagnostic probes.
               </p>
             </div>
           )}

@@ -16,7 +16,7 @@ export function Select({ label, hint, options, className, ...rest }: SelectProps
       <select
         className={cn(
           "h-9 w-full rounded-[10px] border border-transparent bg-surface-2 px-3 text-sm text-text-main",
-          "focus:outline-none focus:ring-2 focus:ring-brand-500/30 transition-all duration-150",
+          "focus:ring-2 focus:ring-brand-500/30 transition-all duration-150",
           "disabled:opacity-50",
         )}
         {...rest}

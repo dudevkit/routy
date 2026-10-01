@@ -32,6 +32,7 @@ import {
   Plus, Prohibit, Trash, WifiHigh, XCircle,
 } from "../components/icons";
 import { NodeFormModal } from "../components/NodeFormModal";
+import { ChatPlaygroundCard } from "../components/ChatPlaygroundCard";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -376,7 +377,7 @@ export function ModelsTab({ node }: { node: UpstreamNode }) {
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
               placeholder="model-id"
-              className="w-52 min-w-0 rounded-md border border-border-subtle bg-surface-2 px-3 py-1.5 font-mono text-xs text-text-main placeholder:text-text-main/40 focus:outline-none focus:ring-2 focus:ring-accent/40"
+              className="w-52 min-w-0 rounded-md border border-border-subtle bg-surface-2 px-3 py-1.5 font-mono text-xs text-text-main placeholder:text-text-main/40 focus:ring-2 focus:ring-accent/40"
             />
             <Button variant="primary" size="sm" icon={<Plus size={14} />} disabled={!draft.trim()} loading={addModel.isPending} onClick={submit}>
               Add model
@@ -702,7 +703,7 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
             onChange={(e) => setSingle(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") addSingle(); }}
             placeholder="sk-…"
-            className="w-64 rounded-md border border-border-subtle bg-surface-2 px-3 py-1.5 font-mono text-xs text-text-main placeholder:text-text-main/40 focus:outline-none focus:ring-2 focus:ring-accent/40"
+            className="w-64 rounded-md border border-border-subtle bg-surface-2 px-3 py-1.5 font-mono text-xs text-text-main placeholder:text-text-main/40 focus:ring-2 focus:ring-accent/40"
           />
           <Button variant="primary" size="sm" icon={<Plus size={14} />} disabled={!single.trim()} loading={addConnection.isPending} onClick={addSingle}>
             Add key
@@ -854,7 +855,7 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
               value={bulk}
               onChange={(e) => setBulk(e.target.value)}
               placeholder={"prod,sk-abc123\nteam-2,sk-def456\nsk-ghi789"}
-              className="min-h-[140px] w-full resize-y rounded-md border border-border-subtle bg-surface-2 px-3 py-2 font-mono text-xs text-text-main placeholder:text-text-main/40 focus:outline-none focus:ring-2 focus:ring-accent/40"
+              className="min-h-[140px] w-full resize-y rounded-md border border-border-subtle bg-surface-2 px-3 py-2 font-mono text-xs text-text-main placeholder:text-text-main/40 focus:ring-2 focus:ring-accent/40"
             />
             <p className="mt-1 text-xs text-text-main/50">
               {parsedBulk.length} key{parsedBulk.length === 1 ? "" : "s"} detected
@@ -1077,12 +1078,14 @@ export function ProviderDetail() {
         items={[
           { value: "models", label: `Models${node.modelCount ? ` (${node.modelCount})` : ""}` },
           { value: "keys", label: "API Keys" },
+          { value: "playground", label: "Playground" },
           { value: "settings", label: "Settings" },
         ]}
       />
 
       {tab === "models" && <ModelsTab node={node} />}
       {tab === "keys" && <KeysTab node={node} />}
+      {tab === "playground" && <ChatPlaygroundCard node={node} />}
       {tab === "settings" && <SettingsTab node={node} />}
     </div>
   );

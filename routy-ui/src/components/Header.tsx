@@ -72,7 +72,7 @@ export function Header({ onMenu }: { onMenu: () => void }) {
           className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full border border-border bg-surface/70 text-xs text-text-muted"
           title="Gateway status"
         >
-          <StatusDot tone="green" pulse />
+          <StatusDot tone="green" />
           <span>online</span>
           <Badge variant="primary" size="sm" className="ml-1 font-mono uppercase tracking-wide">
             {gateway.data ? `v${gateway.data.version}` : "—"}

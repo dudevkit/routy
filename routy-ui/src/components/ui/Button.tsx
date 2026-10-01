@@ -12,9 +12,9 @@ const variants = {
 };
 
 const sizes = {
-  sm: "h-7 px-3 text-xs rounded-[8px]",
-  md: "h-9 px-4 text-sm rounded-[10px]",
-  lg: "h-11 px-6 text-sm rounded-[10px]",
+  sm: "h-8 sm:h-7 min-h-[36px] sm:min-h-0 px-3 text-xs rounded-[8px]",
+  md: "h-9 min-h-[40px] sm:min-h-0 px-4 text-sm rounded-[10px]",
+  lg: "h-11 min-h-[44px] sm:min-h-0 px-6 text-sm rounded-[10px]",
 };
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {

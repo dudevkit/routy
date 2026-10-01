@@ -64,16 +64,26 @@ export function CliTools() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-lg font-semibold text-text-main">CLI Tools</h1>
-        <p className="text-xs text-text-muted">
-          Point an AI CLI installed on this machine at routy. Detection reads your PATH, the
-          usual user install directories, and config files; nothing is written until you connect.
-        </p>
+      <div className="text-xs text-text-muted">
+        Point an AI CLI installed on this machine at routy. Detection reads your PATH, the
+        usual user install directories, and config files; nothing is written until you connect.
       </div>
 
       {tools.isLoading ? (
-        <Skeleton rows={3} />
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {[1, 2, 3, 4].map((i) => (
+            <Card key={i} padding="sm" className="h-40 flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <Skeleton rows={1} className="w-32" />
+                <Skeleton rows={1} className="w-16" />
+              </div>
+              <Skeleton rows={2} />
+              <div className="flex items-center gap-2 pt-1">
+                <Skeleton rows={1} className="w-20" />
+              </div>
+            </Card>
+          ))}
+        </div>
       ) : list.length === 0 ? (
         <Card padding="sm" className="flex flex-col items-center gap-3 py-12 text-center">
           <TerminalWindow size={28} className="text-text-subtle" />

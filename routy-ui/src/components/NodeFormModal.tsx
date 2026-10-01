@@ -34,7 +34,7 @@ function PricingFields({
   onOutput: (v: string) => void;
 }) {
   const field =
-    "w-full rounded-md border border-border-subtle bg-surface-2 px-3 py-2 font-mono text-sm text-text-main placeholder:text-text-main/40 focus:outline-none focus:ring-2 focus:ring-accent/40";
+    "w-full rounded-md border border-border-subtle bg-surface-2 px-3 py-2 font-mono text-sm text-text-main placeholder:text-text-main/40 focus:ring-2 focus:ring-accent/40";
   return (
     <div className="flex flex-col gap-1.5">
       <span className="text-xs font-medium text-text-main">Price per 1M tokens (USD)</span>
@@ -209,8 +209,8 @@ export function NodeFormModal({
           required
           hint="Models with this prefix route to the node"
           value={form.prefix}
-          onChange={(e) => set({ prefix: e.target.value })}
-          placeholder="or/"
+          onChange={(e) => set({ prefix: e.target.value.replace(/\/+$/, "") })}
+          placeholder="or"
         />
 
         <PricingFields
@@ -240,7 +240,7 @@ export function NodeFormModal({
               </span>
             ) : (
               <span className="flex items-center gap-1.5 text-xs text-danger">
-                <XCircle size={14} className="shrink-0 shrink-0" />
+                <XCircle size={14} className="shrink-0" />
                 {test.error ?? "unreachable"}
               </span>
             ))}

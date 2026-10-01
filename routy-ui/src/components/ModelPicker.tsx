@@ -16,14 +16,16 @@ import { cn } from "../utils/cn";
  */
 export function groupModels(ids: string[]): { provider: string; models: string[] }[] {
   const groups = new Map<string, string[]>();
-  for (const id of ids) {
+  for (const rawId of ids) {
+    const parts = rawId.split("/");
+    const id = parts.length > 2 && parts[0] === parts[1] ? parts.slice(1).join("/") : rawId;
     const slash = id.indexOf("/");
     const provider = slash === -1 ? "aliases & combos" : id.slice(0, slash);
     if (!groups.has(provider)) groups.set(provider, []);
     groups.get(provider)!.push(id);
   }
   return [...groups.entries()]
-    .map(([provider, models]) => ({ provider, models: models.sort() }))
+    .map(([provider, models]) => ({ provider, models: [...new Set(models)].sort() }))
     .sort((a, b) => a.provider.localeCompare(b.provider));
 }
 

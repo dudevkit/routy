@@ -6,6 +6,7 @@ import { CopyChip } from "../components/CopyChip";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
+import { Modal } from "../components/ui/Modal";
 import { Input } from "../components/ui/Input";
 import { Skeleton } from "../components/ui/Skeleton";
 import { ThemeToggle } from "../components/ui/ThemeToggle";
@@ -350,6 +351,7 @@ function RestartButton() {
   const toast = useToast();
   const restart = useRestartGateway();
   const [busy, setBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const sleep = (ms: number) => {
     const { promise, resolve } = Promise.withResolvers<void>();
@@ -358,7 +360,6 @@ function RestartButton() {
   };
 
   const start = async () => {
-    if (!window.confirm("Restart the gateway now? This page waits for it to come back, then reloads.")) return;
     setBusy(true);
     try {
       await restart.mutateAsync();
@@ -406,9 +407,36 @@ function RestartButton() {
   };
 
   return (
-    <Button size="sm" variant="outline" disabled={busy} onClick={start}>
-      {busy ? "Restarting…" : "Restart"}
-    </Button>
+    <>
+      <Button size="sm" variant="outline" disabled={busy} onClick={() => setConfirmOpen(true)}>
+        {busy ? "Restarting…" : "Restart"}
+      </Button>
+      <Modal
+        isOpen={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title="Restart gateway?"
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConfirmOpen(false)}>Cancel</Button>
+            <Button
+              variant="primary"
+              loading={busy}
+              onClick={() => {
+                setConfirmOpen(false);
+                void start();
+              }}
+            >
+              Restart
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-text-muted leading-relaxed">
+          Restart the gateway process to pick up bundle, configuration, or environment changes. The page will wait for it to become healthy and then reload.
+        </p>
+      </Modal>
+    </>
   );
 }
 

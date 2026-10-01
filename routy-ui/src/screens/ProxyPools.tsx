@@ -63,7 +63,7 @@ function PasteUrls({
         onChange={(e) => onChange(e.target.value)}
         rows={rows}
         placeholder={"http://user:pass@host:8080\nsocks5://user:pass@host:1080"}
-        className="min-h-[120px] w-full resize-y rounded-md border border-border-subtle bg-surface-2 px-3 py-2 font-mono text-[11px] text-text-main placeholder:text-text-main/40 focus:outline-none focus:ring-2 focus:ring-accent/40"
+        className="min-h-[120px] w-full resize-y rounded-md border border-border-subtle bg-surface-2 px-3 py-2 font-mono text-[11px] text-text-main placeholder:text-text-main/40 focus:ring-2 focus:ring-accent/40"
       />
       <p className="mt-1 text-xs text-text-main/50">{hint}</p>
     </div>
@@ -310,12 +310,16 @@ function PoolCard({ pool, pools }: { pool: ProxyPool; pools: ProxyPool[] }) {
   const [merging, setMerging] = useState(false);
   const [editing, setEditing] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [page, setPage] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [nameDraft, setNameDraft] = useState(pool.name);
   const [result, setResult] = useState<PoolTestResult | null>(null);
 
   const entries = pool.entries ?? [];
-  const shown = showAll ? entries : entries.slice(0, 6);
+  const PAGE_SIZE = 15;
+  const totalPages = Math.ceil(entries.length / PAGE_SIZE) || 1;
+  const safePage = Math.min(page, totalPages - 1);
+  const shown = showAll ? entries.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE) : entries.slice(0, 6);
 
   const runTest = () =>
     testPool.mutate(pool.id, {
@@ -415,13 +419,39 @@ function PoolCard({ pool, pools }: { pool: ProxyPool; pools: ProxyPool[] }) {
           <ExitRow key={e.id} entry={e} />
         ))}
         {entries.length > 6 && (
-          <button
-            type="button"
-            className="flex items-center gap-1 py-1 text-[11px] text-text-subtle hover:text-text-main"
-            onClick={() => setShowAll((v) => !v)}
-          >
-            {showAll ? "collapse" : `show all ${entries.length} exits`}
-          </button>
+          <div className="flex flex-wrap items-center justify-between gap-2 py-1.5 text-[11px] text-text-subtle">
+            <button
+              type="button"
+              className="text-primary hover:underline"
+              onClick={() => {
+                setShowAll((v) => !v);
+                setPage(0);
+              }}
+            >
+              {showAll ? "Collapse to 6 exits" : `Show all ${entries.length} exits`}
+            </button>
+            {showAll && totalPages > 1 && (
+              <div className="flex items-center gap-1.5 ml-auto">
+                <span>Page {safePage + 1} of {totalPages}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={safePage === 0}
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                >
+                  Prev
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={safePage >= totalPages - 1}
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+          </div>
         )}
         <Button size="sm" variant="ghost" className="mt-1 self-start" icon={<Plus size={13} />} onClick={() => setAdding(true)}>
           Add exits
