@@ -70,6 +70,7 @@ function resolveMedia(data?: { media?: NodeMediaConfig }) {
 const maskKey = (k: string) => (k.length > 12 ? `${k.slice(0, 6)}…${k.slice(-4)}` : k ? "•••" : "—");
 
 const freshStats: UsageStats = {
+  requests: 0,
   requestsToday: 0,
   tokens7d: 0,
   costUsd7d: 0,

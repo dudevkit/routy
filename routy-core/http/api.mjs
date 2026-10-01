@@ -258,9 +258,13 @@ export function usageStats(repos, since = null) {
     if (e.status !== "ok") errors++;
     if (e.ttft_ms !== null && e.ttft_ms !== undefined) ttfts.push(e.ttft_ms);
   }
-  ttfts.sort((a, b) => a - b);
+  ttfts.sort((a, b) => b - a);
   const ttftP50 = ttfts.length ? ttfts[Math.floor(ttfts.length / 2)] : 0;
   return {
+    // Requests inside the SELECTED window — the Usage screen's first tile follows the range
+    // like every other tile. `requestsToday` stays for the dashboard home, whose window is
+    // fixed and whose tile says "today" because it means exactly that.
+    requests: week.length,
     requestsToday,
     tokens7d,
     costUsd7d: Math.round(costUsd7d * 10000) / 10000,

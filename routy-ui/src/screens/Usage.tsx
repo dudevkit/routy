@@ -104,9 +104,10 @@ function OverviewTab({ rows, since, range }: { rows: UsageHistoryRow[]; since: n
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 sm:gap-4">
-        {/* "Requests · today" is a calendar fact the server always computes; every other
-            tile aggregates over the SELECTED window, so its label says which one. */}
-        <StatTile label="Requests · today" value={(s?.requestsToday ?? 0).toLocaleString()} />
+        {/* Every tile — requests included — aggregates over the SELECTED window and says which
+            one; the dashboard home keeps its fixed "today / 7d" tiles, where those words are
+            literally its window. */}
+        <StatTile label={`Requests · ${RANGE_LABEL[range]}`} value={(s?.requests ?? 0).toLocaleString()} />
         <StatTile label={`Tokens · ${RANGE_LABEL[range]}`} value={fmtTokens(s?.tokens7d ?? 0)} />
         <StatTile label={`Cost · ${RANGE_LABEL[range]}`} value={fmtCost(s?.costUsd7d ?? 0)} />
         <StatTile label={`Error rate · ${RANGE_LABEL[range]}`} value={`${(s?.errorRatePct ?? 0).toFixed(1)}%`} />

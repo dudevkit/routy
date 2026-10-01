@@ -53,7 +53,8 @@ describe("usageStats windows (the date-range filter's server)", () => {
     const repos = fakeRepos(rows);
     const s = usageStats(repos);
     expect(repos.seen.limit).toBe(100_000); // default keeps its old ceiling
-    expect(s.requestsToday).toBe(1);
+    expect(s.requests).toBe(2); // the window's rows — the Usage tile follows the range
+    expect(s.requestsToday).toBe(1); // the dashboard home's calendar fact, unchanged
     expect(s.tokens7d).toBe(2 * 15); // today + 3d only
     expect(s.errorRatePct).toBe(0);
     expect(s.ttftP50Ms).toBe(100);
@@ -74,6 +75,7 @@ describe("usageStats windows (the date-range filter's server)", () => {
     const s = usageStats(repos, 0);
     expect(repos.seen.since).toBe(0);
     expect(repos.seen.limit).toBe(1_000_000); // "all ya all" — aggregates never slice
+    expect(s.requests).toBe(4); // every row counted — the tile matches the count line's range
     expect(s.tokens7d).toBe(4 * 15);
     expect(s.errorRatePct).toBe(25); // 1 of 4
     expect(s.requestsToday).toBe(1); // still only today's row, even over the whole history

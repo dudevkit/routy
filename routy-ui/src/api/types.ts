@@ -233,6 +233,8 @@ export interface NodeConnection {
 
 /* ── usage ─────────────────────────────────────────────────────────────────── */
 export interface UsageStats {
+  /** requests inside the selected window (the Usage range; default = the 7-day window) */
+  requests: number;
   requestsToday: number;
   tokens7d: number;
   costUsd7d: number;
