@@ -52,32 +52,51 @@ function OverviewTab({ rows, since, range }: { rows: UsageHistoryRow[]; since: n
   const stats = useStats(since);
   const [metric, setMetric] = useState("tokens");
 
+  // The chart answers the SAME range as everything else on this tab — the complaint it fixes was
+  // literal: switching 24h → 30D left an identical curve on screen, because the buckets were
+  // hardcoded to the last 24 hours. Hourly for the two 24-hour-scale presets, daily beyond
+  // (hourly over 30 days is a smear nobody can read), and `all` starts at the oldest row rather
+  // than at epoch — thousands of empty days would be a chart of nothing.
+  const hourlyRange = range === "today" || range === "24h";
   const series = useMemo(() => {
-    const hourly: Record<number, { tokens: number; cost: number; requests: number }> = {};
-    const now = new Date();
-    now.setMinutes(0, 0, 0);
-    const buckets: { label: string; tokens: number; cost: number; requests: number }[] = [];
+    const HOUR = 3_600_000;
+    const DAY = 24 * HOUR;
+    const STEP = hourlyRange ? HOUR : DAY;
+    const floorTo = (t: number) => {
+      const d = new Date(t);
+      if (hourlyRange) d.setMinutes(0, 0, 0);
+      else d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    };
+    const agg: Record<number, { tokens: number; cost: number; requests: number }> = {};
     for (const r of rows) {
-      const key = new Date(r.ts);
-      key.setMinutes(0, 0, 0);
-      const ts = key.getTime();
-      hourly[ts] = hourly[ts] ?? { tokens: 0, cost: 0, requests: 0 };
-      hourly[ts].tokens += TOTAL_TOKENS(r);
-      hourly[ts].cost += r.cost_usd ?? 0;
-      hourly[ts].requests += 1;
+      const ts = floorTo(r.ts);
+      const b = agg[ts] ?? { tokens: 0, cost: 0, requests: 0 };
+      b.tokens += TOTAL_TOKENS(r);
+      b.cost += r.cost_usd ?? 0;
+      b.requests += 1;
+      agg[ts] = b;
     }
-    for (let i = 23; i >= 0; i--) {
-      const ts = now.getTime() - i * 3600_000;
-      const b = hourly[ts];
+    const first =
+      range === "all"
+        ? rows.length ? floorTo(Math.min(...rows.map((r) => r.ts))) : floorTo(Date.now())
+        : floorTo(since);
+    const last = floorTo(Date.now());
+    const buckets: { label: string; tokens: number; cost: number; requests: number }[] = [];
+    for (let t = first; t <= last; t += STEP) {
+      const b = agg[t] ?? { tokens: 0, cost: 0, requests: 0 };
+      const d = new Date(t);
       buckets.push({
-        label: new Date(ts).getHours().toString().padStart(2, "0"),
-        tokens: b?.tokens ?? 0,
-        cost: Math.round((b?.cost ?? 0) * 10000) / 10000,
-        requests: b?.requests ?? 0,
+        label: hourlyRange
+          ? d.getHours().toString().padStart(2, "0")
+          : `${d.getDate()} ${d.toLocaleString("en-US", { month: "short" })}`,
+        tokens: b.tokens,
+        cost: Math.round(b.cost * 10000) / 10000,
+        requests: b.requests,
       });
     }
     return buckets;
-  }, [rows]);
+  }, [rows, range, since, hourlyRange]);
 
   const s = stats.data;
   const hasTraffic = rows.length > 0;
@@ -98,7 +117,7 @@ function OverviewTab({ rows, since, range }: { rows: UsageHistoryRow[]; since: n
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             <ChartBar size={16} className="text-text-muted" />
-            <h3 className="truncate text-sm font-semibold text-text-main">Last 24 hours</h3>
+            <h3 className="truncate text-sm font-semibold text-text-main">{CHART_TITLE[range] ?? "Last 7 days"}</h3>
           </div>
           <Tabs
             size="sm"
@@ -407,6 +426,9 @@ const RANGE_TABS = [
   { value: "all", label: "All" },
 ];
 const RANGE_LABEL: Record<string, string> = { today: "Today", "24h": "24h", "7d": "7D", "30d": "30D", "60d": "60D", all: "All" };
+
+/** The chart draws exactly the selected range, so its title may never disagree with the pill. */
+const CHART_TITLE: Record<string, string> = { today: "Today", "24h": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "60d": "Last 60 days", all: "All time" };
 
 /** Window start for a preset. Today is local midnight — a calendar fact, deliberately not
  *  "the last 12 hours"; everything else is rolling; `all` is 0, which the history route
