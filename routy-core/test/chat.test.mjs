@@ -178,6 +178,9 @@ describe("chat handler (end-to-end)", () => {
       for (let i = 0; i < 4; i++) lines.push(`+  added line ${h}-${i} const fresh = compute(${i});`);
     }
     const DIFF = lines.join("\n");
+    const rtkLines = [];
+    const { subscribeLog } = await import("../lib/log.mjs");
+    const unsub = subscribeLog((text) => { const p = JSON.parse(text); if (p.tag === "RTK") rtkLines.push(p); });
     const r = await post({
       model: "a/m1", stream: true,
       messages: [
@@ -191,6 +194,12 @@ describe("chat handler (end-to-end)", () => {
     const sentContent = typeof sent.content === "string" ? sent.content : JSON.stringify(sent.content);
     expect(sentContent.length).toBeLessThan(DIFF.length * 0.9); // RTK rewrote the payload
     expect(sentContent).toContain("added line 0-0");
+    unsub();
+    // The hit shows up at the DEFAULT capture level — the complaint this line answers is that
+    // RTK worked but only ever appeared for an operator who had thought to switch to debug.
+    expect(rtkLines).toHaveLength(1);
+    expect(rtkLines[0].level).toBe("info");
+    expect(rtkLines[0].msg).toContain("saved");
   });
 
   it("emits exactly one REQ info line per successful request (R3-1)", async () => {

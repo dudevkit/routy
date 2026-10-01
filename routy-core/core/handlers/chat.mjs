@@ -294,7 +294,10 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         // (upstream placement). Default-on unless settings disable it.
         if (settings.rtkEnabled !== false) {
           const rtkStats = compressMessages(outbound, true);
-          if (rtkStats?.hits?.length) log.debug("RTK", formatRtkLog(rtkStats));
+          // info, not debug: a hit is rare (only compressible tool output gets this far) and it
+          // is money saved — the one line an operator should see in the DEFAULT capture. The
+          // "turn on debug to trace" rule stays for traces; this is a result, not a trace.
+          if (rtkStats?.hits?.length) log.info("RTK", formatRtkLog(rtkStats));
         }
 
         // Params this provider rejects are dropped here — the final body, after translation,

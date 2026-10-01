@@ -128,6 +128,7 @@ describe("management API", () => {
     repos.usage.flush();
     const stats = await get("/api/usage/stats");
     expect(stats.body).toEqual({
+      requests: 2, // rows inside the window — the Usage screen's first tile follows the range
       requestsToday: expect.any(Number),
       tokens7d: 18,
       costUsd7d: 0,
