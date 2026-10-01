@@ -94,6 +94,7 @@ const COMBO_KINDS = [
   { value: "llm", label: "Chat" },
   { value: "webSearch", label: "Web Search" },
   { value: "webFetch", label: "Web Fetch" },
+  { value: "systemone", label: "System One" },
   { value: "embedding", label: "Embeddings — combos not enabled yet" },
   { value: "image", label: "Text to Image — combos not enabled yet" },
   { value: "tts", label: "Text to Speech — combos not enabled yet" },

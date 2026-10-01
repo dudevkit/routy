@@ -47,6 +47,11 @@ export function ExampleCard({ node }: { node: UpstreamNode }) {
   const [format, setFormat] = useState("markdown");
   const [maxChars, setMaxChars] = useState("0");
   const [prompt, setPrompt] = useState("a watercolor fox in a foggy forest");
+  // System One: a situation to evaluate and one question about it. The question key is fixed
+  // because the answer comes back under the key the caller sent (`answers.is_urgent`), and a
+  // free-form key would make the card's output harder to read than it makes the request honest.
+  const [state, setState] = useState("My payments have failed for three days and I am losing sales. Please help now.");
+  const [question, setQuestion] = useState("Does this request require urgent attention?");
 
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ status: number; ms: number; body: string } | null>(null);
@@ -74,6 +79,14 @@ export function ExampleCard({ node }: { node: UpstreamNode }) {
       case "embedding": return { model: usedModel, input };
       case "image": return { model: usedModel, prompt };
       case "tts": return { model: usedModel, input };
+      // `noul` is the answer type 9Router's own card sends, and the one the upstream echoes back
+      // as a probability. It is the caller's field, not routy's — the request is forwarded as
+      // written, so this card shows the shape rather than speaking for it.
+      case "systemone": return {
+        model: usedModel,
+        state,
+        questions: { is_urgent: { type: "noul", instructions: question } },
+      };
       default: return { model: usedModel };
     }
   };
@@ -179,6 +192,20 @@ export function ExampleCard({ node }: { node: UpstreamNode }) {
         )}
         {kind === "image" && (
           <Row label="Prompt"><Input value={prompt} onChange={(e) => setPrompt(e.target.value)} /></Row>
+        )}
+        {kind === "systemone" && (
+          <>
+            <Row label="State">
+              <textarea
+                value={state}
+                onChange={(e) => setState(e.target.value)}
+                rows={3}
+                placeholder="Situation, support ticket, or text to evaluate"
+                className="w-full rounded border border-border-subtle bg-background px-3 py-2 font-mono text-sm text-text-main focus:outline-none focus:border-accent"
+              />
+            </Row>
+            <Row label="Question"><Input value={question} onChange={(e) => setQuestion(e.target.value)} /></Row>
+          </>
         )}
         {info.modelList !== "none" && (
           <Row label="Model">

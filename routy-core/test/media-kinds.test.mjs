@@ -70,7 +70,7 @@ const node = (prefix, media, extra = {}) =>
 
 describe("the kind enum", () => {
   it("keeps every kind pointed at its own endpoint", () => {
-    expect(MEDIA_KIND_IDS).toEqual(["embedding", "image", "tts", "webSearch", "webFetch"]);
+    expect(MEDIA_KIND_IDS).toEqual(["embedding", "image", "tts", "webSearch", "webFetch", "systemone"]);
     const paths = MEDIA_KIND_IDS.map((k) => MEDIA_KINDS[k].path);
     expect(new Set(paths).size).toBe(paths.length); // a path serves exactly one kind
     for (const kind of MEDIA_KIND_IDS) {

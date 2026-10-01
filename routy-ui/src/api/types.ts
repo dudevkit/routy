@@ -13,7 +13,7 @@ export type NodeStatus = "healthy" | "degraded" | "down" | "disabled";
  * A kind IS its endpoint: `image` is `/v1/images/generations`, `tts` is `/v1/audio/speech`.
  * Chat is not a media kind — it is what a node serves by default.
  */
-export type MediaKind = "embedding" | "image" | "tts" | "webSearch" | "webFetch";
+export type MediaKind = "embedding" | "image" | "tts" | "webSearch" | "webFetch" | "systemone";
 
 /** What the gateway reports for a kind: label + endpoint, so the UI never hardcodes paths. */
 export interface MediaKindInfo {
@@ -36,6 +36,7 @@ export const MEDIA_KIND_INFO: MediaKindInfo[] = [
   { id: "tts", label: "Text to Speech", method: "POST", path: "/v1/audio/speech", modelList: "voices" },
   { id: "webSearch", label: "Web Search", method: "POST", path: "/v1/search", modelList: "none" },
   { id: "webFetch", label: "Web Fetch", method: "POST", path: "/v1/web/fetch", modelList: "none" },
+  { id: "systemone", label: "System One", method: "POST", path: "/v1/systemone", modelList: "node" },
 ];
 
 /**
