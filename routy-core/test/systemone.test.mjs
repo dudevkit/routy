@@ -232,6 +232,16 @@ describe("what routy refuses before it calls anyone", () => {
     expect(r.body.error.detail).toContain("does not serve System One");
   });
 
+  it("names the nodes that DO serve the kind when the prefix is wrong", async () => {
+    systemoneNode("zen");
+    // The live case: an id typed with a remembered short prefix (`oc/...`) or a backslash.
+    const r = await post("/v1/systemone", { model: "oc/jev-1.13-free", state: STATE, questions: QUESTIONS });
+    expect(r.status).toBe(400);
+    expect(r.body.error.detail).toContain("nodes that serve it: zen");
+    expect(r.body.error.detail).toContain("<prefix>/<model>");
+    expect(stubState.calls).toHaveLength(0);
+  });
+
   it("refuses a node with no endpoint, naming what to set", async () => {
     const node = repos.nodes.create({
       name: "nourl", prefix: "nourl", apiType: "openai", baseUrl: `http://127.0.0.1:${stubPort}/v1`,

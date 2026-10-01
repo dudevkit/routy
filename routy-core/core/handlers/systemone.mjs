@@ -99,9 +99,13 @@ export function createSystemoneHandler(repos, { timeoutMs = SYSTEMONE_TIMEOUT_MS
     if (!route) {
       const prefix = model.split("/")[0];
       const node = repos.nodes.byPrefix(prefix);
+      // The message names what WOULD work: a wrong prefix is the common case (an id typed with
+      // a backslash, or a remembered short name), and "check the prefix" leaves the caller
+      // guessing which prefix is the right one.
+      const serving = repos.nodes.list().filter((n) => mediaKindsOf(n).includes(KIND)).map((n) => n.prefix);
       const detail = node && !mediaKindsOf(node).includes(KIND)
         ? `provider '${prefix}' does not serve System One — declare the systemone kind on the node`
-        : `"${model}" is not routable for System One — check the prefix, or that the node declares the kind`;
+        : `"${model}" is not routable for System One — ${serving.length ? `nodes that serve it: ${serving.join(", ")} (model id = <prefix>/<model>)` : "no node declares the kind yet — add one from the Media screen"}`;
       return json(res, 400, { error: { message: "bad_request", detail } });
     }
 
