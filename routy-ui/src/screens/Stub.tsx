@@ -1,18 +1,23 @@
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { Card } from "../components/ui/Card";
-import { Wrench } from "../components/icons";
+import { Button } from "../components/ui/Button";
+import { XCircle } from "../components/icons";
 
 export function Stub() {
   const { pathname } = useLocation();
-  const label = pathname.replace(/^\//, "").replace(/-/g, " ") || "Overview";
+  const label = pathname.replace(/^\//, "").replace(/-/g, " ") || "unknown";
   return (
     <Card className="flex flex-col items-center justify-center gap-3 py-20 text-center">
-      <Wrench size={40} className="text-text-subtle" />
-      <p className="text-sm text-text-muted">This screen isn't part of the preview slice yet.</p>
-      <p className="text-xs text-text-muted">
-        Overview covers the core flow — add an upstream and watch health.
+      <XCircle size={40} className="text-text-subtle" />
+      <h2 className="text-base font-semibold text-text-main">Page not found</h2>
+      <p className="text-sm text-text-muted">
+        The path <code className="font-mono text-xs text-text-main">/{label}</code> does not exist on this gateway.
       </p>
-      <span className="text-[10px] uppercase tracking-wider text-text-subtle">{label}</span>
+      <Link to="/" className="mt-2">
+        <Button variant="primary" size="sm">
+          Return to Overview
+        </Button>
+      </Link>
     </Card>
   );
 }

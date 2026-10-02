@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { Warning } from "./icons";
 
 /**
@@ -22,9 +23,9 @@ export function SecurityBanner() {
         Listening on the network with the dashboard login turned off — anyone who can reach this port
         can read your client keys and edit CLI tool configs.
       </span>
-      <a href="/settings" className="ml-auto shrink-0 whitespace-nowrap text-warning underline">
+      <Link to="/settings" className="ml-auto shrink-0 whitespace-nowrap text-warning underline transition-colors hover:text-warning/80">
         Turn it on
-      </a>
+      </Link>
     </div>
   );
 }

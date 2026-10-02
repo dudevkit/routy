@@ -18,6 +18,7 @@ import { getProxyAgent, primaryProxyUrl } from "./proxy.mjs";
 import { authHeadersFor, authStyleFor, mediaConfigOf, mediaUrlFor } from "./media.mjs";
 import { headersFor } from "./mediaMap.mjs";
 import { opencodeTarget, transformOpencodeBody } from "./executors/opencode.mjs";
+import { qualifyModel } from "./routing.mjs";
 
 /**
  * Socket-level truth for a probe, via undici's diagnostics channels.
@@ -212,7 +213,7 @@ export async function probeSystemone(node, model, connection = null, { timeoutMs
     }
     // A JSON envelope answers whole — the round trip is the time to the answer, and the
     // result column shows it as this probe's ms.
-    log?.info?.("PROBE", `→ ${node.prefix ?? "?"}/${model} (systemone)`, { url, latencyMs });
+    log?.info?.("PROBE", `→ ${qualifyModel(node.prefix ?? "?", model)} (systemone)`, { url, latencyMs });
     return { ok: true, ttftMs: latencyMs, latencyMs, error: null };
   } catch (err) {
     return { ok: false, ttftMs: null, latencyMs: Date.now() - t0, stage: "connect", error: shapeError(err) };
@@ -268,13 +269,13 @@ export async function probeModel(node, model, connection = null, { timeoutMs, lo
   const probe = { t0, host: new URL(originOf(node?.baseUrl) ?? "http://invalid").hostname, marks: [] };
   inFlight.set(probeId, probe);
 
-  log?.info?.("PROBE", `→ ${node?.prefix ?? "?"}/${model}`, {
+  log?.info?.("PROBE", `→ ${qualifyModel(node?.prefix ?? "?", model)}`, {
     url, budgetMs: budget, key: connection?.name ?? null,
   });
 
   const fail = (error) => {
     const timeline = probe.marks.join(", ") || "no socket activity";
-    log?.warn?.("PROBE", `✖ ${node?.prefix ?? "?"}/${model}`, { stage, error, elapsedMs: Date.now() - t0, timeline });
+    log?.warn?.("PROBE", `✖ ${qualifyModel(node?.prefix ?? "?", model)}`, { stage, error, elapsedMs: Date.now() - t0, timeline });
     return { ok: false, ttftMs: null, latencyMs: Date.now() - t0, error, stage, timeline };
   };
 
@@ -366,12 +367,12 @@ export async function probeModel(node, model, connection = null, { timeoutMs, lo
 
     const ttftMs = Date.now() - t0;
     if (tokenField) {
-      log?.info?.("PROBE", `← ok ${node?.prefix ?? "?"}/${model}`, { ttftMs, via: tokenField });
+      log?.info?.("PROBE", `← ok ${qualifyModel(node?.prefix ?? "?", model)}`, { ttftMs, via: tokenField });
       return { ok: true, ttftMs, latencyMs: ttftMs, error: null, via: tokenField };
     }
     if (sawFrame) {
       // the stream spoke but produced no token (e.g. an immediate stop) — alive
-      log?.info?.("PROBE", `← ok ${node?.prefix ?? "?"}/${model}`, { ttftMs, via: `finish:${finishReason ?? "unknown"}` });
+      log?.info?.("PROBE", `← ok ${qualifyModel(node?.prefix ?? "?", model)}`, { ttftMs, via: `finish:${finishReason ?? "unknown"}` });
       return { ok: true, ttftMs, latencyMs: ttftMs, error: null, via: `finish:${finishReason ?? "unknown"}` };
     }
     return fail(`stream ended with no token after ${ttftMs}ms`);

@@ -25,8 +25,8 @@
   --color-brand-800: #17499A;
   --color-brand-900: #12356E;
 
-  --color-primary: var(--color-brand-500);
-  --color-primary-hover: var(--color-brand-600);
+  --color-primary: #1B65C2;
+  --color-primary-hover: #1554A0;
 
   /* Surfaces & backgrounds (light) */
   --color-bg: #F7F8FA;
@@ -44,12 +44,12 @@
   --color-text: #171B22;
   --color-text-main: #171B22;
   --color-text-muted: #5C6675;
-  --color-text-subtle: #8A94A3;
+  --color-text-subtle: #606B7B;
 
   /* Status */
   --color-danger: #D93025;
-  --color-success: #17945E;
-  --color-warning: #B7791F;
+  --color-success: #13774B;
+  --color-warning: #925615;
   --color-info: #2F6FEB;
 
   /* Radius */
@@ -64,7 +64,7 @@
     inset 0 1px 0 0 rgba(255,255,255,0.9),
     0 1px 2px rgba(15,23,42,0.05),
     0 12px 36px -8px rgba(15,23,42,0.12);
-  --shadow-focus: 0 0 0 3px rgba(46, 127, 224, 0.22);
+  --shadow-focus: 0 0 0 2px var(--color-primary);
 
   color-scheme: light;
 }
@@ -99,7 +99,7 @@
   --color-text: #E8ECF4;
   --color-text-main: #E8ECF4;
   --color-text-muted: #98A2B3;
-  --color-text-subtle: #657083;
+  --color-text-subtle: #8896AA;
 
   --color-danger: #F0564E;
   --color-success: #3DD68C;
@@ -114,7 +114,7 @@
     inset 0 1px 0 0 rgba(255,255,255,0.05),
     0 1px 2px rgba(0,0,0,0.40),
     0 16px 48px -8px rgba(0,0,0,0.55);
-  --shadow-focus: 0 0 0 3px rgba(77, 157, 255, 0.22);
+  --shadow-focus: 0 0 0 2px var(--color-primary);
 
   color-scheme: dark;
 }
@@ -254,17 +254,7 @@ input, textarea {
   border-radius: var(--radius-brand-lg);
 }
 
-/* Landing-style faint grid overlay */
-.landing-grid {
-  background-image:
-    linear-gradient(to right, var(--color-accent) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--color-accent) 1px, transparent 1px);
-  background-size: 40px 40px;
-  opacity: 0.08;
-}
-.dark .landing-grid {
-  opacity: 0.04;
-}
+/* Landing-style background overlay removed (antislop R-07) */
 
 /* macOS Vibrancy */
 .bg-vibrancy {
@@ -318,8 +308,16 @@ button:disabled,
 .font-display { font-family: var(--font-display); }
 
 :focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
   outline: none;
-  box-shadow: var(--shadow-focus);
+  border-color: var(--color-primary) !important;
+  box-shadow: 0 0 0 2px var(--color-primary) !important;
 }
 
 /* ── Phones ──────────────────────────────────────────────────────────────────

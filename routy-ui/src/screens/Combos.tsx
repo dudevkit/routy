@@ -23,6 +23,7 @@ import {
   useCreateCombo,
   useDeleteAlias,
   useDeleteCombo,
+  useRoutableModels,
   useSetAlias,
   useUpdateCombo,
 } from "../api/hooks";
@@ -39,54 +40,6 @@ import { Select } from "../components/ui/Select";
 import { Skeleton } from "../components/ui/Skeleton";
 import { useToast } from "../components/ui/Toast";
 import { cn } from "../utils/cn";
-
-/**
- * Routable names come from the management model list (aliases + combos + node
- * prefixes). `reachable` distinguishes "gateway answered, nothing to route yet"
- * from "list unavailable" (not signed in, or gateway down) — the copy must not
- * blame the gateway for an empty install, and must not hide a failure behind one.
- */
-type ModelsState = { status: "loading" } | { status: "reachable"; models: string[] } | { status: "unreachable"; reason: string };
-
-function useRoutableModels(): ModelsState {
-  const [state, setState] = useState<ModelsState>({ status: "loading" });
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/models")
-      .then(async (res) => {
-        if (!res.ok) {
-          const body: unknown = await res.json().catch(() => null);
-          const message =
-            body && typeof body === "object" && "error" in body && typeof body.error === "object" && body.error !== null && "message" in body.error
-              ? String((body.error as { message: unknown }).message)
-              : `HTTP ${res.status}`;
-          return { ok: false as const, message };
-        }
-        const data: unknown = await res.json();
-        const list: unknown =
-          data && typeof data === "object" && "data" in data ? (data as { data: unknown }).data : undefined;
-        const ids: string[] = [];
-        if (Array.isArray(list)) {
-          for (const item of list) {
-            if (typeof item === "object" && item !== null && "id" in item && typeof item.id === "string") ids.push(item.id);
-          }
-        }
-        return { ok: true as const, ids: ids.sort() };
-      })
-      .then((result) => {
-        if (cancelled) return;
-        if (result.ok === true) setState({ status: "reachable", models: result.ids });
-        else setState({ status: "unreachable", reason: result.message });
-      })
-      .catch(() => {
-        if (!cancelled) setState({ status: "unreachable", reason: "network" });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return state;
-}
 
 // Every strategy the core implements. Offering only three of the five meant `fastest` and
 // `cheapest` existed, were tested, and could not be selected from the dashboard.
@@ -154,8 +107,8 @@ function ModelRow({
       </button>
       <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-main">
         {model}
-        {index === 0 && <span className="ml-2 text-[10px] text-primary">primary</span>}
       </span>
+      {index === 0 && <Badge variant="primary" size="sm" className="ml-1">primary</Badge>}
       <button
         aria-label={`Move ${model} up`}
         disabled={index === 0}
@@ -359,10 +312,10 @@ function ComboCard({ combo, suggestions }: { combo: Combo; suggestions: string[]
             Add
           </Button>
         </div>
-        {suggestions.length > 0 && !adding.trim() && (
+        {suggestions.filter((m) => m !== combo.name).length > 0 && !adding.trim() && (
           <p className="text-[11px] text-text-subtle">
-            Suggestions: {suggestions.slice(0, 6).join(", ")}
-            {suggestions.length > 6 ? ` +${suggestions.length - 6} more` : ""}
+            Suggestions: {suggestions.filter((m) => m !== combo.name).slice(0, 6).join(", ")}
+            {suggestions.filter((m) => m !== combo.name).length > 6 ? ` +${suggestions.filter((m) => m !== combo.name).length - 6} more` : ""}
           </p>
         )}
       </div>
@@ -573,22 +526,24 @@ function AliasesPanel({ suggestions }: { suggestions: string[] }) {
   );
 }
 
-function suggestionBanner(state: ModelsState): { tone: "muted" | "warning"; text: string } {
-  if (state.status === "loading") return { tone: "muted", text: "loading routable model names…" };
-  if (state.status === "unreachable")
-    return { tone: "warning", text: `model list unavailable (${state.reason}) — names can still be typed by hand` };
-  if (state.models.length === 0)
+function suggestionBanner(query: { isLoading: boolean; isError: boolean; error: unknown; data?: string[] }): { tone: "muted" | "warning"; text: string } {
+  if (query.isLoading) return { tone: "muted", text: "loading routable model names…" };
+  if (query.isError) {
+    const reason = query.error instanceof Error ? query.error.message : "network";
+    return { tone: "warning", text: `model list unavailable (${reason}) — names can still be typed by hand` };
+  }
+  const models = query.data ?? [];
+  if (models.length === 0)
     return { tone: "muted", text: "nothing routable yet — add an upstream, alias or combo first" };
-  return { tone: "muted", text: `${state.models.length} routable model names offered as suggestions` };
+  return { tone: "muted", text: `${models.length} routable model names offered as suggestions` };
 }
 
 export function Combos() {
   const combos = useCombos();
   const [newOpen, setNewOpen] = useState(false);
-  const modelsState = useRoutableModels();
-  const suggestions = modelsState.status === "reachable" ? modelsState.models : [];
-  const banner = suggestionBanner(modelsState);
-
+  const modelsQuery = useRoutableModels();
+  const suggestions = modelsQuery.data ?? [];
+  const banner = suggestionBanner(modelsQuery);
   const datalist = useMemo(
     () => (
       <datalist id="routable-models">

@@ -81,7 +81,10 @@ export function resolveRoute(repos, modelStr, { depth = 0, kind = CHAT_KIND } = 
   const slash = stripped.indexOf("/");
   if (slash > 0) {
     const prefix = stripped.slice(0, slash);
-    const model = stripped.slice(slash + 1);
+    let model = stripped.slice(slash + 1);
+    if (model.startsWith(`${prefix}/`)) {
+      model = model.slice(prefix.length + 1);
+    }
     if (model.length > 0) {
       const node = repos.nodes.byPrefix(prefix);
       if (node && servesKind(node, kind)) {
@@ -182,6 +185,17 @@ function priceRank(node) {
 }
 
 /**
+ * Idempotently qualify a model id with a provider prefix.
+ * If the model id already begins with `${prefix}/`, return it as is.
+ */
+export function qualifyModel(prefix, model) {
+  if (!model) return prefix || "";
+  if (!prefix) return model;
+  if (model.startsWith(`${prefix}/`)) return model;
+  return `${prefix}/${model}`;
+}
+
+/**
  * Enumerate client-visible models for GET /v1/models:
  * aliases (id = alias) + combos (id = combo name). Node-local models are
  * fetched upstream lazily (P1.4) and merged here.
@@ -208,7 +222,7 @@ export function listModels(repos, { kind = CHAT_KIND } = {}) {
       const models = repos.nodeModels.enabledModels(n.id, { kind: CHAT_KIND });
       if (models.length > 0) {
         for (const m of models) {
-          data.push({ id: `${n.prefix}/${m}`, object: "model", owned_by: `routy-node:${n.prefix}` });
+          data.push({ id: qualifyModel(n.prefix, m), object: "model", owned_by: `routy-node:${n.prefix}` });
         }
       } else {
         // no models configured — expose the wildcard so the prefix is still discoverable
@@ -230,7 +244,7 @@ export function listModels(repos, { kind = CHAT_KIND } = {}) {
     if (!nodeServesKind(n, kind)) continue;
     if (modelList === "node") {
       for (const m of repos.nodeModels.enabledModels(n.id, { kind })) {
-        data.push({ id: `${n.prefix}/${m}`, object: "model", kind, owned_by: `routy-node:${n.prefix}` });
+        data.push({ id: qualifyModel(n.prefix, m), object: "model", kind, owned_by: `routy-node:${n.prefix}` });
       }
     } else {
       // The provider IS the model (web search/fetch), or the model field names a voice the
@@ -294,7 +308,7 @@ export function modelInfo(repos, modelStr, { kind } = {}) {
     return {
       id: modelStr, object: "model-info", kind: effective,
       combo: true, strategy: resolved.strategy, stickyLimit: resolved.stickyLimit,
-      members: resolved.routes.filter((r) => r.kind === "node").map((r) => `${r.node.prefix}/${r.model ?? ""}`.replace(/\/$/, "")),
+      members: resolved.routes.filter((r) => r.kind === "node").map((r) => qualifyModel(r.node.prefix, r.model ?? "").replace(/\/$/, "")),
     };
   }
 

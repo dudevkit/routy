@@ -70,19 +70,17 @@ export function TokenSaver() {
         </p>
 
         <div>
-          <Button variant="secondary" size="sm" icon={<TerminalWindow size={13} />} onClick={() => navigate("/console")}>
-            Open Live Console
+          <Button variant="secondary" size="sm" icon={<TerminalWindow size={13} />} onClick={() => navigate("/console?tag=RTK")}>
+            Open Live Console (RTK)
           </Button>
         </div>
       </Card>
 
       <Card padding="sm" className="flex flex-col gap-2">
-        <h3 className="text-sm font-semibold text-text-main">Not in this screen</h3>
-        <ul className="flex flex-col gap-1 text-xs text-text-muted">
-          <li>· Per-filter on/off and thresholds — no backend surface yet (contract request filed).</li>
-          <li>· headroom / caveman / ponytail savers — dropped from routy v1 scope.</li>
-          <li>· pxpipe — deferred; its screen stays out until the backend lands.</li>
-        </ul>
+        <h3 className="text-sm font-semibold text-text-main">How RTK operates</h3>
+        <p className="text-xs text-text-muted leading-relaxed">
+          RTK identifies repetitive command-line outputs, git diffs, file listings, and build traces emitted by agent tool executions, rewriting them into compact token representations before dispatching to upstream providers.
+        </p>
       </Card>
     </div>
   );

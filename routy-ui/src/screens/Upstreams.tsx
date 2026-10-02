@@ -40,6 +40,7 @@ const filterTabs = [
   { value: "degraded", label: "Degraded" },
   { value: "down", label: "Down" },
   { value: "disabled", label: "Disabled" },
+  { value: "presets", label: "Presets" },
 ];
 
 /**
@@ -74,9 +75,12 @@ function NodeCard({ node, keyless }: { node: UpstreamNode; keyless?: boolean }) 
             {node.name}
           </Link>
         </div>
-        <Badge variant={meta.badge} size="sm" dot>
-          {meta.label}
-        </Badge>
+        <div className="flex items-center gap-1.5">
+          {Boolean(node.data?.preset) && <Badge variant="default" size="sm">preset</Badge>}
+          <Badge variant={meta.badge} size="sm" dot>
+            {meta.label}
+          </Badge>
+        </div>
       </div>
       <p className="truncate font-mono text-[11px] text-text-muted" title={node.baseUrl}>
         {node.baseUrl}
@@ -186,15 +190,19 @@ function NodeCard({ node, keyless }: { node: UpstreamNode; keyless?: boolean }) 
  * keys, models and probing.
  */
 function PresetCard({ entry, node, onAdd }: { entry: ProviderPreset; node?: UpstreamNode; onAdd: () => void }) {
+  const meta = node ? statusMeta[node.status] : null;
   return (
     <div
       className={`flex flex-col gap-1.5 rounded border border-border-subtle p-3 ${entry.supported ? "" : "opacity-60"}`}
       title={entry.supported ? undefined : entry.why ?? undefined}
     >
       <div className="flex items-start justify-between gap-2">
-        <span className="min-w-0 truncate text-sm font-medium text-text-main">{entry.name}</span>
+        <div className="flex min-w-0 items-center gap-1.5 truncate">
+          {meta && <StatusDot tone={meta.dot} />}
+          <span className="min-w-0 truncate text-sm font-medium text-text-main">{entry.name}</span>
+        </div>
         {node ? (
-          <Badge variant="success" size="sm">added</Badge>
+          <Badge variant={meta?.badge ?? "success"} size="sm">{meta?.label ?? "added"}</Badge>
         ) : entry.supported ? (
           <Badge variant="default" size="sm">free</Badge>
         ) : (
@@ -205,22 +213,32 @@ function PresetCard({ entry, node, onAdd }: { entry: ProviderPreset; node?: Upst
         {entry.baseUrl ?? entry.why}
       </p>
       <p className="text-[11px] text-text-subtle">
-        {entry.supported
-          ? `${entry.models.length} model${entry.models.length === 1 ? "" : "s"} · ${entry.format}`
-          : entry.why}
+        {node ? (
+          <>
+            <span className="font-mono">{node.prefix}</span>
+            <span> · </span>
+            <span>{node.modelCount} model{node.modelCount === 1 ? "" : "s"}</span>
+            <span> · </span>
+            <span>{fmtMs(node.latencyMs)}</span>
+          </>
+        ) : entry.supported ? (
+          `${entry.models.length} model${entry.models.length === 1 ? "" : "s"} · ${entry.format}`
+        ) : (
+          entry.why
+        )}
       </p>
       {entry.requires.length > 0 && <p className="text-[11px] text-text-muted">{entry.requires.join("; ")}</p>}
       <div className="mt-auto flex items-center justify-between gap-2 pt-1">
         {entry.keyUrl ? (
-          <a href={entry.keyUrl} target="_blank" rel="noreferrer" className="text-[11px] text-accent hover:underline">
+          <a href={entry.keyUrl} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline">
             Get a key
           </a>
         ) : (
           <span />
         )}
         {node ? (
-          <Link to={`/upstreams/${node.id}`} className="text-[11px] text-accent hover:underline">
-            Open
+          <Link to={`/upstreams/${node.id}`} className="text-[11px] font-medium text-primary hover:underline">
+            Configure →
           </Link>
         ) : entry.supported ? (
           <Button variant="secondary" size="sm" onClick={onAdd}>
@@ -300,7 +318,13 @@ export function Upstreams() {
   const addModel = useAddModel();
 
   // Catalogue cards group by 9Router's own registry category — one section per category.
-  const presets = catalog.data?.providers ?? [];
+  // Non-chat providers (TTS, SearXNG, Devin) live under Media and CLI Tools, filtered out here.
+  const rawPresets = catalog.data?.providers ?? [];
+  const presets = rawPresets.filter((p) => {
+    if (p.category === "tts" || p.format === "tts") return false;
+    if (p.id.includes("tts") || p.id === "searxng" || p.id === "devin") return false;
+    return true;
+  });
   const categories = [...new Set(presets.map((p) => p.category))];
   const presetNode = (entry: ProviderPreset) => (nodes.data ?? []).find((n) => n.data?.preset === entry.id);
 
@@ -332,15 +356,14 @@ export function Upstreams() {
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return (nodes.data ?? []).filter((n) => {
-      // Media providers are the OTHER thing: they are added from the Media menu and live there,
-      // so this screen shows only what the user added by hand for text generation.
       if (n.media?.provider) return false;
-      // Free-tier adds live on their catalogue cards, not in this table — two kinds of thing,
-      // two lists, exactly like the media providers above.
-      if (n.data?.preset) return false;
+      if (needle) {
+        return `${n.name} ${n.baseUrl} ${n.prefix}`.toLowerCase().includes(needle);
+      }
+      if (filter === "presets") return Boolean(n.data?.preset);
       if (filter !== "all" && n.status !== filter) return false;
-      if (!needle) return true;
-      return `${n.name} ${n.baseUrl} ${n.prefix}`.toLowerCase().includes(needle);
+      if (n.data?.preset) return false;
+      return true;
     });
   }, [nodes.data, filter, search]);
 
@@ -380,7 +403,7 @@ export function Upstreams() {
 
       <div className="flex flex-col gap-1 border-t border-border-subtle pt-4">
         <h2 className="text-sm font-semibold text-text-main">Your providers</h2>
-        <p className="text-xs text-text-muted">Text-generation providers you added yourself — health, keys and probing live in the table.</p>
+        <p className="text-xs text-text-muted">Text-generation providers you added yourself — health, keys and probing live on the cards below.</p>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">

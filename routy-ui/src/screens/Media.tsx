@@ -89,13 +89,10 @@ export function Media() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-text-main">Media</h1>
-        <p className="mt-1 text-sm text-text-muted">
-          Every media provider the gateway can reach, grouped by the endpoint it answers. Adding one here
-          configures it; keys are added on its own page, exactly like a provider&apos;s. Chat providers
-          stay on <Link to="/upstreams" className="text-accent hover:underline">Providers</Link>.
-        </p>
+      <div className="text-sm text-text-muted">
+        Every media provider the gateway can reach, grouped by the endpoint it answers. Adding one here
+        configures it; keys are added on its own page, exactly like a provider&apos;s. Chat providers
+        stay on <Link to="/upstreams" className="text-primary hover:underline">Providers</Link>.
       </div>
 
       <Tabs
@@ -118,7 +115,7 @@ export function Media() {
         <div className="flex items-center gap-2">
           <Badge variant="default" size="sm">{configured} of {entries.length} added</Badge>
           <Badge variant="default" size="sm">
-            {serving.length} custom{serving.length === 1 ? "" : "s"}
+            {serving.length} custom provider{serving.length === 1 ? "" : "s"}
           </Badge>
         </div>
       </Card>

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
-import { resolveRoute, stripContextMarker, listModels, toolModelIds, isNodeHealthy } from "../core/routing.mjs";
+import { resolveRoute, stripContextMarker, listModels, toolModelIds, isNodeHealthy, qualifyModel } from "../core/routing.mjs";
 
 let tmp, db, repos;
 
@@ -124,5 +124,28 @@ describe("listModels", () => {
     expect(ids).toContain("dev");
     expect(ids).toContain("mine/*");
     expect(ids).not.toContain("down/*"); // disabled node excluded
+  });
+  it("qualifies model ids idempotently without double prefixing", () => {
+    expect(qualifyModel("alpha", "m1")).toBe("alpha/m1");
+    expect(qualifyModel("alpha", "alpha/m1")).toBe("alpha/m1");
+    expect(qualifyModel("alpha", "")).toBe("alpha");
+    expect(qualifyModel("", "m1")).toBe("m1");
+
+    // Stored model row already containing prefix
+    const n = repos.nodes.byPrefix("mine");
+    repos.nodeModels.create({ nodeId: n.id, model: "mine/already-prefixed" });
+    repos.nodeModels.create({ nodeId: n.id, model: "bare-model" });
+
+    const { data } = listModels(repos);
+    const ids = data.map((m) => m.id);
+    expect(ids).toContain("mine/already-prefixed");
+    expect(ids).not.toContain("mine/mine/already-prefixed");
+    expect(ids).toContain("mine/bare-model");
+
+    // resolveRoute strips double prefix if client requests prefix/prefix/model
+    const route = resolveRoute(repos, "mine/mine/already-prefixed");
+    expect(route).toBeTruthy();
+    expect(route.node.prefix).toBe("mine");
+    expect(route.model).toBe("already-prefixed");
   });
 });

@@ -12,7 +12,7 @@ import { maskKey } from "../lib/mask.mjs";
 import { json } from "../lib/router.mjs";
 import { costOf, isMetered } from "./pricing.mjs";
 import { addSpend, budgetState } from "./budget.mjs";
-import { orderRoutes } from "./routing.mjs";
+import { orderRoutes, qualifyModel } from "./routing.mjs";
 import { MEDIA_KINDS } from "./media.mjs";
 import { isKeyless } from "./keyless.mjs";
 
@@ -283,7 +283,7 @@ export function noKeysResponse(res, repos, node) {
 /** The combo fields a log line needs, or null when the request was not a combo. */
 export function comboInfoFor(combo, node, model, idx) {
   if (!combo) return null;
-  const member = model ? `${node.prefix}/${model}` : node.prefix;
+  const member = model ? qualifyModel(node.prefix, model) : node.prefix;
   return {
     name: combo.name,
     strategy: combo.strategy,
@@ -345,7 +345,7 @@ export function comboTurn(comboName, strategy, stickyLimit = 1) {
  */
 export function describeCombo(repos, route, ordered, routes, candidates) {
   const now = Date.now();
-  const nameOf = (r) => `${r.node.prefix}/${r.model}`;
+  const nameOf = (r) => qualifyModel(r.node.prefix, r.model);
   const serving = new Set(candidates);
   const inFlight = new Set(routes);
 
