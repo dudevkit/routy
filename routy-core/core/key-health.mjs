@@ -197,6 +197,36 @@ export function recordConnectionSuccess(repos, connectionId) {
   return repos.breakers.record(scope, { state: "closed", failures: 0, openUntil: null, lastError: null, cooldownStreak: 0 });
 }
 
+/**
+ * Clear every piece of per-key health for a connection, and re-enable it.
+ *
+ * `disabled` is terminal by design: `isConnectionAvailable` returns false for it with no
+ * `openUntil` to wait on, and `earliestRecovery` only scans `cooldown` — so nothing in the
+ * request path ever brings a disabled key back. Recovery is therefore an explicit operator
+ * action, and this is that action: it must clear the breaker (RAM + row) *and* flip the
+ * `connections.status` mirror, because routing filters on `status === "active"` before it
+ * ever consults the breaker. Clearing one and not the other is a key that looks healthy and
+ * is never picked.
+ *
+ * The stale `lastError` goes too: it is the 403/auth text that caused the disable, and
+ * leaving it on a freshly enabled key reads as a failure that is still current.
+ */
+export function resetConnection(repos, connectionId) {
+  if (connectionId == null) return null;
+  const scope = connectionScope(connectionId);
+  const conn = repos.connections.get(connectionId);
+  const state = repos.breakers.record(scope, {
+    state: "closed", failures: 0, openUntil: null, lastError: null, cooldownStreak: 0,
+  });
+  if (conn && conn.status !== "active") repos.connections.update(connectionId, { status: "active", lastError: null });
+  return state;
+}
+
+/** Which connections does a `node:<id>` breaker scope own? (the reason-keyed reset needs this) */
+export function connectionsForNode(repos, nodeId) {
+  return repos.nodes.get(nodeId) ? repos.connections.list(nodeId) : [];
+}
+
 /** Is this connection allowed to serve right now? */
 export function isConnectionAvailable(state, now = Date.now()) {
   if (!state) return true;

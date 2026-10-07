@@ -182,6 +182,52 @@ describe("management API", () => {
     expect(b.openUntil).toBeNull();
   });
 
+  // A provider reset that leaves its keys disabled is not a reset: routing filters on
+  // `status === "active"` before it ever reads the breaker, so the button would report
+  // success over a provider that is still unroutable.
+  it("node reset re-enables the keys that two strikes disabled", async () => {
+    const node = repos.nodes.create({ name: "R2", prefix: "r2", apiType: "openai", baseUrl: "http://127.0.0.1:1/v1" });
+    const c = repos.connections.create({ nodeId: node.id, name: "k1", credentials: { apiKey: "sk-test" } });
+    repos.breakers.record(`conn:${c.id}`, { state: "disabled", failures: 2, lastError: "auth 403: refused" });
+    repos.connections.update(c.id, { status: "disabled", lastError: "auth 403: refused" });
+
+    const r = await post(`/api/nodes/${node.id}/reset`, {});
+    expect(r.status).toBe(200);
+    expect(r.body.keysReset).toBe(1);
+    expect(repos.connections.get(c.id).status).toBe("active");
+    expect(repos.connections.get(c.id).lastError).toBeNull();
+    expect(repos.breakers.get(`conn:${c.id}`).state).toBe("closed");
+    expect(repos.breakers.get(`conn:${c.id}`).failures).toBe(0);
+  });
+
+  it("conn-scoped breaker reset re-enables that key", async () => {
+    const node = repos.nodes.create({ name: "R3", prefix: "r3", apiType: "openai", baseUrl: "http://127.0.0.1:1/v1" });
+    const c = repos.connections.create({ nodeId: node.id, name: "k1", credentials: { apiKey: "sk-test" } });
+    repos.breakers.record(`conn:${c.id}`, { state: "disabled", failures: 2 });
+    repos.connections.update(c.id, { status: "disabled" });
+
+    const r = await post(`/api/breakers/${encodeURIComponent(`conn:${c.id}`)}/reset`, {});
+    expect(r.status).toBe(200);
+    expect(r.body.keysReset).toBe(1);
+    expect(repos.connections.get(c.id).status).toBe("active");
+    expect(repos.breakers.get(`conn:${c.id}`).state).toBe("closed");
+  });
+
+  // A healthy key must come out of a node reset untouched: no status flip, no strikes on
+  // its breaker. (The reset does ensure the row is clean rather than skipping it, so the
+  // contract is "closed with zero failures", not "no row".)
+  it("node reset leaves healthy keys alone", async () => {
+    const node = repos.nodes.create({ name: "R4", prefix: "r4", apiType: "openai", baseUrl: "http://127.0.0.1:1/v1" });
+    const c = repos.connections.create({ nodeId: node.id, name: "k1", credentials: { apiKey: "sk-test" } });
+    expect(c.status).toBe("active");
+    const r = await post(`/api/nodes/${node.id}/reset`, {});
+    expect(r.status).toBe(200);
+    expect(repos.connections.get(c.id).status).toBe("active");
+    const b = repos.breakers.get(`conn:${c.id}`);
+    expect(b?.state ?? "closed").toBe("closed");
+    expect(b?.failures ?? 0).toBe(0);
+  });
+
   it("streams logs: init snapshot then live lines", async () => {
     let captured = "";
     const req = http.get({ host: "127.0.0.1", port: handlerPort, path: "/api/logs/stream" }, (res) => {
