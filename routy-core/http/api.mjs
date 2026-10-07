@@ -24,7 +24,7 @@ import { checkForUpdate, updateState } from "../core/updates.mjs";
 import { RESTART_FOR_UPDATE, applyUpdate } from "../core/update-apply.mjs";
 import { spawnReplacement } from "../core/restart.mjs";
 import { getDispatcher, undiciFetch } from "../core/executors/pool.mjs";
-import { connectionState } from "../core/key-health.mjs";
+import { connectionState, connectionsForNode, resetConnection } from "../core/key-health.mjs";
 import { DEFAULT_PROXY_TEST_URL, forgetExitHealth, poolExits, proxyIdentity, resetPoolHealth, resolveNodeProxy, testProxyUrl } from "../core/proxy.mjs";
 import { CONNECTION_COOLDOWN_MS, PROXY_COOLDOWN_MS } from "../core/limits.mjs";
 import { allStatuses, connectTool, disconnectTool, findAdapter, toolStatus } from "../core/cli-tools.mjs";
@@ -378,8 +378,37 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/reset$/, (req, res, p) => {
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
+    // A provider is only "a candidate again" if its KEYS are candidates again, and routing
+    // filters on `status === "active"` before it ever reads the breaker. Resetting the
+    // node-scoped breaker alone leaves every disabled key disabled: the button reports
+    // success while nothing becomes routable. Clear the node breaker AND every key.
     repos.breakers.record(`node:${node.id}`, { state: "closed", failures: 0, openUntil: null, lastError: null });
-    json(res, 200, nodeView(repos, repos.nodes.get(node.id)));
+    const keys = connectionsForNode(repos, node.id);
+    for (const c of keys) resetConnection(repos, c.id);
+    json(res, 200, { ...nodeView(repos, repos.nodes.get(node.id)), keysReset: keys.length });
+  });
+  /**
+   * Reset a breaker by scope.
+   *
+   * `conn:<id>` and `proxy:*` scopes name a connection, so resetting one must also flip that
+   * connection's `status` back to `active` — the breaker alone is not what routing reads.
+   * `node:<id>` is a subject the operator can see in the dashboard, so "reset this provider"
+   * has to mean the provider's keys too, not just the node row behind them.
+   */
+  route("POST", /^\/api\/breakers\/(?<scope>[^/]+)\/reset$/, (req, res, p) => {
+    const scope = decodeURIComponent(p.scope);
+    const b = repos.breakers.record(scope, { state: "closed", failures: 0, openUntil: null, lastError: null, cooldownStreak: 0 });
+    let keysReset = 0;
+    const connMatch = /^conn:(.+)$/.exec(scope);
+    if (connMatch) {
+      if (resetConnection(repos, connMatch[1])) keysReset = 1;
+    } else {
+      const nodeMatch = /^node:(.+)$/.exec(scope);
+      if (nodeMatch) {
+        for (const c of connectionsForNode(repos, nodeMatch[1])) { resetConnection(repos, c.id); keysReset += 1; }
+      }
+    }
+    json(res, 200, { ...b, keysReset });
   });
   // The routable model list, on the management surface.
   //
@@ -1229,10 +1258,8 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   });
 
   // breakers
-  route("POST", /^\/api\/breakers\/(?<scope>[^/]+)\/reset$/, (req, res, p) => {
-    const b = repos.breakers.record(decodeURIComponent(p.scope), { state: "closed", failures: 0, openUntil: null, lastError: null });
-    json(res, 200, b);
-  });
+  // (`POST /api/breakers/:scope/reset` is registered next to the node reset route, so the
+  // "reset a provider" semantics live in one place.)
 
   // live log stream (SSE): init snapshot → live lines. ?level= filters server-side
   // (debug < info < warn < error); POST /api/logs/clear clears the ring + notifies.
