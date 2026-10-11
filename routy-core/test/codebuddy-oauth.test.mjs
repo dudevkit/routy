@@ -207,22 +207,39 @@ describe("executor", () => {
     expect(isCodeBuddyIntlOAuth({})).toBe(false);
   });
 
-  it("forces stream, prepends the system prompt, drops client system turns, and types user content", () => {
+  it("forces stream, keeps the client system prompt, types user content, drops a second system turn", () => {
     const b = transformCodebuddyBody("glm-5.2", {
       stream: false,
       reasoning_effort: "high",
       messages: [
-        { role: "system", content: "be terse" },
+        { role: "system", content: "You are Alice, a helpful agent." },
         { role: "user", content: "hi" },
         { role: "assistant", content: "hello" },
+        { role: "developer", content: "second system turn" },
       ],
     });
     expect(b.stream).toBe(true);
     expect(b.reasoning_summary).toBe("auto");
-    expect(b.messages[0]).toEqual({ role: "system", content: "You are CodeBuddy Code." });
+    // The caller's persona is preserved and stays first (a second system/developer turn
+    // folds into the same leading message — CodeBuddy takes one leading system turn).
+    expect(b.messages[0].role).toBe("system");
+    expect(b.messages[0].content).toContain("You are Alice, a helpful agent.");
+    expect(b.messages[0].content).toContain("second system turn");
     expect(b.messages[1]).toEqual({ role: "user", content: [{ type: "text", text: "hi" }] });
     expect(b.messages[2]).toEqual({ role: "assistant", content: "hello" });
-    expect(b.messages.some((m) => m.content === "be terse")).toBe(false);
+    expect(b.messages).toHaveLength(3);
+    expect(JSON.stringify(b.messages)).not.toContain("You are CodeBuddy Code.");
+  });
+
+  it("adds the CodeBuddy identity line only when the caller sent no system prompt", () => {
+    const b = transformCodebuddyBody("m", { messages: [{ role: "user", content: "hi" }] });
+    expect(b.messages[0]).toEqual({ role: "system", content: "You are CodeBuddy Code." });
+  });
+
+  it("folds a developer turn into the leading system message", () => {
+    const b = transformCodebuddyBody("m", { messages: [{ role: "developer", content: "be terse" }, { role: "user", content: "hi" }] });
+    expect(b.messages[0]).toEqual({ role: "system", content: "be terse" });
+    expect(b.messages).toHaveLength(2);
   });
 
   it("drops a 'none' effort instead of forwarding it", () => {

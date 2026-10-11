@@ -32,12 +32,19 @@ export function codebuddyIntlMarker() {
  * The request-body pass, shared by the executor and the model probe — two builders
  * would drift into a probe that reports on a request chat never sends.
  *
- * Ported verbatim from the reference transformRequest:
+ * CodeBuddy wants a LEADING system message and user content as typed text blocks, or it
+ * answers 11101. What it must NOT do is discard the caller's own system prompt: that
+ * prompt is the agent's persona and instructions ("You are Alice…"), and replacing it
+ * makes the model answer as CodeBuddy Code regardless of who the client asked for
+ * (observed live: a persona prompt came back "Aku CodeBuddy Code, asisten AI…").
+ *
+ * So the CodeBuddy line is only ADDED when the caller sent no system message at all;
+ * an existing system prompt is kept verbatim and stays first.
+ *
+ * Ported from the reference transformRequest, with that one correction:
  *   · force `stream: true` (CodeBuddy refuses non-streaming);
  *   · `reasoning_effort` "none"/"off" is dropped, any other effort sets reasoning_summary
  *     to "auto" (the field the gateway reads to surface reasoning);
- *   · a leading system prompt replaces the client's, and client system/developer turns
- *     are dropped — a bare OpenAI body is answered 11101;
  *   · a plain-string user content becomes a single typed text block.
  */
 export function transformCodebuddyBody(model, body) {
@@ -51,15 +58,27 @@ export function transformCodebuddyBody(model, body) {
   else if (eff) b.reasoning_summary = "auto";
 
   const source = Array.isArray(b.messages) ? b.messages : [];
-  b.messages = [{ role: "system", content: "You are CodeBuddy Code." }];
+  // Keep the caller's system/developer text (developer folds into a system message, since
+  // CodeBuddy takes one leading system turn). The CodeBuddy identity line is a fallback,
+  // not a replacement.
+  const clientSystem = source
+    .filter((m) => m && typeof m === "object" && (m.role === "system" || m.role === "developer"))
+    .map((m) => (typeof m.content === "string" ? m.content : Array.isArray(m.content)
+      ? m.content.map((c) => (c && typeof c === "object" && typeof c.text === "string" ? c.text : "")).join("")
+      : ""))
+    .filter((t) => t && t.trim().length > 0);
+  const systemText = clientSystem.length > 0 ? clientSystem.join("\n\n") : "You are CodeBuddy Code.";
+
+  const rest = [];
   for (const message of source) {
     if (!message || typeof message !== "object" || ["system", "developer"].includes(message.role)) continue;
     if (message.role === "user" && typeof message.content === "string") {
-      b.messages.push({ ...message, content: [{ type: "text", text: message.content }] });
+      rest.push({ ...message, content: [{ type: "text", text: message.content }] });
     } else {
-      b.messages.push({ ...message });
+      rest.push({ ...message });
     }
   }
+  b.messages = [{ role: "system", content: systemText }, ...rest];
   return b;
 }
 
