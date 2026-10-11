@@ -104,6 +104,16 @@ export class DefaultExecutor {
     return { ...headers, ...(extra ?? {}) };
   }
 
+  /**
+   * Shape the message for a non-2xx upstream response. The default keeps the first 500
+   * characters of the body for the operator's benefit. A provider executor that must not
+   * leak a raw body (CodeBuddy OAuth, whose error text may echo tokens) overrides this to
+   * return a bounded, sanitized string instead.
+   */
+  errorMessage(_status, text) {
+    return String(text || "").slice(0, 500);
+  }
+
   /** A failure that belongs to the exit, packaged so the orchestrator can rotate it. */
   #exitFailure(exit, rotate) {
     return {
@@ -288,7 +298,7 @@ export class DefaultExecutor {
     }
     try {
       const text = await response.text();
-      if (text) message = text.slice(0, 500);
+      if (text) message = this.errorMessage(status, text);
     } catch { /* body unreadable — keep generic message */ }
     log?.debug?.("UPSTREAM", `✖ ${this.node.prefix} error ${status}`, { status, retryAfterMs, body: message.slice(0, 200) });
     const errorCode =

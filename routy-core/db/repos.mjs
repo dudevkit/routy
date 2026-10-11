@@ -791,8 +791,100 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
       db.prepare(`SELECT COALESCE(SUM(cost_usd), 0) AS costUsd, COUNT(*) AS n FROM usage_events WHERE ts >= ? AND cost_usd IS NOT NULL`).get(ts),
   };
 
+  // ── OAuth (CodeBuddy Intl): atomic multi-row writes + credential CAS ───────
+  // The API layer receives `repos`, never the raw database, so the two operations
+  // that must be atomic (create node + first connection; add a connection) live
+  // here. Both keep DB writes synchronous inside one transaction and invalidate the
+  // node/connection caches only AFTER commit, so a rolled-back attempt leaves no
+  // cache entry pointing at a row that does not exist.
+  const oauth = {
+    /**
+     * Create a node plus its first OAuth connection in one transaction.
+     * Returns the new node view or throws (no partial node on failure).
+     */
+    createNodeWithConnection({ name, prefix, baseUrl, data, apiType = "openai", connection }) {
+      const now = new Date().toISOString();
+      const nodeId = uuid();
+      const connId = connection?.id || uuid();
+      db.exec("BEGIN");
+      try {
+        db.prepare(`INSERT INTO provider_nodes (id, type, name, prefix, api_type, base_url, data, enabled, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`)
+          .run(nodeId, "openai-compatible", name, prefix, apiType, baseUrl, JSON.stringify(data || null), now, now);
+        db.prepare(`INSERT INTO connections (id, node_id, name, credentials, status, priority, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(connId, nodeId, connection.name, JSON.stringify(connection.credentials),
+               connection.status || "active", connection.priority ?? 100, now, now);
+        db.exec("COMMIT");
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
+      }
+      invalidateNodes();
+      return nodes.get(nodeId);
+    },
+
+    /** Append one OAuth connection to an existing node, atomically. */
+    addConnection({ nodeId, name, credentials, priority = 100 }) {
+      const now = new Date().toISOString();
+      const connId = uuid();
+      db.exec("BEGIN");
+      try {
+        db.prepare(`INSERT INTO connections (id, node_id, name, credentials, status, priority, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 'active', ?, ?, ?)`)
+          .run(connId, nodeId, name, JSON.stringify(credentials), priority, now, now);
+        db.exec("COMMIT");
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
+      }
+      connections.invalidateCache();
+      return connections.get(connId);
+    },
+
+    /**
+     * Compare-and-swap a connection's OAuth credentials.
+     *
+     * Applies `credentials` only when the row still carries `expectedRevision`
+     * (and, when given, `expectedRefreshToken`). A concurrent refresh or reconnect
+     * that already bumped the revision makes this a no-op returning `null`, so a
+     * stale refresh response can never overwrite newer credentials. Runs in one
+     * transaction so the read and the write cannot interleave.
+     *
+     * Returns the updated connection, or null when the CAS lost.
+     */
+    casCredentials(id, { expectedRevision, expectedRefreshToken = undefined, credentials, status = undefined, lastError = undefined }) {
+      db.exec("BEGIN");
+      try {
+        const row = db.prepare(`SELECT * FROM connections WHERE id = ?`).get(id);
+        if (!row) { db.exec("ROLLBACK"); return null; }
+        const current = safeJson(row.credentials) || {};
+        const currentRevision = Number.isFinite(current.oauthRevision) ? current.oauthRevision : 0;
+        if (expectedRevision !== undefined && currentRevision !== expectedRevision) {
+          db.exec("ROLLBACK");
+          return null;
+        }
+        if (expectedRefreshToken !== undefined && (current.refreshToken ?? null) !== expectedRefreshToken) {
+          db.exec("ROLLBACK");
+          return null;
+        }
+        const merged = { ...current, ...credentials };
+        const nextStatus = status ?? row.status;
+        const nextError = lastError === undefined ? row.last_error : lastError;
+        db.prepare(`UPDATE connections SET credentials=?, status=?, last_error=?, updated_at=? WHERE id=?`)
+          .run(JSON.stringify(merged), nextStatus, nextError, new Date().toISOString(), id);
+        db.exec("COMMIT");
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
+      }
+      connections.invalidateCache();
+      return connections.get(id);
+    },
+  };
+
   return {
-    settings, nodes, connections, apiKeys, combos, aliases, proxyPools, proxyPoolEntries, breakers, usage, requestDetails, nodeModels, stats,
+    settings, nodes, connections, apiKeys, combos, aliases, proxyPools, proxyPoolEntries, breakers, usage, requestDetails, nodeModels, stats, oauth,
     close() {
       persistBreakers();
     },

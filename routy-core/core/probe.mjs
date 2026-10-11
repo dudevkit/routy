@@ -18,6 +18,9 @@ import { getProxyAgent, primaryProxyUrl } from "./proxy.mjs";
 import { authHeadersFor, authStyleFor, mediaConfigOf, mediaUrlFor } from "./media.mjs";
 import { headersFor } from "./mediaMap.mjs";
 import { opencodeTarget, transformOpencodeBody } from "./executors/opencode.mjs";
+import { transformCodebuddyBody, codebuddyChatHeaders } from "./executors/codebuddyIntl.mjs";
+import { CODEBUDDY_INTL } from "./oauth/codebuddyIntl.mjs";
+import { isOAuthConnection } from "./oauth/credentials.mjs";
 import { qualifyModel } from "./routing.mjs";
 
 /**
@@ -392,6 +395,99 @@ export async function probeModel(node, model, connection = null, { timeoutMs, lo
   } finally {
     clearTimeout(timer);
     inFlight.delete(probeId);
+  }
+}
+
+/**
+ * Probe a CodeBuddy Intl OAuth account: one real (tiny) chat request with the same
+ * transform and headers the executor sends, using the account's access token.
+ *
+ * This is the ONE probe that may spend provider quota, so callers must treat it as an
+ * explicit user action (the route enforces a same-origin guard). It records only the
+ * per-connection test result — never usage, budget, breakers, or key health.
+ */
+export async function probeCodeBuddyOAuth(repos, node, connection, log = null, { timeoutMs = MODEL_PROBE_TIMEOUT_MS, proxy = null } = {}) {
+  const t0 = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const fail = (error) => ({ ok: false, ttftMs: null, latencyMs: Date.now() - t0, error });
+  try {
+    // Resolve/refresh a live token first (may be within the lead window).
+    let live = connection;
+    if (isOAuthConnection(connection)) {
+      const { resolveOAuthCredentials } = await import("./oauth/credentials.mjs");
+      const resolved = await resolveOAuthCredentials(repos, node, connection, { log });
+      if (!resolved.ok) return fail(resolved.error?.message || "OAuth credential unavailable");
+      live = resolved.connection;
+    }
+    const model = node?.data?.probeModel || "glm-5.2";
+    const body = transformCodebuddyBody(model, {
+      model,
+      stream: true,
+      max_tokens: PROBE_MAX_TOKENS,
+      messages: [{ role: "user", content: "ping" }],
+    });
+    const payload = JSON.stringify(body);
+    const token = live?.credentials?.accessToken;
+    const res = await undiciFetch(CODEBUDDY_INTL.chatUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(payload)),
+        ...codebuddyChatHeaders(),
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: payload,
+      signal: controller.signal,
+      dispatcher: getProxyAgent(primaryProxyUrl(proxy)) || getDispatcher(node),
+    });
+    if (!res.ok) {
+      // Never surface the raw body — the provider may echo token-shaped text.
+      return fail(`HTTP ${res.status}`);
+    }
+    // Read the first SSE token frame (or a clean finish).
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let tokenField = null;
+    let sawFrame = false;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buffer.indexOf("\n\n")) !== -1) {
+          const frame = buffer.slice(0, idx).trim();
+          buffer = buffer.slice(idx + 2);
+          const dataLine = frame.split("\n").find((l) => l.startsWith("data:"));
+          const data = dataLine ? dataLine.slice(5).trim() : "";
+          if (!data || data === "[DONE]") continue;
+          sawFrame = true;
+          try {
+            const obj = JSON.parse(data);
+            if (obj?.error) return fail(`provider error: HTTP ${res.status}`);
+            const choice = obj?.choices?.[0];
+            const field = firstTokenIn(choice?.delta) ?? firstTokenIn(choice?.message);
+            if (field) { tokenField = field; break; }
+          } catch { /* non-JSON frame */ }
+        }
+        if (tokenField) break;
+      }
+    } finally {
+      try { await reader.cancel(); } catch { /* already gone */ }
+    }
+    const ttftMs = Date.now() - t0;
+    if (tokenField || sawFrame) {
+      log?.info?.("PROBE", `← ok ${node?.prefix ?? "?"} (OAuth)`, { ttftMs, via: tokenField || "frame" });
+      return { ok: true, ttftMs, latencyMs: ttftMs, error: null };
+    }
+    return fail(`stream ended with no token after ${ttftMs}ms`);
+  } catch (err) {
+    if (controller.signal.aborted) return fail(`no token within ${timeoutMs}ms`);
+    return fail(shapeError(err));
+  } finally {
+    clearTimeout(timer);
   }
 }
 

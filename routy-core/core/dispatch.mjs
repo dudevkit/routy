@@ -34,6 +34,10 @@ export function pickConnections(repos, node) {
   const all = repos.connections.list(node.id);
   const usable = all
     .filter((c) => c.status === "active")
+    // An OAuth row whose account needs reconnecting is not a candidate, but that is the
+    // OAuth lifecycle — not the ordinary status or the breaker. Excluding it here keeps
+    // the two lifecycles independent (see core/oauth/credentials.mjs).
+    .filter((c) => c.credentials?.authState !== "reauth-required")
     .filter((c) => isConnectionAvailable(connectionState(repos, c.id)));
   if (usable.length === 0) {
     // A keyless preset (registry category "free" — data.noAuth) has no connections BY DESIGN:

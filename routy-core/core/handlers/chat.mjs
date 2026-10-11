@@ -18,6 +18,8 @@ import { costOf, isMetered } from "../pricing.mjs";
 import { addSpend, budgetState } from "../budget.mjs";
 import { DefaultExecutor } from "../executors/default.mjs";
 import { OpenCodeExecutor, opencodeSpeaksResponses } from "../executors/opencode.mjs";
+import { CodeBuddyIntlExecutor, isCodeBuddyIntlOAuth } from "../executors/codebuddyIntl.mjs";
+import { resolveOAuthCredentials, refreshAfterAuthRejection, isOAuthConnection } from "../oauth/credentials.mjs";
 import { formatSse } from "../sse/parser.mjs";
 import { pumpSse, UsageTracker, LogBuffer } from "../sse/stream.mjs";
 import { parseSSEToOpenAIResponse } from "../sse/sseToJson.mjs";
@@ -54,6 +56,16 @@ function stripContinuityFields(body) {
  */
 function providerKeyFor(node) {
   return String(node?.data?.provider || node?.prefix || "").toLowerCase();
+}
+
+/**
+ * A label for a connection in logs and request details. An OAuth row has no API key,
+ * so it reads as `name (OAuth)` rather than `name (undefined)` — and the mask never
+ * touches a token.
+ */
+function connectionLabel(connection) {
+  if (connection?.credentials?.authType === "oauth") return `${connection.name} (OAuth)`;
+  return `${connection.name} (${maskKey(connection?.credentials?.apiKey)})`;
 }
 
 function targetFormatForNode(node, model) {
@@ -214,7 +226,12 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         // node side-lined (cooling or disabled) with relief on its way.
         const all = repos.connections.list(r.node.id);
         const recovery = earliestRecovery(repos, all);
-        if (all.length === 0) {
+        const oauthNeedsReauth = all.length > 0 && all.every((c) => c.credentials?.authType === "oauth" && c.credentials?.authState === "reauth-required");
+        if (oauthNeedsReauth) {
+          // An OAuth-only node whose every account needs reconnecting is an actionable
+          // state, not "keys cooling down" — the operator reconnects, they do not wait.
+          lastError = { status: 401, errorCode: "reauth_required", message: `every account of ${r.node.prefix} needs reconnecting` };
+        } else if (all.length === 0) {
           lastError = { status: 503, errorCode: "no_credentials", message: `no active connection for node ${r.node.prefix}` };
         } else {
           const usable = all.filter((c) => c.status === "active").length;
@@ -232,6 +249,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
 
       let nodeDied = false; // a 5xx/timeout: stop rotating this node's keys, advance node
       let lastKeyError = null;
+      let oauthReplayUsed = false; // one forced refresh+replay per node attempt for OAuth rows
       const cooledHere = []; // cooldowns applied during this node's attempt, for rollback
 
       // One-shot optional-param retry, per route (see the client-verdict branch below):
@@ -253,7 +271,19 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       // Index loop over a growable queue: a requeued param-retry is appended and will be
       // reached after the current pass's remaining keys.
       for (let qi = 0; qi < keyQueue.length; qi++) {
-        const { connection, body: retryBody } = keyQueue[qi];
+        const { connection: pickedConnection, body: retryBody } = keyQueue[qi];
+        // OAuth rows: resolve a live access token before dispatch, refreshing within the
+        // lead window. A row that needs reauth is skipped (never struck like an API key);
+        // a transient refresh failure falls through to the next account/node.
+        let connection = pickedConnection;
+        if (isOAuthConnection(connection)) {
+          const resolved = await resolveOAuthCredentials(repos, r.node, connection, { log });
+          if (!resolved.ok) {
+            lastKeyError = { status: 401, errorCode: resolved.reason === "reauth-required" ? "reauth_required" : "oauth_refresh_failed", message: resolved.error?.message || "OAuth credential unavailable" };
+            continue;
+          }
+          connection = resolved.connection;
+        }
         // Which proxy this attempt egresses through: the key's own pool when it has one,
         // else the provider's rotation. Resolved per attempt so a rotation to another
         // key can also rotate its proxy.
@@ -318,8 +348,12 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         }
 
         // One node can name its own executor: opencode's endpoint is composed per request
-        // (core/executors/opencode.mjs); every other node keeps the default wire.
-        const Executor = r.node.data?.executor === "opencode" ? OpenCodeExecutor : DefaultExecutor;
+        // (core/executors/opencode.mjs); a CodeBuddy OAuth node uses the fixed-endpoint
+        // executor (selected from the server-owned marker, never a client field); every
+        // other node keeps the default wire.
+        const Executor = isCodeBuddyIntlOAuth(r.node)
+          ? CodeBuddyIntlExecutor
+          : r.node.data?.executor === "opencode" ? OpenCodeExecutor : DefaultExecutor;
         const executor = new Executor(r.node, connection, { proxy });
         // Per-node stall budget; 0 disables the watchdog.
         const idleTimeoutMs = r.node.data?.streamIdleTimeoutMs ?? globalIdleTimeoutMs;
@@ -364,6 +398,26 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           // node breaker, and every later request — for every model on it — came back 503
           // all_unavailable. Advancing without recording also keeps the useful case: providers
           // disagree about which params they accept, so the next route may serve it.
+          if (isOAuthConnection(connection) && (result.status === 401 || result.status === 403)) {
+            // OAuth auth failure is the OAuth lifecycle's business — it must never run the
+            // API-key strike/auto-disable or node-breaker paths. Try ONE forced refresh and
+            // replay this same account; if that fails, mark reauth-required and move on.
+            if (!oauthReplayUsed) {
+              oauthReplayUsed = true;
+              const refreshed = await refreshAfterAuthRejection(repos, r.node, connection, { log });
+              if (refreshed) {
+                log.warn("CHAT", `node ${r.node.prefix} rejected the OAuth token (${result.status}) — refreshed and replaying once`, {
+                  connectionId: connection.id,
+                });
+                keyQueue.push({ connection: refreshed, body: retryBody });
+                continue;
+              }
+            }
+            lastError = { status: 401, errorCode: "reauth_required", message: `account for ${r.node.prefix} needs reconnecting` };
+            log.warn("CHAT", `node ${r.node.prefix} OAuth token rejected (${result.status}) — marking account for reconnect`, { connectionId: connection.id });
+            continue;
+          }
+
           if (classifyConnectionError(result, { connection, recent429: null }).verdict === "client") {
             lastError = result;
             log.warn("CHAT", `node ${r.node.prefix} rejected the request (${result.status}) — trying the next route, no health recorded`, {
@@ -433,7 +487,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           lastError = result;
           // One label for every key-scoped line: name to read, mask to disambiguate
           // keys that share a name (auto-named ones do until they are renamed).
-          const keyLabel = `${connection.name} (${maskKey(connection.credentials?.apiKey)})`;
+          const keyLabel = connectionLabel(connection);
           if (verdict.verdict === "cooldown") {
             cooledHere.push(connection.id);
             log.warn("CHAT", `node ${r.node.prefix} key "${keyLabel}" cooling down ${Math.round(verdict.cooldownMs / 1000)}s: ${verdict.reason}`);
@@ -677,7 +731,7 @@ function recordUsage(repos, log, route, connection, clientModel, { status, usage
     model: clientModel,
     nodeId: route.node.id,
     connectionId: connection.id ?? null,
-    key: `${connection.name} (${maskKey(connection.credentials?.apiKey)})`,
+    key: connectionLabel(connection),
     // How a combo request was served: which member, where it sat in the strategy's order, and
     // what the strategy skipped. Without these the line cannot tell a correct `fallback`
     // (member 1 by design) from a broken `round-robin` (member 1 every time).

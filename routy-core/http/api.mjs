@@ -8,7 +8,7 @@ import { catalogFor, catalogMeta, presetFor } from "../core/mediaCatalog.mjs";
 import { PROVIDERS } from "../core/providerCatalog.mjs";
 import { isKeyless } from "../core/keyless.mjs";
 import { budgetSpent } from "../core/budget.mjs";
-import { probeNode, probeKey, probeModel, probeSystemone, mapLimit } from "../core/probe.mjs";
+import { probeNode, probeKey, probeModel, probeSystemone, probeCodeBuddyOAuth, mapLimit } from "../core/probe.mjs";
 import { clearLogs, log, recentLogs, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
 import {
   DEFAULT_PASSWORD,
@@ -28,6 +28,10 @@ import { connectionState, connectionsForNode, resetConnection } from "../core/ke
 import { DEFAULT_PROXY_TEST_URL, forgetExitHealth, poolExits, proxyIdentity, resetPoolHealth, resolveNodeProxy, testProxyUrl } from "../core/proxy.mjs";
 import { CONNECTION_COOLDOWN_MS, PROXY_COOLDOWN_MS } from "../core/limits.mjs";
 import { allStatuses, connectTool, disconnectTool, findAdapter, toolStatus } from "../core/cli-tools.mjs";
+import { CODEBUDDY_INTL, startFlow, pollFlow, credentialFromTokens } from "../core/oauth/codebuddyIntl.mjs";
+import { createFlowManager } from "../core/oauth/flowManager.mjs";
+import { codebuddyIntlMarker, isCodeBuddyIntlOAuth } from "../core/executors/codebuddyIntl.mjs";
+import { isOAuthConnection } from "../core/oauth/credentials.mjs";
 
 const uuid = () => crypto.randomUUID();
 
@@ -203,14 +207,25 @@ function nodeView(repos, node, now = Date.now()) {
     })(),
     keyMasked: maskKey(primary?.credentials?.apiKey),
     lastError: breaker?.lastError || undefined,
+    // Server-owned OAuth marker (present only for a CodeBuddy Intl OAuth node). The UI
+    // uses it to render the OAuth management surface; it is never client-settable.
+    authProvider: node.data?.authProvider ?? null,
   };
 }
 
 // ── connection view (the NodeConnection shape) — keys stay masked ───────────
 function connectionView(c, health = null) {
+  const isOAuth = c.credentials?.authType === "oauth";
   return {
     id: c.id, name: c.name, status: c.status, priority: c.priority,
-    keyMasked: maskKey(c.credentials?.apiKey), lastError: c.lastError,
+    // OAuth rows have no API key: report a generic label, never a token-derived mask.
+    keyMasked: isOAuth ? "OAuth" : maskKey(c.credentials?.apiKey), lastError: c.lastError,
+    // non-secret OAuth lifecycle (absent on API-key rows)
+    ...(isOAuth ? {
+      authType: "oauth",
+      accountLabel: c.name,
+      authState: c.credentials?.authState || (c.credentials?.accessToken ? "active" : "reauth-required"),
+    } : {}),
     // per-key proxy override; null means "use the provider's proxy setting"
     proxyPoolId: c.credentials?.proxyPoolId ?? null,
     // per-key probe result (P6) — diagnostics, never derived from traffic
@@ -338,6 +353,12 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       if (!checked.ok) return json(res, 400, { error: { message: "bad_request", detail: checked.detail } });
       input.data = { ...input.data, media: checked.value };
     }
+    // The OAuth provider marker is server-owned — only the OAuth flow may set it. A generic
+    // create that carried it would let a client mint an OAuth-looking node the executor
+    // would then trust.
+    if (input.data?.authProvider !== undefined) {
+      return json(res, 400, { error: { message: "bad_request", detail: "authProvider is managed by the OAuth flow and cannot be set here" } });
+    }
     if (repos.nodes.byPrefix(input.prefix.trim())) {
       return json(res, 409, { error: { message: "conflict", detail: `prefix "${input.prefix.trim()}" is already in use` } });
     }
@@ -354,6 +375,24 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("DELETE", /^\/api\/nodes\/(?<id>[^/]+)$/, (req, res, p) => noContent(res, repos.nodes.delete(p.id)));
   route("PUT", /^\/api\/nodes\/(?<id>[^/]+)$/, async (req, res, p) => {
     const input = JSON.parse((await readBody(req)).toString("utf8"));
+    const existing = repos.nodes.get(p.id);
+    if (!existing) return json(res, 404, { error: { message: "not_found" } });
+    // A CodeBuddy OAuth node is server-owned: its marker, fixed endpoint and apiType are
+    // immutable here, and a generic API-key write is refused (mixed auth is out of scope).
+    if (isCodeBuddyIntlOAuth(existing)) {
+      if (typeof input.apiKey === "string" && input.apiKey.length > 0) {
+        return json(res, 409, { error: { message: "conflict", detail: "this is an OAuth node — API keys cannot be added to it" } });
+      }
+      if (input.apiType !== undefined && input.apiType !== existing.apiType) {
+        return json(res, 409, { error: { message: "conflict", detail: "this node's apiType is managed by its OAuth provider" } });
+      }
+      if (input.baseUrl !== undefined && input.baseUrl !== existing.baseUrl) {
+        return json(res, 409, { error: { message: "conflict", detail: "this node's endpoint is fixed by its OAuth provider" } });
+      }
+      if (input.data?.authProvider !== undefined && input.data.authProvider !== existing.data?.authProvider) {
+        return json(res, 409, { error: { message: "conflict", detail: "the OAuth provider marker cannot be changed" } });
+      }
+    }
     const patch = {};
     for (const f of ["name", "baseUrl", "prefix", "apiType", "enabled"]) {
       if (input[f] !== undefined) patch[f] = input[f];
@@ -607,6 +646,11 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
    * provider's own website) and calls it a verdict.
    */
   const probeModelRow = (node, row, conn, log, proxy = null) => {
+    if (isCodeBuddyIntlOAuth(node) && (!row.kind || row.kind === CHAT_KIND)) {
+      // A CodeBuddy OAuth node probes with the real executor request and the account's
+      // bearer token — the generic /models or chat-with-apiKey probe cannot validate it.
+      return probeCodeBuddyOAuth(repos, node, conn, log, { proxy });
+    }
     if (row.kind === "systemone") return probeSystemone(node, row.model, conn, { log, proxy });
     if (!row.kind || row.kind === CHAT_KIND) return probeModel(node, row.model, conn, { log, proxy });
     return Promise.resolve({
@@ -619,6 +663,9 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/models\/(?<modelId>[^/]+)\/test$/, async (req, res, p, url) => {
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
+    // An OAuth node's probe sends a real chat request that may consume provider quota, so
+    // it must be an explicit same-origin action — the generic probe path is not guarded.
+    if (isCodeBuddyIntlOAuth(node) && !sameOriginAction(req, res, cfg)) return;
     const row = repos.nodeModels.get(p.modelId);
     if (!row || row.nodeId !== node.id) return json(res, 404, { error: { message: "not_found" } });
     const conns = repos.connections.list(node.id);
@@ -637,15 +684,29 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (!conn) return json(res, 404, { error: { message: "not_found" } });
     const node = repos.nodes.get(conn.nodeId);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
+    // OAuth account test: explicitly user-initiated, same-origin guarded, and clearly a
+    // real chat probe that may consume quota. It never touches usage/budget/breakers.
+    if (isOAuthConnection(conn)) {
+      if (!sameOriginAction(req, res, cfg)) return;
+      if (!isCodeBuddyIntlOAuth(node)) return json(res, 400, { error: { message: "bad_request", detail: "unsupported OAuth provider" } });
+      const result = await probeCodeBuddyOAuth(repos, node, conn, log);
+      repos.connections.recordTest(conn.id, { ok: result.ok, latencyMs: result.latencyMs, error: result.ok ? null : result.error });
+      return json(res, 200, { connectionId: conn.id, ok: result.ok, latencyMs: result.latencyMs, modelCount: 0, error: result.error ?? null, kind: "chat", quotaNote: "this probe sent one real chat request and may have consumed provider quota" });
+    }
     const result = await probeKey(node, conn, { log });
     repos.connections.recordTest(conn.id, { ok: result.ok, latencyMs: result.latencyMs, error: result.ok ? null : result.error });
     json(res, 200, { connectionId: conn.id, ok: result.ok, latencyMs: result.latencyMs, modelCount: result.modelCount ?? 0, error: result.error ?? null });
   });
 
   // Probe every active key of a node with bounded concurrency (one round trip).
+  // Bulk probing is disabled for OAuth nodes: a real chat probe per account would spend
+  // quota without an explicit per-account confirmation.
   route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/keys\/test$/, async (req, res, p) => {
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
+    if (isCodeBuddyIntlOAuth(node)) {
+      return json(res, 400, { error: { message: "bad_request", detail: "bulk probing is disabled for OAuth nodes — test each account individually" } });
+    }
     const active = repos.connections.list(node.id).filter((c) => c.status === "active");
     const results = await mapLimit(active, 4, async (conn) => {
       const r = await probeKey(node, conn, { log, proxy: resolveNodeProxy(repos, node, conn, { includeCooling: true, recordHealth: false }) });
@@ -1302,6 +1363,11 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   });
   route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/connections$/, async (req, res, p) => {
     const input = JSON.parse((await readBody(req)).toString("utf8"));
+    const node = repos.nodes.get(p.id);
+    if (!node) return json(res, 404, { error: { message: "not_found" } });
+    if (isCodeBuddyIntlOAuth(node)) {
+      return json(res, 409, { error: { message: "conflict", detail: "this is an OAuth node — connect accounts through the OAuth flow, not with an API key" } });
+    }
     // Auto-name server-side rather than "key": two unnamed singles must never render
     // as two identical rows in the UI and two identical lines in the failure logs.
     // Numbering continues past the highest existing auto-number, so a deleted key's
@@ -1330,6 +1396,9 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (entries.length === 0) return json(res, 400, { error: { message: "bad_request", detail: "entries array required (non-empty keys)" } });
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
+    if (isCodeBuddyIntlOAuth(node)) {
+      return json(res, 409, { error: { message: "conflict", detail: "this is an OAuth node — connect accounts through the OAuth flow, not with API keys" } });
+    }
 
     const created = entries.map((entry, i) => {
       const conn = repos.connections.create({
@@ -1364,6 +1433,145 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     json(res, 200, connectionViewWith(repos, conn));
   });
   route("DELETE", /^\/api\/connections\/(?<id>[^/]+)$/, (req, res, p) => noContent(res, repos.connections.delete(p.id)));
+
+  // ── OAuth (CodeBuddy Intl) ────────────────────────────────────────────────
+  // One provider, deliberately: no generic OAuth framework. Every route enforces the
+  // same-origin action guard, and the flow manager owns all phase arbitration.
+  const flows = createFlowManager();
+
+  /** Supported OAuth providers, for the dashboard's dedicated OAuth section. */
+  route("GET", /^\/api\/providers\/oauth$/, (req, res) => {
+    json(res, 200, {
+      providers: [{
+        id: "codebuddy-intl",
+        name: "CodeBuddy Intl",
+        website: "https://www.codebuddy.ai",
+        marker: codebuddyIntlMarker(),
+        models: ["glm-5.2", "glm-5.1", "glm-5.0", "glm-5v-turbo", "glm-4.7", "minimax-m3", "minimax-m2.7", "kimi-k2.7", "kimi-k2.6", "kimi-k2.5", "deepseek-v4-pro", "deepseek-v4-flash"],
+      }],
+    });
+  });
+
+  function oauthError(res, err) {
+    const code = err?.code || "oauth_error";
+    const status = code === "flow_not_found" ? 404
+      : code === "too_many_flows" ? 429
+      : code === "poll_too_fast" ? 429
+      : 502;
+    return json(res, status, { error: { message: code, detail: err?.message || "OAuth flow failed" } });
+  }
+
+  /**
+   * Build the synchronous commit for a flow. It runs inside the flow manager's
+   * committing phase (no await) and returns the safe node/connection view.
+   */
+  function commitFor(intent) {
+    return (tokens) => {
+      const credentials = credentialFromTokens(tokens);
+      if (intent.kind === "create") {
+        if (repos.nodes.byPrefix(intent.prefix)) {
+          const err = new Error(`prefix "${intent.prefix}" is already in use`);
+          err.code = "conflict";
+          throw err;
+        }
+        const node = repos.oauth.createNodeWithConnection({
+          name: intent.name,
+          prefix: intent.prefix,
+          baseUrl: CODEBUDDY_INTL.chatUrl,
+          data: { authProvider: codebuddyIntlMarker(), chatUrl: CODEBUDDY_INTL.chatUrl, provider: "codebuddy-intl" },
+          connection: { name: intent.accountLabel || `${intent.name} account`, credentials },
+        });
+        return { node: nodeView(repos, node), connectionId: repos.connections.list(node.id)[0]?.id ?? null };
+      }
+      if (intent.kind === "add") {
+        const node = repos.nodes.get(intent.nodeId);
+        if (!node || !isCodeBuddyIntlOAuth(node)) {
+          const err = new Error("target node is not a CodeBuddy Intl OAuth node");
+          err.code = "bad_target";
+          throw err;
+        }
+        const conn = repos.oauth.addConnection({ nodeId: node.id, name: intent.accountLabel || `${node.name} account`, credentials });
+        return { node: nodeView(repos, node), connectionId: conn.id };
+      }
+      // reconnect
+      const existing = repos.connections.get(intent.connectionId);
+      if (!existing) { const err = new Error("connection not found"); err.code = "bad_target"; throw err; }
+      const node = repos.nodes.get(existing.nodeId);
+      if (!node || !isCodeBuddyIntlOAuth(node)) { const err = new Error("target is not a CodeBuddy Intl OAuth connection"); err.code = "bad_target"; throw err; }
+      const updated = repos.connections.update(existing.id, { credentials, status: "active" });
+      return { node: nodeView(repos, node), connectionId: updated.id };
+    };
+  }
+
+  route("POST", /^\/api\/providers\/codebuddy-intl\/oauth\/start$/, async (req, res) => {
+    if (!sameOriginAction(req, res, cfg)) return;
+    let input;
+    try { input = JSON.parse((await readBody(req)).toString("utf8") || "{}"); } catch { return json(res, 400, { error: { message: "bad_request", detail: "invalid JSON body" } }); }
+    const kind = input?.intent;
+    if (!["create", "add", "reconnect"].includes(kind)) {
+      return json(res, 400, { error: { message: "bad_request", detail: "intent must be create | add | reconnect" } });
+    }
+    let intent;
+    if (kind === "create") {
+      if (!input.name || typeof input.name !== "string" || !input.prefix || typeof input.prefix !== "string") {
+        return json(res, 400, { error: { message: "bad_request", detail: "name and prefix are required" } });
+      }
+      const prefix = input.prefix.trim();
+      if (repos.nodes.byPrefix(prefix)) return json(res, 409, { error: { message: "conflict", detail: `prefix "${prefix}" is already in use` } });
+      intent = { kind, name: input.name.trim(), prefix, accountLabel: typeof input.accountLabel === "string" ? input.accountLabel.trim() : "" };
+    } else if (kind === "add") {
+      const node = repos.nodes.get(input.nodeId);
+      if (!node) return json(res, 404, { error: { message: "not_found" } });
+      if (!isCodeBuddyIntlOAuth(node)) return json(res, 400, { error: { message: "bad_request", detail: "not a CodeBuddy Intl OAuth node" } });
+      intent = { kind, nodeId: node.id, accountLabel: typeof input.accountLabel === "string" ? input.accountLabel.trim() : "" };
+    } else {
+      const conn = repos.connections.get(input.connectionId);
+      if (!conn) return json(res, 404, { error: { message: "not_found" } });
+      const node = repos.nodes.get(conn.nodeId);
+      if (!node || !isCodeBuddyIntlOAuth(node)) return json(res, 400, { error: { message: "bad_request", detail: "not a CodeBuddy Intl OAuth connection" } });
+      intent = { kind, connectionId: conn.id, nodeId: node.id, accountLabel: typeof input.accountLabel === "string" ? input.accountLabel.trim() : "" };
+    }
+
+    let started;
+    try {
+      started = await startFlow({});
+    } catch (err) {
+      return oauthError(res, err);
+    }
+    let created;
+    try {
+      created = flows.create({
+        intent,
+        verificationUrl: started.verificationUrl,
+        upstreamState: started.upstreamState,
+        expiresAt: started.expiresAt,
+        pollIntervalMs: CODEBUDDY_INTL.pollIntervalMs,
+        commit: commitFor(intent),
+      });
+    } catch (err) {
+      return oauthError(res, err);
+    }
+    json(res, 200, created);
+  });
+
+  route("POST", /^\/api\/providers\/codebuddy-intl\/oauth\/flows\/(?<flowId>[^/]+)\/poll$/, async (req, res, p) => {
+    if (!sameOriginAction(req, res, cfg)) return;
+    try {
+      const result = await flows.poll(p.flowId, (state) => pollFlow(state));
+      json(res, 200, result);
+    } catch (err) {
+      return oauthError(res, err);
+    }
+  });
+
+  route("DELETE", /^\/api\/providers\/codebuddy-intl\/oauth\/flows\/(?<flowId>[^/]+)$/, (req, res, p) => {
+    if (!sameOriginAction(req, res, cfg)) return;
+    try {
+      json(res, 200, flows.cancel(p.flowId));
+    } catch (err) {
+      return oauthError(res, err);
+    }
+  });
 
   return R;
 }
