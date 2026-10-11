@@ -29,9 +29,17 @@ export const CODEBUDDY_INTL = Object.freeze({
   tokenUrl: "https://www.codebuddy.ai/v2/plugin/auth/token",
   refreshUrl: "https://www.codebuddy.ai/v2/plugin/auth/token/refresh",
   chatUrl: "https://www.codebuddy.ai/v2/chat/completions",
+  // The authoritative model list. CodeBuddy/WorkBuddy have NO OpenAI-style
+  // `GET /v1/models` — that path 404s, which is why a generic import fails. The client
+  // builds its dropdown from the merged product config, and the remote half is here.
+  configUrl: "https://www.codebuddy.ai/v3/config",
   platform: "ide",
   oauthUserAgent: "IDE/2.63.2 CodeBuddy/2.63.2",
   chatUserAgent: "IDE/2.108.1 CodeBuddy/2.108.1",
+  // `/v3/config` gates on a User-Agent naming the desktop client: without one it answers
+  // 400, and a non-WorkBuddy UA (curl, node, the CodeBuddy IDE UA) answers 200 with an
+  // EMPTY model list. Any "workbuddy" UA works, version-independent (verified 2026-10-11).
+  configUserAgent: "WorkBuddy/5.5.2",
   pollIntervalMs: 5000,
   // Reference default for an omitted expiresIn; explicit malformed/nonpositive values
   // are rejected instead of silently defaulted (the reference's broad falsy fallback).
@@ -115,6 +123,42 @@ async function getJson(url, { headers, signal }) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Fetch the authoritative model list for the account.
+ *
+ * This is the ONE model source for CodeBuddy/WorkBuddy. `GET /v1/models` does not exist
+ * on this gateway (404), and `/v2/chat/completions/models` is not a thing either — the
+ * desktop client builds its dropdown from the product config, whose remote half is
+ * `GET /v3/config`. That endpoint requires a User-Agent naming the desktop client; the
+ * account's bearer token selects the models entitled to the account.
+ *
+ * Returns an array of model ids (chat + image + video), or throws OAuthError.
+ */
+export async function fetchModels(accessToken, { signal } = {}) {
+  if (!accessToken) throw new OAuthError("no_credentials", "this account has no access token");
+  let res;
+  try {
+    res = await getJson(CODEBUDDY_INTL.configUrl, {
+      signal,
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "User-Agent": CODEBUDDY_INTL.configUserAgent,
+      },
+    });
+  } catch {
+    throw new OAuthError("upstream_unreachable", "could not reach the provider for its model list");
+  }
+  if (!res.ok) throw new OAuthError("upstream_error", `the provider rejected the model-list request (HTTP ${res.status})`);
+  const data = res.data;
+  if (!data || data.code !== 0 || !Array.isArray(data.data?.models)) {
+    throw new OAuthError("upstream_bad_response", "the provider returned no model list");
+  }
+  // Ids only, de-duplicated, non-empty — the caller writes one row per id.
+  const ids = [...new Set(data.data.models.map((m) => (typeof m === "string" ? m : m?.id)).filter((id) => typeof id === "string" && id.length > 0))];
+  return ids;
 }
 
 /**

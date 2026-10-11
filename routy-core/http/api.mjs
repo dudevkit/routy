@@ -28,10 +28,10 @@ import { connectionState, connectionsForNode, resetConnection } from "../core/ke
 import { DEFAULT_PROXY_TEST_URL, forgetExitHealth, poolExits, proxyIdentity, resetPoolHealth, resolveNodeProxy, testProxyUrl } from "../core/proxy.mjs";
 import { CONNECTION_COOLDOWN_MS, PROXY_COOLDOWN_MS } from "../core/limits.mjs";
 import { allStatuses, connectTool, disconnectTool, findAdapter, toolStatus } from "../core/cli-tools.mjs";
-import { CODEBUDDY_INTL, startFlow, pollFlow, credentialFromTokens } from "../core/oauth/codebuddyIntl.mjs";
+import { CODEBUDDY_INTL, startFlow, pollFlow, credentialFromTokens, fetchModels } from "../core/oauth/codebuddyIntl.mjs";
 import { createFlowManager } from "../core/oauth/flowManager.mjs";
 import { codebuddyIntlMarker, isCodeBuddyIntlOAuth } from "../core/executors/codebuddyIntl.mjs";
-import { isOAuthConnection } from "../core/oauth/credentials.mjs";
+import { isOAuthConnection, resolveOAuthCredentials } from "../core/oauth/credentials.mjs";
 
 const uuid = () => crypto.randomUUID();
 
@@ -588,6 +588,25 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     // A keyless preset has no /models endpoint to import from — its model list came from the
     // catalogue — so the refusal must say that instead of pointing at a key that cannot exist.
     if (!conn) return json(res, 400, { error: { message: "no_credentials", detail: isKeyless(node) ? "this provider is keyless — its model list came from the catalogue" : "add an API key first" } });
+
+    // CodeBuddy/WorkBuddy have no `GET /v1/models` (that path 404s — the generic import's
+    // failure). Their model list comes from the product config `/v3/config`, read with the
+    // account's bearer token. Refresh within the lead window first so an expired token is
+    // not what makes the import fail.
+    if (isCodeBuddyIntlOAuth(node)) {
+      const resolved = await resolveOAuthCredentials(repos, node, conn, { log });
+      if (!resolved.ok) {
+        return json(res, 400, { error: { message: resolved.reason === "reauth-required" ? "reauth_required" : "upstream_error", detail: resolved.error?.message || "OAuth credential unavailable" } });
+      }
+      let ids;
+      try {
+        ids = await fetchModels(resolved.connection.credentials?.accessToken);
+      } catch (err) {
+        return json(res, 502, { error: { message: err?.code || "upstream_error", detail: err?.message || "could not fetch the model list" } });
+      }
+      const summary = repos.nodeModels.import(node.id, ids);
+      return json(res, 200, { ...summary, listed: ids.length, models: repos.nodeModels.list(node.id) });
+    }
 
     const result = await probeKey(node, conn, { log, proxy: resolveNodeProxy(repos, node, conn, { includeCooling: true, recordHealth: false }) });
     if (!result.ok) return json(res, 502, { error: { message: "upstream_error", detail: result.error, latencyMs: result.latencyMs } });

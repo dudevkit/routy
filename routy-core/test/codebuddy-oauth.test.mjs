@@ -11,6 +11,7 @@ import {
   startFlow,
   pollFlow,
   refreshTokens,
+  fetchModels,
   OAuthError,
   CODEBUDDY_INTL,
 } from "../core/oauth/codebuddyIntl.mjs";
@@ -106,6 +107,28 @@ describe("refreshTokens", () => {
   it("does not classify an ambiguous provider code as definitive (transient, no false revocation)", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, { code: 40003, msg: "unknown" })));
     await expect(refreshTokens("rt")).rejects.toMatchObject({ transient: true, code: "refresh_rejected" });
+  });
+});
+
+describe("fetchModels", () => {
+  it("returns de-duplicated ids from /v3/config and sends a WorkBuddy User-Agent", async () => {
+    const seen = [];
+    vi.stubGlobal("fetch", vi.fn(async (url, opts = {}) => {
+      seen.push({ url: String(url), ua: opts.headers?.["User-Agent"] });
+      return jsonResponse(200, { code: 0, data: { models: [{ id: "glm-5.2" }, { id: "glm-5.2" }, { id: "kimi-k3" }, { name: "no-id" }] } });
+    }));
+    const ids = await fetchModels("at");
+    expect(ids).toEqual(["glm-5.2", "kimi-k3"]);
+    expect(seen[0].url).toBe(CODEBUDDY_INTL.configUrl);
+    expect(String(seen[0].ua).toLowerCase()).toContain("workbuddy");
+  });
+
+  it("refuses without a token and sanitizes an upstream failure", async () => {
+    await expect(fetchModels(null)).rejects.toMatchObject({ code: "no_credentials" });
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(400, { msg: "ua required" })));
+    await expect(fetchModels("at")).rejects.toMatchObject({ code: "upstream_error" });
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, { code: 0, data: {} })));
+    await expect(fetchModels("at")).rejects.toMatchObject({ code: "upstream_bad_response" });
   });
 });
 
