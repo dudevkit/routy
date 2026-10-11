@@ -26,7 +26,7 @@ beforeEach(() => {
   repos = createRepos(db);
   node = repos.nodes.create({
     name: "CB", prefix: "cb", apiType: "openai",
-    baseUrl: "https://www.codebuddy.ai/v2/chat/completions",
+    baseUrl: "https://www.workbuddy.ai/v2/chat/completions",
     data: { authProvider: "codebuddy-intl-oauth" },
   });
 });

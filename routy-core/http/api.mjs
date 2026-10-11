@@ -1463,8 +1463,8 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     json(res, 200, {
       providers: [{
         id: "codebuddy-intl",
-        name: "CodeBuddy Intl",
-        website: "https://www.codebuddy.ai",
+        name: "WorkBuddy",
+        website: "https://www.workbuddy.ai",
         marker: codebuddyIntlMarker(),
         models: ["glm-5.2", "glm-5.1", "glm-5.0", "glm-5v-turbo", "glm-4.7", "minimax-m3", "minimax-m2.7", "kimi-k2.7", "kimi-k2.6", "kimi-k2.5", "deepseek-v4-pro", "deepseek-v4-flash"],
       }],

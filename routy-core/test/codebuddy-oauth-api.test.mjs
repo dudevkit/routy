@@ -40,7 +40,7 @@ function installUpstream({ pollCodes = [] } = {}) {
   upstream = vi.fn(async (url, opts = {}) => {
     const u = String(url);
     if (u.includes("/plugin/auth/state")) {
-      return jsonRes(200, { code: 0, data: { state: "st-1", authUrl: "https://www.codebuddy.ai/login?platform=ide&state=st-1" } });
+      return jsonRes(200, { code: 0, data: { state: "st-1", authUrl: "https://www.workbuddy.ai/login?platform=ide&state=st-1" } });
     }
     if (u.includes("/plugin/auth/token/refresh")) {
       return jsonRes(200, { code: 0, data: { accessToken: "at-refreshed", refreshToken: "rt-2", expiresIn: 3600 } });
@@ -88,7 +88,7 @@ describe("oauth start", () => {
     const r = await post("/api/providers/codebuddy-intl/oauth/start", { intent: "create", name: "CB", prefix: "cb" }, ACTION);
     expect(r.status).toBe(200);
     expect(r.body.flowId).toMatch(/^[0-9a-f]{64}$/);
-    expect(r.body.verificationUrl).toContain("www.codebuddy.ai/login");
+    expect(r.body.verificationUrl).toContain("www.workbuddy.ai/login");
     // The state rides in the login URL by design; what must never appear is a SEPARATE field.
     expect(r.body.upstreamState).toBeUndefined();
     expect(r.body.state).toBeUndefined();
@@ -122,7 +122,7 @@ describe("oauth poll/commit", () => {
       const nodes = repos.nodes.list();
       expect(nodes).toHaveLength(1);
       expect(nodes[0].data.authProvider).toBe("codebuddy-intl-oauth");
-      expect(nodes[0].baseUrl).toBe("https://www.codebuddy.ai/v2/chat/completions");
+      expect(nodes[0].baseUrl).toBe("https://www.workbuddy.ai/v2/chat/completions");
       const conns = repos.connections.list(nodes[0].id);
       expect(conns).toHaveLength(1);
       expect(conns[0].credentials.authType).toBe("oauth");

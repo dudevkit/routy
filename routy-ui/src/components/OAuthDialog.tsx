@@ -121,7 +121,7 @@ export function OAuthDialog({ isOpen, onClose, intent, onConnected }: OAuthDialo
     setPhase("cancelled");
   }, [flowId, handleResult, stopPolling]);
 
-  const title = intent.kind === "create" ? "Connect CodeBuddy Intl" : intent.kind === "add" ? `Add account to ${intent.nodeName}` : `Reconnect ${intent.accountLabel}`;
+  const title = intent.kind === "create" ? "Connect WorkBuddy" : intent.kind === "add" ? `Add account to ${intent.nodeName}` : `Reconnect ${intent.accountLabel}`;
 
   return (
     <Modal
@@ -146,7 +146,7 @@ export function OAuthDialog({ isOpen, onClose, intent, onConnected }: OAuthDialo
         {phase === "form" && (
           <>
             <p className="text-text-muted">
-              A browser tab opens on <span className="font-mono">www.codebuddy.ai</span> where you sign in. Keep this
+              A browser tab opens on <span className="font-mono">www.workbuddy.ai</span> where you sign in. Keep this
               dialog open — it finishes automatically once you are back.
             </p>
             {intent.kind === "create" && (

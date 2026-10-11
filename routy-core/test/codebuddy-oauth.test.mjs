@@ -23,18 +23,22 @@ const jsonResponse = (status, body) => new Response(JSON.stringify(body), { stat
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("verification URL allowlist", () => {
-  it("accepts the exact verified host", () => {
+  it("accepts both equivalent hosts", () => {
+    expect(validateVerificationUrl("https://www.workbuddy.ai/login?platform=ide&state=abc"))
+      .toBe("https://www.workbuddy.ai/login?platform=ide&state=abc");
     expect(validateVerificationUrl("https://www.codebuddy.ai/login?platform=ide&state=abc"))
       .toBe("https://www.codebuddy.ai/login?platform=ide&state=abc");
   });
   it("rejects a suffix-confusable host", () => {
+    expect(() => validateVerificationUrl("https://evil-www.workbuddy.ai/login")).toThrow(OAuthError);
+    expect(() => validateVerificationUrl("https://www.workbuddy.ai.evil.com/login")).toThrow(OAuthError);
     expect(() => validateVerificationUrl("https://evil-www.codebuddy.ai/login")).toThrow(OAuthError);
     expect(() => validateVerificationUrl("https://www.codebuddy.ai.evil.com/login")).toThrow(OAuthError);
   });
   it("rejects non-https, credentials, and fragments", () => {
-    expect(() => validateVerificationUrl("http://www.codebuddy.ai/login")).toThrow(/non-HTTPS/);
-    expect(() => validateVerificationUrl("https://user:pw@www.codebuddy.ai/login")).toThrow(/credentials/);
-    expect(() => validateVerificationUrl("https://www.codebuddy.ai/login#x")).toThrow(/fragment/);
+    expect(() => validateVerificationUrl("http://www.workbuddy.ai/login")).toThrow(/non-HTTPS/);
+    expect(() => validateVerificationUrl("https://user:pw@www.workbuddy.ai/login")).toThrow(/credentials/);
+    expect(() => validateVerificationUrl("https://www.workbuddy.ai/login#x")).toThrow(/fragment/);
     expect(() => validateVerificationUrl("not a url")).toThrow(OAuthError);
   });
 });
@@ -64,10 +68,10 @@ describe("token normalization", () => {
 
 describe("startFlow", () => {
   it("returns a validated verification URL and never exposes the upstream state to the caller shape", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, { code: 0, data: { state: "st-1", authUrl: "https://www.codebuddy.ai/login?platform=ide&state=st-1" } })));
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, { code: 0, data: { state: "st-1", authUrl: "https://www.workbuddy.ai/login?platform=ide&state=st-1" } })));
     const r = await startFlow({});
     expect(r.upstreamState).toBe("st-1");
-    expect(r.verificationUrl).toContain("www.codebuddy.ai/login");
+    expect(r.verificationUrl).toContain("www.workbuddy.ai/login");
   });
   it("fails closed on an untrusted verification host", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(200, { code: 0, data: { state: "st", authUrl: "https://evil.example.com/login" } })));

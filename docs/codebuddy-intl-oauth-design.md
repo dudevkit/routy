@@ -1,7 +1,7 @@
 # CodeBuddy Intl OAuth multi-account design
 
 **Status:** Proposed; not implemented
-**Scope:** Add CodeBuddy Intl (`www.codebuddy.ai`) as an OAuth-backed chat provider with multiple independently managed accounts in Routy.
+**Scope:** Add WorkBuddy / CodeBuddy Intl (same service; default `www.workbuddy.ai`, alternate `www.codebuddy.ai`) as an OAuth-backed chat provider with multiple independently managed accounts in Routy.
 **Reference:** Local `9router/` checkout; paths below are relative to that checkout unless noted otherwise.
 
 ## 1. Goal and non-goals
@@ -46,13 +46,17 @@ Reference files:
 
 Observed upstream flow:
 
-1. `POST https://www.codebuddy.ai/v2/plugin/auth/state?platform=ide`, body `{}`, with CodeBuddy OAuth User-Agent `IDE/2.63.2 CodeBuddy/2.63.2`, `X-Requested-With`, `X-Domain`, `X-No-Authorization`, `X-No-User-Id`, `X-Product`, JSON content type and accept headers.
-2. Success is `{ code: 0, data: { state, authUrl } }`. `state` is the polling handle; `authUrl` is the browser verification URL. Despite the reference's `device_code` label, this is not the standard OAuth device authorization grant.
-3. Poll `GET https://www.codebuddy.ai/v2/plugin/auth/token?state=<encoded-state>` every 5 seconds with the reference no-auth/request headers plus `X-No-Enterprise-Id` and `X-No-Department-Info`. `{ code: 11217 }` means pending. `{ code: 0, data: { accessToken, refreshToken, tokenType, expiresIn } }` succeeds.
-4. Refresh with `POST https://www.codebuddy.ai/v2/plugin/auth/token/refresh`, body `{}`, and the refresh token in `X-Refresh-Token`, plus `X-Domain`, `X-Auth-Refresh-Source: plugin`, `X-Product`, and the OAuth User-Agent. If no rotated refresh token is returned, retain the old one. The reference defaults a missing/falsy `expiresIn` to 86400 seconds; Routy will default only an omitted expiry and reject explicit malformed/nonpositive values.
+The registry's CodeBuddy Intl protocol was captured against `www.codebuddy.ai`; during implementation we verified that the corresponding routes also exist on `www.workbuddy.ai` and return the same product-config models. Routy uses **`www.workbuddy.ai` by default** (the user's preference) and keeps `www.codebuddy.ai` as an exact-host allowlisted alternate for the browser verification URL; the protocol paths and payloads are otherwise the same.
+
+Observed upstream flow (the same route shapes exist on both hosts):
+
+1. `POST https://www.workbuddy.ai/v2/plugin/auth/state?platform=ide`, body `{}`, with CodeBuddy OAuth User-Agent `IDE/2.63.2 CodeBuddy/2.63.2`, `X-Requested-With`, `X-Domain: www.workbuddy.ai`, `X-No-Authorization`, `X-No-User-Id`, `X-Product`, JSON content type and accept headers.
+2. Success is `{ code: 0, data: { state, authUrl } }`. `state` is the polling handle; `authUrl` is the browser verification URL (observed host is `www.workbuddy.ai` for this base host). Despite the reference's `device_code` label, this is not the standard OAuth device authorization grant.
+3. Poll `GET https://www.workbuddy.ai/v2/plugin/auth/token?state=<encoded-state>` every 5 seconds with the reference no-auth/request headers plus `X-No-Enterprise-Id` and `X-No-Department-Info`. `{ code: 11217 }` means pending. `{ code: 0, data: { accessToken, refreshToken, tokenType, expiresIn } }` succeeds.
+4. Refresh with `POST https://www.workbuddy.ai/v2/plugin/auth/token/refresh`, body `{}`, and the refresh token in `X-Refresh-Token`, plus `X-Domain: www.workbuddy.ai`, `X-Auth-Refresh-Source: plugin`, `X-Product`, and the OAuth User-Agent. If no rotated refresh token is returned, retain the old one. The reference defaults a missing/falsy `expiresIn` to 86400 seconds; Routy will default only an omitted expiry and reject explicit malformed/nonpositive values.
 5. The OAuth token mapping has no email/profile identity. Use a local operator label; do not claim a verified email.
 
-Chat uses `https://www.codebuddy.ai/v2/chat/completions`, forces streaming, and sets registry headers including User-Agent `IDE/2.108.1 CodeBuddy/2.108.1`, `X-Product: SaaS`, `X-IDE-Type`, `X-IDE-Name`, `x-requested-with`, and `x-codebuddy-request: 1`.
+Chat uses `https://www.workbuddy.ai/v2/chat/completions` by default, forces streaming, and sets registry headers including User-Agent `IDE/2.108.1 CodeBuddy/2.108.1`, `X-Product: SaaS`, `X-IDE-Type`, `X-IDE-Name`, `x-requested-with`, and `x-codebuddy-request: 1`.
 
 ## 3. User experience
 
@@ -95,7 +99,7 @@ Never log upstream state, verification URL/query, access/refresh tokens, or raw 
 
 The `authUrl` returned by CodeBuddy must be parsed and validated before returning it to the UI: require HTTPS, reject credentials/fragments/unsafe schemes, and permit only exact CodeBuddy-controlled hostnames maintained in a compile-time allowlist. Never accept a verification URL from the client or use an unrestricted HTTPS check.
 
-**Verified (2026-10-11, live `POST https://www.codebuddy.ai/v2/plugin/auth/state?platform=ide`, one login-state request, no account/quota):** the response `authUrl` is `https://www.codebuddy.ai/login?platform=ide&state=…` — same host as every registry endpoint (`stateUrl`/`tokenUrl`/`refreshUrl`/chat), HTTPS, path `/login`, query keys `platform` and `state` only. The compile-time allowlist is therefore exactly **`www.codebuddy.ai`** (hostname match, case-insensitive, exact — no suffix wildcard). Keep the check fail-closed: any other host, a non-HTTPS scheme, credentials in the URL, or a fragment is rejected. Do not widen it speculatively.
+**Verified (2026-10-11, live `POST /v2/plugin/auth/state?platform=ide`, one login-state request, no account/quota):** both `www.workbuddy.ai` and `www.codebuddy.ai` answer identically — state, token, refresh, chat and `/v3/config` all exist on each, and each returns its own host in `authUrl` (`https://<host>/login?platform=ide&state=…`, path `/login`, query keys `platform` and `state` only). **WorkBuddy is the default host**; CodeBuddy Intl is the equivalent alternate. The compile-time allowlist is exactly those two hostnames (case-insensitive, exact — no suffix wildcard). Keep the check fail-closed: any other host, a non-HTTPS scheme, credentials in the URL, or a fragment is rejected. Do not widen it speculatively.
 
 ### Persisted credentials and safe views
 
@@ -180,7 +184,7 @@ All provider calls use injected fetch/local stubs; never spend CodeBuddy quota.
 
 ## 7. Suggested implementation sequence
 
-1. ~~Confirm the exact CodeBuddy verification hostname allowlist~~ **DONE (2026-10-11):** host is `www.codebuddy.ai`, pinned by a live state request; the exact-host check ships.
+1. ~~Confirm the CodeBuddy verification hostname allowlist~~ **DONE (2026-10-11):** both `www.workbuddy.ai` (default) and `www.codebuddy.ai` confirmed by live state requests; the exact-host allowlist ships.
 2. Verify the exact fixed chat target and protected executor marker against ordinary node-update behavior; reject generic API-key writes to the OAuth-only node in node update and single/batch connection creation. Test the final outbound URL to prevent accidental duplicate `/chat/completions`.
 3. Implement the tested OAuth protocol client and bounded in-memory flow manager.
 4. Add repository transaction/CAS helpers, OAuth credential resolver, per-connection lock, cross-row refresh single-flight, refresh persistence, and routing/auth-failure handling.
@@ -191,7 +195,7 @@ All provider calls use injected fetch/local stubs; never spend CodeBuddy quota.
 
 ## 8. Open decisions and release gates
 1. **Deployment affinity:** Flow state is process-local in v1. Use one gateway process or guaranteed sticky routing for start/poll/cancel; otherwise add a shared server-side flow store before multi-instance deployment.
-2. **Verification URL hostnames:** ~~not verified~~ **CLOSED (2026-10-11):** live state request returned `https://www.codebuddy.ai/login?platform=ide&state=…`; allowlist is exactly `www.codebuddy.ai`. Start may ship with the exact-host check.
+2. **Verification URL hostnames:** ~~not verified~~ **CLOSED (2026-10-11):** live state requests returned `https://www.workbuddy.ai/login?…` and `https://www.codebuddy.ai/login?…`; allowlist is exactly those two hosts, with `www.workbuddy.ai` as the default. Start may ship with the exact-host check.
 3. **Refresh terminal semantics:** Verify CodeBuddy's exact error codes that prove a refresh token is revoked/invalid before persisting `reauth-required`; otherwise keep failures retryable.
 4. **At-rest encryption:** Existing credentials are plaintext. Decide separately if a cross-provider encryption design is needed.
 5. **Cross-format non-streaming:** Explicitly unsupported in v1 until reverse response translation is implemented and tested; OpenAI-compatible forced-SSE-to-JSON is supported.

@@ -20,19 +20,27 @@
 
 const PROVIDER_ID = "codebuddy-intl";
 
-// The registry's fixed endpoint set (www.codebuddy.ai). Constant by construction —
-// no part is client-supplied.
+// The service answers identically on both hosts (verified 2026-10-11): state/token/
+// refresh/chat/config all exist on www.workbuddy.ai and www.codebuddy.ai, and both
+// return the same entitled model list. WorkBuddy is the preferred front door, so it is
+// the default; CodeBuddy Intl stays as the equivalent alternate.
+const DEFAULT_HOST = "www.workbuddy.ai";
+const ALT_HOST = "www.codebuddy.ai";
+
+// The registry's fixed endpoint set, single-sourced from the host. Constant by
+// construction — no part is client-supplied.
 export const CODEBUDDY_INTL = Object.freeze({
   providerId: PROVIDER_ID,
-  host: "www.codebuddy.ai",
-  stateUrl: "https://www.codebuddy.ai/v2/plugin/auth/state",
-  tokenUrl: "https://www.codebuddy.ai/v2/plugin/auth/token",
-  refreshUrl: "https://www.codebuddy.ai/v2/plugin/auth/token/refresh",
-  chatUrl: "https://www.codebuddy.ai/v2/chat/completions",
+  host: DEFAULT_HOST,
+  altHost: ALT_HOST,
+  stateUrl: `https://${DEFAULT_HOST}/v2/plugin/auth/state`,
+  tokenUrl: `https://${DEFAULT_HOST}/v2/plugin/auth/token`,
+  refreshUrl: `https://${DEFAULT_HOST}/v2/plugin/auth/token/refresh`,
+  chatUrl: `https://${DEFAULT_HOST}/v2/chat/completions`,
   // The authoritative model list. CodeBuddy/WorkBuddy have NO OpenAI-style
   // `GET /v1/models` — that path 404s, which is why a generic import fails. The client
   // builds its dropdown from the merged product config, and the remote half is here.
-  configUrl: "https://www.codebuddy.ai/v3/config",
+  configUrl: `https://${DEFAULT_HOST}/v3/config`,
   platform: "ide",
   oauthUserAgent: "IDE/2.63.2 CodeBuddy/2.63.2",
   chatUserAgent: "IDE/2.108.1 CodeBuddy/2.108.1",
@@ -46,10 +54,10 @@ export const CODEBUDDY_INTL = Object.freeze({
   defaultExpiresInSec: 86400,
 });
 
-// Exact-host allowlist for the browser verification URL. Match is case-insensitive and
-// EXACT — no suffix wildcard, so `evil-www.codebuddy.ai` and `www.codebuddy.ai.evil.com`
-// are both refused. Add a host only after the same live verification.
-export const VERIFICATION_HOST_ALLOWLIST = Object.freeze(["www.codebuddy.ai"]);
+// Exact-host allowlist for the browser verification URL. Both hosts are the same service
+// and each returns its own host in `authUrl`; match is case-insensitive and EXACT — no
+// suffix wildcard, so `evil-www.workbuddy.ai` and `www.workbuddy.ai.evil.com` are refused.
+export const VERIFICATION_HOST_ALLOWLIST = Object.freeze([DEFAULT_HOST, ALT_HOST]);
 
 /** Bounded request timeout and response-body cap for every OAuth HTTP call. */
 export const OAUTH_TIMEOUT_MS = 15_000;
