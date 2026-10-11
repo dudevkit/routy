@@ -4,8 +4,8 @@ import { api, streamLogs, type StreamLevel } from "./transport";
 import type { ComboInput, LogRecord, MediaKind, ModelBulkAction, ProxyPoolInput } from "./types";
 
 /* ── query keys ────────────────────────────────────────────────────────────── */
-const NODES: QueryKey = ["nodes"];
-const CONNECTIONS: QueryKey = ["connections"];
+export const NODES: QueryKey = ["nodes"];
+export const CONNECTIONS: QueryKey = ["connections"];
 const KEYS: QueryKey = ["keys"];
 const GATEWAY: QueryKey = ["gateway"];
 const COMBOS: QueryKey = ["combos"];
@@ -100,8 +100,12 @@ export const useProviderCatalog = () =>
 
 export const usePools = () => useQuery({ queryKey: POOLS, queryFn: api.listPools });
 
+/** OAuth providers the gateway can onboard (CodeBuddy Intl). Shipped data, so cached. */
+export const useOAuthProviders = () =>
+  useQuery({ queryKey: ["oauth", "providers"], queryFn: api.oauthProviders, staleTime: 5 * 60_000 });
+
 /* ── mutations (invalidate exactly the affected keys) ──────────────────────── */
-function useInvalidator(...keys: QueryKey[]) {
+export function useInvalidator(...keys: QueryKey[]) {
   const client = useQueryClient();
   return () => keys.forEach((key) => client.invalidateQueries({ queryKey: key }));
 }

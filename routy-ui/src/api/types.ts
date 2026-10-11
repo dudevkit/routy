@@ -137,6 +137,8 @@ export interface UpstreamNode {
   /** always masked - plaintext never returns */
   keyMasked: string;
   lastError?: string;
+  /** server-owned OAuth marker; present only on a CodeBuddy Intl OAuth node */
+  authProvider?: string | null;
 }
 
 /** A chat provider preset from 9Router's registry — `GET /api/providers/catalog`.
@@ -221,6 +223,10 @@ export interface NodeConnection {
   priority: number | null;
   keyMasked: string;
   lastError?: string | null;
+  /** present only on a CodeBuddy Intl OAuth row — non-secret lifecycle metadata */
+  authType?: "oauth";
+  accountLabel?: string;
+  authState?: "active" | "reauth-required";
   /** per-key proxy override; null/absent means "use the provider's proxy setting" */
   proxyPoolId?: string | null;
   /** last probe of this key alone (P6) — diagnostics, not traffic */
@@ -337,6 +343,33 @@ export interface ComboInput {
 
 /** GET /api/aliases returns a map, not a list */
 export type AliasMap = Record<string, string>;
+
+/* ── OAuth (CodeBuddy Intl) ────────────────────────────────────────────────── */
+export interface OAuthProvider {
+  id: string;
+  name: string;
+  website: string;
+  marker: string;
+  models: string[];
+}
+
+export type OAuthIntent =
+  | { intent: "create"; name: string; prefix: string; accountLabel?: string }
+  | { intent: "add"; nodeId: string; accountLabel?: string }
+  | { intent: "reconnect"; connectionId: string; accountLabel?: string };
+
+export interface OAuthFlowStart {
+  flowId: string;
+  verificationUrl: string;
+  expiresAt: number;
+  pollIntervalMs: number;
+}
+
+export type OAuthFlowResult =
+  | { state: "pending" }
+  | { state: "cancelled" }
+  | { state: "complete"; node?: UpstreamNode; connectionId?: string | null }
+  | { state: "failed"; error: { code: string; message: string } };
 
 /* ── infra: proxy pools ────────────────────────────────────────────────────── */
 /** One exit of a pool: a single proxy URL, and the unit rotation and health work on. */

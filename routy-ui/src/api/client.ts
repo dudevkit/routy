@@ -33,6 +33,10 @@ import type {
   NewNodeInput,
   NodeConnection,
   NodeModel,
+  OAuthFlowResult,
+  OAuthFlowStart,
+  OAuthIntent,
+  OAuthProvider,
   AddEntriesResult,
   EntryTestOutcome,
   PoolTestResult,
@@ -138,6 +142,9 @@ const putJson = <T,>(path: string, body: unknown): Promise<T> =>
   }).then((res) => json<T>(res));
 const deleteJson = (path: string): Promise<void> =>
   fetch(path, { method: "DELETE", headers: { ...ACTION } }).then((res) => json<void>(res));
+/** A DELETE that returns a body (the OAuth cancel endpoint reports the terminal result). */
+const deleteJsonT = <T,>(path: string): Promise<T> =>
+  fetch(path, { method: "DELETE", headers: { ...ACTION } }).then((res) => json<T>(res));
 
 const qs = (params: Record<string, string | number | undefined>) => {
   const sp = new URLSearchParams();
@@ -303,6 +310,15 @@ export const api = {
   deleteConnection: (id: string): Promise<void> => deleteJson(`/api/connections/${enc(id)}`),
   batchAddConnections: (id: string, input: BatchConnectionInput): Promise<BatchConnectionResult> =>
     postJson<BatchConnectionResult>(`/api/nodes/${enc(id)}/connections/batch`, input),
+
+  /* OAuth (CodeBuddy Intl) — provider-scoped, same-origin guarded server-side */
+  oauthProviders: (): Promise<{ providers: OAuthProvider[] }> => getJson("/api/providers/oauth"),
+  oauthStart: (input: OAuthIntent): Promise<OAuthFlowStart> =>
+    postJson<OAuthFlowStart>("/api/providers/codebuddy-intl/oauth/start", input),
+  oauthPoll: (flowId: string): Promise<OAuthFlowResult> =>
+    postJson<OAuthFlowResult>(`/api/providers/codebuddy-intl/oauth/flows/${enc(flowId)}/poll`, {}),
+  oauthCancel: (flowId: string): Promise<OAuthFlowResult> =>
+    deleteJsonT<OAuthFlowResult>(`/api/providers/codebuddy-intl/oauth/flows/${enc(flowId)}`),
 
   /* usage */
   /** `since` scopes the window (the Usage screen's date range); omitted = the default 7 days. */

@@ -32,6 +32,7 @@ import {
   Plus, Prohibit, Trash, WifiHigh, XCircle,
 } from "../components/icons";
 import { NodeFormModal } from "../components/NodeFormModal";
+import { OAuthDialog } from "../components/OAuthDialog";
 import { ChatPlaygroundCard } from "../components/ChatPlaygroundCard";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -621,6 +622,10 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
   const [testingId, setTestingId] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [allResults, setAllResults] = useState<KeyTestResult[] | null>(null);
+  // A CodeBuddy Intl OAuth node manages ACCOUNTS, not API keys: the add-key inputs and bulk
+  // test are replaced by a browser-login flow, and each row can be reconnected on its own.
+  const isOAuthNode = node.authProvider === "codebuddy-intl-oauth";
+  const [oauthDialog, setOauthDialog] = useState<null | { kind: "add" } | { kind: "reconnect"; connectionId: string; accountLabel: string }>(null);
 
   const conns = connections.data ?? [];
   // A media provider (made from the Media menu's catalogue) has no OpenAI endpoint. The key probe
@@ -698,35 +703,48 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
     <>
       <Card padding="none">
         <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle p-3">
-          <input
-            value={single}
-            onChange={(e) => setSingle(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") addSingle(); }}
-            placeholder="sk-…"
-            className="w-64 rounded-md border border-border-subtle bg-surface-2 px-3 py-1.5 font-mono text-xs text-text-main placeholder:text-text-main/40 focus:ring-2 focus:ring-accent/40"
-          />
-          <Button variant="primary" size="sm" icon={<Plus size={14} />} disabled={!single.trim()} loading={addConnection.isPending} onClick={addSingle}>
-            Add key
-          </Button>
-          <Button variant="outline" size="sm" icon={<Plus size={14} />} onClick={() => setBulkOpen(true)}>
-            Add bulk
-          </Button>
-          {probeless ? (
-            <span className="ml-auto text-[11px] text-text-muted" title="The key probe speaks the chat API (GET /models), which this provider does not have. Key health is shown from real requests in the Live Console.">
-              no probe for a media provider — status comes from real requests
-            </span>
+          {isOAuthNode ? (
+            <>
+              <p className="text-xs text-text-muted">
+                Each row is a signed-in CodeBuddy account. Connect another to add one, or reconnect a row whose session expired.
+              </p>
+              <Button variant="primary" size="sm" icon={<Plus size={14} />} className="ml-auto" onClick={() => setOauthDialog({ kind: "add" })}>
+                Connect another account
+              </Button>
+            </>
           ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              className="ml-auto"
-              icon={<WifiHigh size={14} />}
-              loading={testAll.isPending}
-              disabled={conns.length === 0}
-              onClick={runAll}
-            >
-              Test all keys
-            </Button>
+            <>
+              <input
+                value={single}
+                onChange={(e) => setSingle(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") addSingle(); }}
+                placeholder="sk-…"
+                className="w-64 rounded-md border border-border-subtle bg-surface-2 px-3 py-1.5 font-mono text-xs text-text-main placeholder:text-text-main/40 focus:ring-2 focus:ring-accent/40"
+              />
+              <Button variant="primary" size="sm" icon={<Plus size={14} />} disabled={!single.trim()} loading={addConnection.isPending} onClick={addSingle}>
+                Add key
+              </Button>
+              <Button variant="outline" size="sm" icon={<Plus size={14} />} onClick={() => setBulkOpen(true)}>
+                Add bulk
+              </Button>
+              {probeless ? (
+                <span className="ml-auto text-[11px] text-text-muted" title="The key probe speaks the chat API (GET /models), which this provider does not have. Key health is shown from real requests in the Live Console.">
+                  no probe for a media provider — status comes from real requests
+                </span>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-auto"
+                  icon={<WifiHigh size={14} />}
+                  loading={testAll.isPending}
+                  disabled={conns.length === 0}
+                  onClick={runAll}
+                >
+                  Test all keys
+                </Button>
+              )}
+            </>
           )}
         </div>
 
@@ -747,13 +765,18 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
               <EmptyRow colSpan={6}><Skeleton rows={2} /></EmptyRow>
             ) : conns.length === 0 ? (
               <EmptyRow colSpan={6}>
-                No API keys yet. Add one, or paste a list with “Add bulk” (one per line, <span className="font-mono">label,key</span>).
+                {isOAuthNode
+                  ? "No accounts yet. Use “Connect another account” to sign in with a browser."
+                  : <>No API keys yet. Add one, or paste a list with “Add bulk” (one per line, <span className="font-mono">label,key</span>).</>}
               </EmptyRow>
             ) : (
               conns.map((c) => (
                 <tr key={c.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-2/40">
                   <td className={TD}>
                     <span className="block max-w-[22ch] truncate sm:max-w-none" title={c.name || "key"}>{c.name || "key"}</span>
+                    {c.authState === "reauth-required" && (
+                      <span className="mt-0.5 block text-[11px] text-danger">session expired — reconnect</span>
+                    )}
                   </td>
                   <td className={cn(TD, "hidden md:table-cell font-mono text-xs text-text-muted")}>{c.keyMasked}</td>
                   <td className={TD}>
@@ -794,6 +817,15 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
                       {!probeless && (
                         <Button variant="outline" size="sm" icon={<WifiHigh size={13} />} loading={testingId === c.id} onClick={() => runOne(c)}>
                           Test
+                        </Button>
+                      )}
+                      {isOAuthNode && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setOauthDialog({ kind: "reconnect", connectionId: c.id, accountLabel: c.name })}
+                        >
+                          Reconnect
                         </Button>
                       )}
                       <Button
@@ -894,6 +926,16 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
       >
         <p className="text-sm text-text-muted">Requests will no longer use this key. Its usage history is kept.</p>
       </Modal>
+
+      {isOAuthNode && (
+        <OAuthDialog
+          isOpen={oauthDialog !== null}
+          onClose={() => setOauthDialog(null)}
+          intent={oauthDialog?.kind === "reconnect"
+            ? { kind: "reconnect", connectionId: oauthDialog.connectionId, accountLabel: oauthDialog.accountLabel }
+            : { kind: "add", nodeId: node.id, nodeName: node.name }}
+        />
+      )}
     </>
   );
 }

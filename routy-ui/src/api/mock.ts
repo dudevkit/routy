@@ -27,6 +27,9 @@ import type {
   NodeConnection,
   NodeMediaConfig,
   NodeModel,
+  OAuthFlowResult,
+  OAuthFlowStart,
+  OAuthProvider,
   AddEntriesResult,
   EntryTestOutcome,
   EntryTestResult,
@@ -403,6 +406,22 @@ export const api = {
 
   async testModel(): Promise<NodeModel & { result: ProbeResult }> {
     throw new Error("The mock transport cannot probe models — run against a live gateway.");
+  },
+
+  async oauthProviders(): Promise<{ providers: OAuthProvider[] }> {
+    return { providers: [{ id: "codebuddy-intl", name: "CodeBuddy Intl", website: "https://www.codebuddy.ai", marker: "codebuddy-intl-oauth", models: ["glm-5.2"] }] };
+  },
+
+  async oauthStart(): Promise<OAuthFlowStart> {
+    throw new Error("The mock transport cannot start a real OAuth login — run against a live gateway.");
+  },
+
+  async oauthPoll(): Promise<OAuthFlowResult> {
+    return { state: "pending" };
+  },
+
+  async oauthCancel(): Promise<OAuthFlowResult> {
+    return { state: "cancelled" };
   },
 
   async testConnectionKey(): Promise<KeyTestResult> {

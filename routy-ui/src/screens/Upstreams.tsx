@@ -4,6 +4,7 @@ import {
   useAddModel,
   useAddNode,
   useNodes,
+  useOAuthProviders,
   useProviderCatalog,
   useRemoveNode,
   useTestAllKeys,
@@ -14,6 +15,7 @@ import { toastApiError } from "../utils/errors";
 import { fmtMs } from "../utils/format";
 import { Broadcast, CaretRight, Check, CheckCircle, Plus, Prohibit, WifiHigh, XCircle } from "../components/icons";
 import { NodeFormModal } from "../components/NodeFormModal";
+import { OAuthDialog } from "../components/OAuthDialog";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -314,8 +316,10 @@ export function Upstreams() {
   const [search, setSearch] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const catalog = useProviderCatalog();
+  const oauthProviders = useOAuthProviders();
   const addNode = useAddNode();
   const addModel = useAddModel();
+  const [oauthOpen, setOauthOpen] = useState(false);
 
   // Catalogue cards group by 9Router's own registry category — one section per category.
   // Non-chat providers (TTS, SearXNG, Devin) live under Media and CLI Tools, filtered out here.
@@ -387,6 +391,48 @@ export function Upstreams() {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* OAuth providers are their own thing — a browser login, not a key or a preset — so
+          they get a dedicated section rather than sitting among the free-tier cards. */}
+      {(oauthProviders.data?.providers?.length ?? 0) > 0 && (
+        <section className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-text-main">OAuth providers</h2>
+              <p className="text-xs text-text-muted">
+                Sign in with a browser instead of pasting a key. Each account is a separate row you can reconnect or remove on its own.
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {oauthProviders.data?.providers.map((p) => {
+              const node = (nodes.data ?? []).find((n) => n.authProvider === p.marker);
+              return (
+                <div key={p.id} className="flex flex-col gap-1.5 rounded border border-border-subtle p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="min-w-0 truncate text-sm font-medium text-text-main">{p.name}</span>
+                    <Badge variant="default" size="sm">oauth</Badge>
+                  </div>
+                  <p className="truncate font-mono text-[11px] text-text-muted">{p.website}</p>
+                  <p className="text-[11px] text-text-subtle">{p.models.length} models</p>
+                  <div className="mt-auto flex items-center justify-between gap-2 pt-1">
+                    <a href={p.website} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline">
+                      Open provider
+                    </a>
+                    {node ? (
+                      <Link to={`/upstreams/${node.id}`} className="text-[11px] font-medium text-primary hover:underline">
+                        Manage →
+                      </Link>
+                    ) : (
+                      <Button variant="secondary" size="sm" onClick={() => setOauthOpen(true)}>Connect</Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       {/* Catalogue cards, deliberately separate from the operator's own below — one mixed
           list would answer neither question. */}
       {categories.map((cat) => (
@@ -464,6 +510,8 @@ export function Upstreams() {
         node={null}
         onClose={() => setAddOpen(false)}
       />
+
+      <OAuthDialog isOpen={oauthOpen} intent={{ kind: "create" }} onClose={() => setOauthOpen(false)} />
     </div>
   );
 }
