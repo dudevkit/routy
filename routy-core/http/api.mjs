@@ -387,10 +387,22 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
         return json(res, 409, { error: { message: "conflict", detail: "this node's apiType is managed by its OAuth provider" } });
       }
       if (input.baseUrl !== undefined && input.baseUrl !== existing.baseUrl) {
-        return json(res, 409, { error: { message: "conflict", detail: "this node's endpoint is fixed by its OAuth provider" } });
+        // The endpoint may only move between the two allowlisted service hosts (the same
+        // service answers on both). Anything else is refused, so a stored node can never
+        // redirect OAuth bearer credentials to an arbitrary URL.
+        const allowed = new Set([CODEBUDDY_INTL.chatUrl, CODEBUDDY_INTL.chatUrlAlt]);
+        if (!allowed.has(input.baseUrl)) {
+          return json(res, 409, { error: { message: "conflict", detail: "this node's endpoint is fixed by its OAuth provider" } });
+        }
       }
       if (input.data?.authProvider !== undefined && input.data.authProvider !== existing.data?.authProvider) {
         return json(res, 409, { error: { message: "conflict", detail: "the OAuth provider marker cannot be changed" } });
+      }
+      if (input.data?.chatUrl !== undefined) {
+        const allowed = new Set([CODEBUDDY_INTL.chatUrl, CODEBUDDY_INTL.chatUrlAlt]);
+        if (!allowed.has(input.data.chatUrl)) {
+          return json(res, 409, { error: { message: "conflict", detail: "this node's chat URL is fixed by its OAuth provider" } });
+        }
       }
     }
     const patch = {};

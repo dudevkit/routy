@@ -37,6 +37,7 @@ export const CODEBUDDY_INTL = Object.freeze({
   tokenUrl: `https://${DEFAULT_HOST}/v2/plugin/auth/token`,
   refreshUrl: `https://${DEFAULT_HOST}/v2/plugin/auth/token/refresh`,
   chatUrl: `https://${DEFAULT_HOST}/v2/chat/completions`,
+  chatUrlAlt: `https://${ALT_HOST}/v2/chat/completions`,
   // The authoritative model list. CodeBuddy/WorkBuddy have NO OpenAI-style
   // `GET /v1/models` — that path 404s, which is why a generic import fails. The client
   // builds its dropdown from the merged product config, and the remote half is here.

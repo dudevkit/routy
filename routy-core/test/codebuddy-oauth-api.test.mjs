@@ -169,6 +169,18 @@ describe("OAuth node protection", () => {
     expect((await post(`/api/nodes/${node.id}/connections/batch`, { entries: [{ apiKey: "sk-x" }] }, ACTION)).status).toBe(409);
   });
 
+  it("allows the endpoint to move only between the two allowlisted hosts", async () => {
+    const node = await makeOAuthNode();
+    if (!node) return;
+    // WorkBuddy <-> CodeBuddy is allowed (same service).
+    const ok = await put(`/api/nodes/${node.id}`, { baseUrl: "https://www.workbuddy.ai/v2/chat/completions", data: { chatUrl: "https://www.workbuddy.ai/v2/chat/completions" } }, ACTION);
+    expect(ok.status).toBe(200);
+    expect(ok.body.baseUrl).toBe("https://www.workbuddy.ai/v2/chat/completions");
+    // Anything else is refused.
+    expect((await put(`/api/nodes/${node.id}`, { baseUrl: "https://evil.example.com/v2/chat/completions" }, ACTION)).status).toBe(409);
+    expect((await put(`/api/nodes/${node.id}`, { data: { chatUrl: "https://evil.example.com/v2/chat/completions" } }, ACTION)).status).toBe(409);
+  });
+
   it("refuses to mint an OAuth marker through generic node create", async () => {
     const r = await post("/api/nodes", { name: "Fake", prefix: "fake", baseUrl: "https://x/v1", data: { authProvider: "codebuddy-intl-oauth" } }, ACTION);
     expect(r.status).toBe(400);

@@ -1,6 +1,6 @@
 # CodeBuddy Intl OAuth multi-account design
 
-**Status:** Proposed; not implemented
+**Status:** Implemented (2026-10-11). Multi-account OAuth for WorkBuddy / CodeBuddy Intl is live: protocol client, bounded flow manager, credential refresh with CAS, fixed-endpoint executor, provider-scoped routes, model import from `/v3/config`, and the dashboard onboarding. See `docs/project-log.md` for the session record.
 **Scope:** Add WorkBuddy / CodeBuddy Intl (same service; default `www.workbuddy.ai`, alternate `www.codebuddy.ai`) as an OAuth-backed chat provider with multiple independently managed accounts in Routy.
 **Reference:** Local `9router/` checkout; paths below are relative to that checkout unless noted otherwise.
 
