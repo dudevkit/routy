@@ -9,8 +9,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { useDetails, useDetailsForEvent, useGateway, useHistory, useNodes, useStats } from "../api/hooks";
-import type { RequestDetail, UsageHistoryRow } from "../api/types";
+import { useDetails, useDetailsForEvent, useGateway, useHistory, useNodes, useRefreshWorkbuddyQuota, useStats, useWorkbuddyQuota } from "../api/hooks";
+import type { RequestDetail, UsageHistoryRow, WorkbuddyQuotaAccount } from "../api/types";
 import { fmtAgo, fmtClock, fmtCost, fmtMs, fmtTokens } from "../utils/format";
 import { Card } from "../components/ui/Card";
 import { Drawer } from "../components/ui/Drawer";
@@ -379,6 +379,158 @@ function DetailsTab({ rows }: { rows: UsageHistoryRow[] }) {
   );
 }
 
+/* ── Provider allowance (WorkBuddy quota tracker) ──────────────────────────── */
+const fmtNum = (n: number | null) => (n === null ? "—" : new Intl.NumberFormat().format(n));
+
+/** Why an account cannot be queried, in operator terms. */
+const ELIGIBILITY_COPY: Record<string, string> = {
+  identity_unavailable: "Reconnect this account to capture its WorkBuddy identity",
+  disabled: "This account is disabled",
+  "reauth-required": "This account needs to be reconnected",
+  not_oauth_connection: "Not an OAuth account",
+  not_oauth_node: "Not a WorkBuddy OAuth node",
+};
+
+function ProviderAllowanceCard() {
+  const quota = useWorkbuddyQuota();
+  const refresh = useRefreshWorkbuddyQuota();
+  const [open, setOpen] = useState<string | null>(null);
+
+  const accounts = quota.data?.accounts ?? [];
+
+  return (
+    <Card padding="sm" className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <h3 className="text-sm font-semibold text-text-main">Provider allowance</h3>
+        <p className="text-xs text-text-muted">
+          WorkBuddy-reported allowance for your connected accounts. Refresh is a deliberate billing read — it is not a
+          chat request and does not spend model tokens. Values are shown as provider units; no token conversion is assumed.
+        </p>
+      </div>
+
+      {quota.isLoading ? (
+        <Skeleton className="h-16 w-full" />
+      ) : accounts.length === 0 ? (
+        <p className="py-6 text-center text-xs text-text-subtle">
+          No WorkBuddy OAuth accounts yet — connect one under Providers.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2.5">
+          {accounts.map((a) => (
+            <QuotaAccountRow
+              key={a.connectionId}
+              account={a}
+              open={open === a.connectionId}
+              onToggle={() => setOpen(open === a.connectionId ? null : a.connectionId)}
+              onRefresh={() => refresh.mutate(a.connectionId)}
+              refreshing={refresh.isPending && refresh.variables === a.connectionId}
+            />
+          ))}
+        </div>
+      )}
+      {refresh.isError && (
+        <p className="text-xs text-danger">Refresh failed: {(refresh.error as Error).message}</p>
+      )}
+    </Card>
+  );
+}
+
+function QuotaAccountRow({
+  account: a,
+  open,
+  onToggle,
+  onRefresh,
+  refreshing,
+}: {
+  account: WorkbuddyQuotaAccount;
+  open: boolean;
+  onToggle: () => void;
+  onRefresh: () => void;
+  refreshing: boolean;
+}) {
+  const eligible = a.eligibility === null;
+  const remaining = a.aggregate?.remaining ?? null;
+  const total = a.aggregate?.total ?? null;
+  const pct = total && total > 0 && remaining !== null ? Math.round((remaining / total) * 100) : null;
+  const partial = a.aggregateComplete === false || a.packageInventoryComplete === false;
+
+  return (
+    <div className="flex flex-col gap-2 rounded-[10px] border border-border-subtle bg-surface-1 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="truncate text-sm font-medium text-text-main">{a.accountLabel}</span>
+          <span className="font-mono text-[10px] text-text-subtle">{a.nodePrefix}/</span>
+          {a.authState === "reauth-required" && <Badge variant="warning" size="sm">reconnect</Badge>}
+          {a.connectionStatus !== "active" && <Badge variant="default" size="sm">disabled</Badge>}
+          {partial && <Badge variant="warning" size="sm">partial</Badge>}
+          {a.stale && <Badge variant="default" size="sm">stale</Badge>}
+        </div>
+        <div className="flex items-center gap-2">
+          {a.fetchedAt && <span className="text-[10px] text-text-subtle">{fmtAgo(a.fetchedAt)}</span>}
+          <Button size="sm" variant="outline" onClick={onRefresh} disabled={!eligible} loading={refreshing}>
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      {!eligible ? (
+        <p className="text-xs text-text-muted">{ELIGIBILITY_COPY[a.eligibility ?? ""] ?? "This account cannot be queried"}</p>
+      ) : a.aggregate === null ? (
+        <p className="text-xs text-text-muted">
+          {a.fetchedAt ? "No complete provider total — see packages below." : "No data yet — press Refresh."}
+        </p>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-text-muted">
+              {fmtNum(remaining)} / {fmtNum(total)} remaining
+              {a.aggregate.unit === "unknown" ? " · provider units" : ` · ${a.aggregate.unit}`}
+            </span>
+            {a.isPaidUser !== null && <Badge variant={a.isPaidUser ? "primary" : "default"} size="sm">{a.isPaidUser ? "paid" : "free"}</Badge>}
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
+            <div
+              className="h-full rounded-full transition-all duration-300"
+              style={{ width: `${pct === null ? 0 : Math.max(pct, 1)}%`, background: "var(--color-primary)" }}
+            />
+          </div>
+        </div>
+      )}
+
+      {a.resources.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <button
+            type="button"
+            className="w-fit text-[11px] font-medium text-text-muted hover:text-text-main"
+            onClick={onToggle}
+            aria-expanded={open}
+          >
+            {open ? "Hide" : "Show"} {a.resources.length} package{a.resources.length === 1 ? "" : "s"}
+          </button>
+          {open && (
+            <div className="flex flex-col gap-1 pt-1">
+              {a.resources.map((r) => (
+                <div key={r.resourceId || `${r.packageCode}-${r.source}`} className="flex items-center justify-between gap-2 text-[11px]">
+                  <span className="truncate text-text-main">{r.name}</span>
+                  <span className="flex shrink-0 items-center gap-2 font-mono text-text-muted tabular">
+                    <span>
+                      {fmtNum(r.remaining)} / {fmtNum(r.total)}
+                    </span>
+                    {r.status === "used-up" && <Badge variant="default" size="sm">used up</Badge>}
+                    {r.source === "free" && <Badge variant="info" size="sm">free</Badge>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {a.error && <p className="text-[11px] text-warning">{a.error.message}</p>}
+    </div>
+  );
+}
+
 /* ── Quota tab ─────────────────────────────────────────────────────────────── */
 function QuotaTab({ rows, range }: { rows: UsageHistoryRow[]; range: string }) {
   const nodes = useNodes();
@@ -405,10 +557,10 @@ function QuotaTab({ rows, range }: { rows: UsageHistoryRow[]; range: string }) {
       <Card padding="sm" className="flex flex-col gap-2">
         <div className="flex flex-col items-start gap-3 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-text-main">Token share by node · {RANGE_LABEL[range] ?? "7D"}</h3>
+            <h3 className="text-sm font-semibold text-text-main">Usage share by node · {RANGE_LABEL[range] ?? "7D"}</h3>
             <p className="text-xs text-text-muted">
-              Per-provider quota limits arrive with embedded providers — custom compatible nodes expose no quota API,
-              so this is measured usage, not remaining allowance.
+              Routy-recorded routed usage for the selected range — not remaining allowance. WorkBuddy provider
+              allowance is shown separately below.
             </p>
           </div>
           <CopyChip className="shrink-0" value={keyLine} label="router key" />
@@ -417,7 +569,7 @@ function QuotaTab({ rows, range }: { rows: UsageHistoryRow[]; range: string }) {
         {byNode.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-10 text-center">
             <XCircle size={28} className="text-text-subtle" />
-            <p className="text-sm text-text-muted">Nothing routed yet — no quota to show.</p>
+            <p className="text-sm text-text-muted">No routed usage in this range.</p>
             <p className="text-xs text-text-subtle">
               Mint a client key on <span className="text-text-main">Overview</span>, then send traffic.
             </p>
@@ -443,6 +595,8 @@ function QuotaTab({ rows, range }: { rows: UsageHistoryRow[]; range: string }) {
           </div>
         )}
       </Card>
+
+      <ProviderAllowanceCard />
     </div>
   );
 }

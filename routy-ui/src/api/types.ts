@@ -371,6 +371,59 @@ export type OAuthFlowResult =
   | { state: "complete"; node?: UpstreamNode; connectionId?: string | null }
   | { state: "failed"; error: { code: string; message: string } };
 
+/* ── WorkBuddy quota tracker (Usage → Quota) ─────────────────────────────────
+   Read-only provider allowance. Units are never assumed: the server reports
+   "unknown" until a response confirms what the numbers mean. */
+export interface QuotaResource {
+  resourceId: string;
+  packageCode: string;
+  name: string;
+  total: number | null;
+  used: number | null;
+  remaining: number | null;
+  unit: "credits" | "provider-units" | "unknown";
+  status: "active" | "used-up" | "unknown";
+  startsAt: string | null;
+  expiresAt: string | null;
+  resetsAt: string | null;
+  capacityType: number | null;
+  source: "paid" | "free";
+}
+
+export type QuotaSourceKey = "summary" | "paid" | "free";
+export interface QuotaSourceState {
+  status: "success" | "failed" | "truncated" | "not-fetched";
+  fetched: number | null;
+  total: number | null;
+  errorCode?: string;
+}
+
+export interface WorkbuddyQuotaAccount {
+  nodeId: string;
+  nodePrefix: string;
+  connectionId: string;
+  accountLabel: string;
+  connectionStatus: string;
+  authState: "active" | "reauth-required";
+  quotaIdentityAvailable: boolean;
+  /** null when eligible; otherwise a safe reason the account cannot be queried */
+  eligibility: string | null;
+  fetchedAt: string | null;
+  stale: boolean;
+  aggregateComplete: boolean;
+  packageInventoryComplete: boolean;
+  sources: Record<QuotaSourceKey, QuotaSourceState> | null;
+  aggregate: { total: number; used: number; remaining: number; unit: "credits" | "provider-units" | "unknown" } | null;
+  subscriptionPackageCode: string | null;
+  isPaidUser: boolean | null;
+  resources: QuotaResource[];
+  error?: { code: string; message: string } | null;
+}
+
+export interface WorkbuddyQuotaResponse {
+  accounts: WorkbuddyQuotaAccount[];
+}
+
 /* ── infra: proxy pools ────────────────────────────────────────────────────── */
 /** One exit of a pool: a single proxy URL, and the unit rotation and health work on. */
 export interface ProxyPoolEntry {

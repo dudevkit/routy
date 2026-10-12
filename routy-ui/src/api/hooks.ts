@@ -14,6 +14,7 @@ const POOLS: QueryKey = ["pools"];
 const UPDATES: QueryKey = ["updates"];
 const CLI_TOOLS: QueryKey = ["cli-tools"];
 const ROUTABLE: QueryKey = ["routable-models"];
+export const QUOTA: QueryKey = ["workbuddy-quota"];
 
 /* ── queries ───────────────────────────────────────────────────────────────── */
 export const useNodes = () => useQuery({ queryKey: NODES, queryFn: api.listNodes, refetchInterval: 20000 });
@@ -103,6 +104,14 @@ export const usePools = () => useQuery({ queryKey: POOLS, queryFn: api.listPools
 /** OAuth providers the gateway can onboard (CodeBuddy Intl). Shipped data, so cached. */
 export const useOAuthProviders = () =>
   useQuery({ queryKey: ["oauth", "providers"], queryFn: api.oauthProviders, staleTime: 5 * 60_000 });
+
+/**
+ * WorkBuddy provider allowance. Cache-only on the server: this query never triggers an
+ * upstream read, and there is deliberately no refetchInterval — a refresh is a deliberate
+ * button press (see useRefreshWorkbuddyQuota), because each one is a provider billing read.
+ */
+export const useWorkbuddyQuota = () =>
+  useQuery({ queryKey: QUOTA, queryFn: api.workbuddyQuota });
 
 /* ── mutations (invalidate exactly the affected keys) ──────────────────────── */
 export function useInvalidator(...keys: QueryKey[]) {
@@ -262,6 +271,13 @@ export const useUpdates = () => useQuery({ queryKey: UPDATES, queryFn: api.getUp
 export const useCheckUpdates = () => useMutation({ mutationFn: api.checkUpdates, onSuccess: useInvalidator(UPDATES) });
 export const useDismissUpdate = () => useMutation({ mutationFn: api.dismissUpdate, onSuccess: useInvalidator(UPDATES) });
 export const useApplyUpdate = () => useMutation({ mutationFn: api.applyUpdate, onSuccess: useInvalidator(UPDATES, GATEWAY) });
+
+/** Explicit WorkBuddy allowance refresh for one account. Never called on mount or a timer. */
+export const useRefreshWorkbuddyQuota = () =>
+  useMutation({
+    mutationFn: (connectionId: string) => api.refreshWorkbuddyQuota(connectionId),
+    onSuccess: useInvalidator(QUOTA),
+  });
 
 export const useCreateCombo = () => useMutation({ mutationFn: api.createCombo, onSuccess: useInvalidator(COMBOS) });
 export interface ComboPatch {

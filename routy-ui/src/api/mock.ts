@@ -48,6 +48,8 @@ import type {
   UpdateState,
   UsageHistoryRow,
   UsageStats,
+  WorkbuddyQuotaAccount,
+  WorkbuddyQuotaResponse,
 } from "./types";
 import type { LogStreamHandlers, StreamLevel } from "./client";
 
@@ -422,6 +424,14 @@ export const api = {
 
   async oauthCancel(): Promise<OAuthFlowResult> {
     return { state: "cancelled" };
+  },
+
+  async workbuddyQuota(): Promise<WorkbuddyQuotaResponse> {
+    return { accounts: [] };
+  },
+
+  async refreshWorkbuddyQuota(): Promise<WorkbuddyQuotaAccount> {
+    throw new Error("The mock transport cannot read provider allowance — run against a live gateway.");
   },
 
   async testConnectionKey(): Promise<KeyTestResult> {

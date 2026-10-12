@@ -51,6 +51,7 @@ import type {
   UpstreamNode,
   UsageHistoryRow,
   UsageStats,
+  WorkbuddyQuotaResponse,
 } from "./types";
 import { signalUnauthorized } from "./auth";
 
@@ -319,6 +320,11 @@ export const api = {
     postJson<OAuthFlowResult>(`/api/providers/codebuddy-intl/oauth/flows/${enc(flowId)}/poll`, {}),
   oauthCancel: (flowId: string): Promise<OAuthFlowResult> =>
     deleteJsonT<OAuthFlowResult>(`/api/providers/codebuddy-intl/oauth/flows/${enc(flowId)}`),
+
+  /* WorkBuddy quota tracker — read-only; GET is cache-only, refresh is an explicit POST */
+  workbuddyQuota: (): Promise<WorkbuddyQuotaResponse> => getJson<WorkbuddyQuotaResponse>("/api/providers/workbuddy/quota"),
+  refreshWorkbuddyQuota: (connectionId: string): Promise<WorkbuddyQuotaResponse["accounts"][number]> =>
+    postJson(`/api/providers/workbuddy/quota/refresh`, { connectionId }),
 
   /* usage */
   /** `since` scopes the window (the Usage screen's date range); omitted = the default 7 days. */
