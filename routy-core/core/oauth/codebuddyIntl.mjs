@@ -36,6 +36,11 @@ export const CODEBUDDY_INTL = Object.freeze({
   stateUrl: `https://${DEFAULT_HOST}/v2/plugin/auth/state`,
   tokenUrl: `https://${DEFAULT_HOST}/v2/plugin/auth/token`,
   refreshUrl: `https://${DEFAULT_HOST}/v2/plugin/auth/token/refresh`,
+  // State-bound login-account lookup. The token response carries no account profile, but
+  // the meter endpoints need `X-User-Id`. Verified against the WorkBuddy 5.5.2 client:
+  // this follow-up returns the account for the just-completed login, with business code
+  // 12151 while the account record is still being provisioned.
+  accountUrl: `https://${DEFAULT_HOST}/v2/plugin/login/account`,
   chatUrl: `https://${DEFAULT_HOST}/v2/chat/completions`,
   chatUrlAlt: `https://${ALT_HOST}/v2/chat/completions`,
   // The authoritative model list. CodeBuddy/WorkBuddy have NO OpenAI-style
@@ -228,6 +233,56 @@ export async function startFlow({ signal } = {}) {
 }
 
 /**
+ * Resolve the account identity for a just-completed login.
+ *
+ * The token poll response carries tokens only. The meter endpoints need `X-User-Id`, and
+ * the only trusted source for it is this state-bound follow-up: it answers for the login
+ * the caller just completed, so there is no ambiguity about which account it describes.
+ * `/v2/plugin/accounts` is deliberately NOT used — it may list several accounts and picking
+ * one would silently attribute another account's quota.
+ *
+ * Returns `{ uid }` or `null` when identity is unavailable. It never throws for a missing
+ * account record: a failed identity lookup must not fail an otherwise successful login.
+ * `attempts` bounds the wait for business code 12151 ("account still being provisioned").
+ */
+export async function fetchLoginAccount(accessToken, upstreamState, { signal, attempts = 3, delayMs = 1000 } = {}) {
+  if (typeof accessToken !== "string" || accessToken.length === 0) return null;
+  if (typeof upstreamState !== "string" || upstreamState.length === 0) return null;
+  const url = `${CODEBUDDY_INTL.accountUrl}?state=${encodeURIComponent(upstreamState)}`;
+  const total = Math.max(1, Math.min(5, Math.trunc(attempts) || 1));
+  for (let attempt = 1; attempt <= total; attempt++) {
+    let res;
+    try {
+      res = await getJson(url, {
+        signal,
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${accessToken}`,
+          "User-Agent": CODEBUDDY_INTL.oauthUserAgent,
+          "X-Requested-With": "XMLHttpRequest",
+          "X-Domain": CODEBUDDY_INTL.host,
+          "X-No-Authorization": "true",
+          "X-No-User-Id": "true",
+          "X-No-Enterprise-Id": "true",
+          "X-No-Department-Info": "true",
+          "X-Product": "SaaS",
+        },
+      });
+    } catch {
+      // Network trouble is not worth blocking the login for; give up quietly.
+      return null;
+    }
+    if (res.ok) {
+      const uid = res.data?.data?.uid;
+      if (res.data?.code === 0 && typeof uid === "string" && uid.length > 0) return { uid };
+      if (res.data?.code !== 12151) return null; // a definite answer that carries no usable uid
+    }
+    if (attempt < total) await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return null;
+}
+
+/**
  * Poll one token result for a state. Returns a discriminated result:
  *   { state: "pending" }
  *   { state: "complete", tokens: { accessToken, refreshToken, expiresInSec, tokenType } }
@@ -297,8 +352,20 @@ export function normalizeTokens(data, previousRefreshToken) {
   return { accessToken, refreshToken, expiresInSec, tokenType: "Bearer" };
 }
 
-/** Build the stored credential object from normalized tokens. */
-export function credentialFromTokens(tokens, { now = Date.now(), previousRevision = 0, authState = "active" } = {}) {
+/**
+ * Build the stored credential object from normalized tokens.
+ *
+ * `quotaIdentity` (a verified `{ uid }` captured during login) is private server-side
+ * metadata: the WorkBuddy meter endpoints need `X-User-Id`, and this is the only verified
+ * source for it. It must survive an access-token refresh, so callers pass the existing
+ * value back in; a reconnect replaces it with the new login's result. It is never returned
+ * by a safe connection/API view.
+ */
+export function credentialFromTokens(tokens, { now = Date.now(), previousRevision = 0, authState = "active", quotaIdentity = null } = {}) {
+  const providerSpecificData = {};
+  if (quotaIdentity && typeof quotaIdentity.uid === "string" && quotaIdentity.uid.length > 0) {
+    providerSpecificData.quotaIdentity = { uid: quotaIdentity.uid };
+  }
   return {
     authType: "oauth",
     accessToken: tokens.accessToken,
@@ -306,7 +373,7 @@ export function credentialFromTokens(tokens, { now = Date.now(), previousRevisio
     expiresAt: new Date(now + tokens.expiresInSec * 1000).toISOString(),
     authState,
     oauthRevision: previousRevision + 1,
-    providerSpecificData: {},
+    providerSpecificData,
   };
 }
 

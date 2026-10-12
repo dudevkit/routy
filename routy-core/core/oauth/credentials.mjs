@@ -113,7 +113,9 @@ export async function resolveOAuthCredentials(repos, node, connection, { now = D
   }
 
   // Apply with CAS: if a reconnect or another refresh already moved the row, keep theirs.
-  const nextCreds = credentialFromTokens(tokens, { now, previousRevision: observedRevision, authState: "active" });
+  // The verified quota identity is private metadata tied to the account, not the token, so
+  // it must survive an access-token rotation.
+  const nextCreds = credentialFromTokens(tokens, { now, previousRevision: observedRevision, authState: "active", quotaIdentity: credentials.providerSpecificData?.quotaIdentity });
   const updated = repos.oauth.casCredentials(connection.id, {
     expectedRevision: observedRevision,
     expectedRefreshToken: observedRefresh,
@@ -160,7 +162,7 @@ export async function refreshAfterAuthRejection(repos, node, connection, { log =
     if (err?.transient === false) markReauthRequired(repos, connection);
     return null;
   }
-  const nextCreds = credentialFromTokens(tokens, { previousRevision: observedRevision, authState: "active" });
+  const nextCreds = credentialFromTokens(tokens, { previousRevision: observedRevision, authState: "active", quotaIdentity: credentials.providerSpecificData?.quotaIdentity });
   const updated = repos.oauth.casCredentials(connection.id, {
     expectedRevision: observedRevision,
     expectedRefreshToken: observedRefresh,

@@ -28,10 +28,11 @@ import { connectionState, connectionsForNode, resetConnection } from "../core/ke
 import { DEFAULT_PROXY_TEST_URL, forgetExitHealth, poolExits, proxyIdentity, resetPoolHealth, resolveNodeProxy, testProxyUrl } from "../core/proxy.mjs";
 import { CONNECTION_COOLDOWN_MS, PROXY_COOLDOWN_MS } from "../core/limits.mjs";
 import { allStatuses, connectTool, disconnectTool, findAdapter, toolStatus } from "../core/cli-tools.mjs";
-import { CODEBUDDY_INTL, startFlow, pollFlow, credentialFromTokens, fetchModels } from "../core/oauth/codebuddyIntl.mjs";
+import { CODEBUDDY_INTL, startFlow, pollFlow, fetchLoginAccount, credentialFromTokens, fetchModels } from "../core/oauth/codebuddyIntl.mjs";
 import { createFlowManager } from "../core/oauth/flowManager.mjs";
 import { codebuddyIntlMarker, isCodeBuddyIntlOAuth } from "../core/executors/codebuddyIntl.mjs";
 import { isOAuthConnection, resolveOAuthCredentials } from "../core/oauth/credentials.mjs";
+import { createQuotaTracker } from "../core/oauth/workbuddyQuotaTracker.mjs";
 
 const uuid = () => crypto.randomUUID();
 
@@ -338,6 +339,12 @@ function comboKindError(kind) {
 export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   const R = [];
   const route = (method, pattern, handler) => R.push({ method, pattern, handler });
+
+  // WorkBuddy quota tracker — read-only and manual. GET serves the in-memory snapshot
+  // only; POST is the one deliberate upstream refresh. Neither writes usage, budget,
+  // breakers, health, or test results. See docs/workbuddy-quota-tracker-spec.md.
+  // `hooks.quotaFetch` lets tests inject a stub so no test can reach WorkBuddy.
+  const quotaTracker = createQuotaTracker({ repos, now: () => Date.now(), fetchQuota: hooks.quotaFetch });
 
   // nodes
   route("GET", /^\/api\/nodes$/, (req, res) => {
@@ -1463,7 +1470,10 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (!conn) return json(res, 404, { error: { message: "not_found" } });
     json(res, 200, connectionViewWith(repos, conn));
   });
-  route("DELETE", /^\/api\/connections\/(?<id>[^/]+)$/, (req, res, p) => noContent(res, repos.connections.delete(p.id)));
+  route("DELETE", /^\/api\/connections\/(?<id>[^/]+)$/, (req, res, p) => {
+    quotaTracker.invalidate(p.id);
+    return noContent(res, repos.connections.delete(p.id));
+  });
 
   // ── OAuth (CodeBuddy Intl) ────────────────────────────────────────────────
   // One provider, deliberately: no generic OAuth framework. Every route enforces the
@@ -1498,7 +1508,10 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
    */
   function commitFor(intent) {
     return (tokens) => {
-      const credentials = credentialFromTokens(tokens);
+      // `tokens.quotaIdentity` rides along from the poll wrapper: a verified `{ uid }` for
+      // this exact login, or null when the lookup was unavailable. It is private metadata
+      // for the quota tracker and never appears in a safe node/connection view.
+      const credentials = credentialFromTokens(tokens, { quotaIdentity: tokens.quotaIdentity ?? null });
       if (intent.kind === "create") {
         if (repos.nodes.byPrefix(intent.prefix)) {
           const err = new Error(`prefix "${intent.prefix}" is already in use`);
@@ -1530,6 +1543,8 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       const node = repos.nodes.get(existing.nodeId);
       if (!node || !isCodeBuddyIntlOAuth(node)) { const err = new Error("target is not a CodeBuddy Intl OAuth connection"); err.code = "bad_target"; throw err; }
       const updated = repos.connections.update(existing.id, { credentials, status: "active" });
+      // A reconnect can be a different account: never keep the previous snapshot.
+      quotaTracker.invalidate(existing.id);
       return { node: nodeView(repos, node), connectionId: updated.id };
     };
   }
@@ -1588,7 +1603,18 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("POST", /^\/api\/providers\/codebuddy-intl\/oauth\/flows\/(?<flowId>[^/]+)\/poll$/, async (req, res, p) => {
     if (!sameOriginAction(req, res, cfg)) return;
     try {
-      const result = await flows.poll(p.flowId, (state) => pollFlow(state));
+      // The flow manager commits synchronously, so the state-bound identity lookup must
+      // happen here, inside the async poll wrapper, while `state` (the login handle) is
+      // still in hand. A failed lookup leaves `quotaIdentity` null: chat login still
+      // succeeds, the account is simply quota-ineligible until reconnect.
+      const result = await flows.poll(p.flowId, async (state) => {
+        const outcome = await pollFlow(state);
+        if (outcome?.state === "complete" && outcome.tokens?.accessToken) {
+          const identity = await fetchLoginAccount(outcome.tokens.accessToken, state);
+          outcome.tokens.quotaIdentity = identity ?? null;
+        }
+        return outcome;
+      });
       json(res, 200, result);
     } catch (err) {
       return oauthError(res, err);
@@ -1601,6 +1627,33 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       json(res, 200, flows.cancel(p.flowId));
     } catch (err) {
       return oauthError(res, err);
+    }
+  });
+
+  // ── WorkBuddy quota tracker routes ────────────────────────────────────────
+  route("GET", /^\/api\/providers\/workbuddy\/quota$/, (req, res) => {
+    json(res, 200, { accounts: quotaTracker.accounts() });
+  });
+
+  route("POST", /^\/api\/providers\/workbuddy\/quota\/refresh$/, async (req, res) => {
+    if (!sameOriginAction(req, res, cfg)) return;
+    let input;
+    try { input = JSON.parse((await readBody(req)).toString("utf8") || "{}"); } catch { return json(res, 400, { error: { message: "bad_request", detail: "invalid JSON body" } }); }
+    const connectionId = typeof input?.connectionId === "string" ? input.connectionId.trim() : "";
+    if (!connectionId) return json(res, 400, { error: { message: "bad_request", detail: "connectionId is required" } });
+    const connection = repos.connections.get(connectionId);
+    if (!connection) return json(res, 404, { error: { message: "not_found" } });
+    try {
+      const result = await quotaTracker.refresh(connectionId);
+      json(res, 200, result);
+    } catch (err) {
+      const code = err?.code || "upstream_error";
+      const status = code === "not_found" ? 404
+        : code === "identity_unavailable" ? 409
+        : code === "disabled" || code === "reauth-required" ? 409
+        : code === "not_oauth_node" || code === "not_oauth_connection" ? 400
+        : 502;
+      return json(res, status, { error: { message: code, detail: err?.message || "the quota read failed" } });
     }
   });
 

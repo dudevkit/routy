@@ -35,8 +35,9 @@ const ACTION = { "x-routy-action": "1" };
 const jsonRes = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 /** Stub upstream: state returns a valid login URL; poll reports pending then complete. */
-function installUpstream({ pollCodes = [] } = {}) {
+function installUpstream({ pollCodes = [], accountCodes = [] } = {}) {
   let pollCalls = 0;
+  let accountCalls = 0;
   upstream = vi.fn(async (url, opts = {}) => {
     const u = String(url);
     if (u.includes("/plugin/auth/state")) {
@@ -44,6 +45,11 @@ function installUpstream({ pollCodes = [] } = {}) {
     }
     if (u.includes("/plugin/auth/token/refresh")) {
       return jsonRes(200, { code: 0, data: { accessToken: "at-refreshed", refreshToken: "rt-2", expiresIn: 3600 } });
+    }
+    if (u.includes("/plugin/login/account")) {
+      const code = accountCodes[Math.min(accountCalls++, accountCodes.length - 1)];
+      if (code === 0) return jsonRes(200, { code: 0, data: { uid: "uid-42", nickname: "Alice" } });
+      return jsonRes(200, { code: code ?? 12151 });
     }
     if (u.includes("/plugin/auth/token")) {
       const code = pollCodes[Math.min(pollCalls++, pollCodes.length - 1)];
@@ -133,6 +139,32 @@ describe("oauth poll/commit", () => {
       expect(view.body[0].keyMasked).toBe("OAuth");
       expect(view.body[0].authState).toBe("active");
     }
+  });
+
+  it("captures a verified uid during login but never exposes it", async () => {
+    installUpstream({ pollCodes: [0], accountCodes: [0] });
+    const start = await post("/api/providers/codebuddy-intl/oauth/start", { intent: "create", name: "CB", prefix: "cb" }, ACTION);
+    const poll = await post(`/api/providers/codebuddy-intl/oauth/flows/${start.body.flowId}/poll`, {}, ACTION);
+    if (poll.status !== 200 || poll.body.state !== "complete") return; // server-side cadence
+    const node = repos.nodes.list()[0];
+    const conn = repos.connections.list(node.id)[0];
+    expect(conn.credentials.providerSpecificData.quotaIdentity).toEqual({ uid: "uid-42" });
+    // The uid is private metadata: never in the flow result or the connection view.
+    expect(JSON.stringify(poll.body)).not.toContain("uid-42");
+    const view = await request("GET", `/api/nodes/${node.id}/connections`);
+    expect(JSON.stringify(view.body)).not.toContain("uid-42");
+  });
+
+  it("completes the login without identity when the account lookup stays pending", async () => {
+    installUpstream({ pollCodes: [0], accountCodes: [12151] });
+    const start = await post("/api/providers/codebuddy-intl/oauth/start", { intent: "create", name: "CB", prefix: "cb" }, ACTION);
+    const poll = await post(`/api/providers/codebuddy-intl/oauth/flows/${start.body.flowId}/poll`, {}, ACTION);
+    if (poll.status !== 200 || poll.body.state !== "complete") return;
+    const node = repos.nodes.list()[0];
+    const conn = repos.connections.list(node.id)[0];
+    // Chat login still succeeded; the account is simply quota-ineligible.
+    expect(conn.credentials.accessToken).toBe("at-1");
+    expect(conn.credentials.providerSpecificData.quotaIdentity).toBeUndefined();
   });
 
   it("cancel is idempotent and safe", async () => {
