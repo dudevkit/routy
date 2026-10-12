@@ -98,6 +98,19 @@ export function classifyConnectionError(err, { connection, recent429 } = {}) {
     if (recent429 && [...recent429].some((id) => id !== connection?.id)) {
       return { verdict: "global", reason: "429 on multiple keys", others: recent429.size };
     }
+    // An OAuth account is a subscription, not a rotatable API key, and two things make the
+    // cooldown default wrong for it:
+    //   · there is no sibling credential to corroborate with, so the multi-key heuristic
+    //     above can never fire — a lone OAuth account always lands here; and
+    //   · its executor redacts the provider body by design (CodeBuddy error text can echo
+    //     tokens), so no keyword can ever match, no matter what the provider actually said.
+    // Persisting a 5-10 minute cooldown would then sideline the user's only account over a
+    // limit no account can fix — a self-inflicted outage. Mark it `soft`: the caller still
+    // rotates to the next account and falls through to the next route exactly as before, but
+    // no health state is written, so the account is never taken out of rotation.
+    if (connection?.credentials?.authType === "oauth") {
+      return { verdict: "cooldown", reason: "provider rate limit on an OAuth account — account not sidelined", soft: true };
+    }
     // Unrecognized body: still treated as this key's problem, but the next distinct
     // key to 429 flips the verdict to global via recent429.
     return { verdict: "cooldown", reason: "rate limit (unclassified body)" };
@@ -150,6 +163,14 @@ export function recordConnectionFailure(repos, connection, err, settings = {}, n
   const scope = connectionScope(connection.id);
   const state = connectionState(repos, connection.id);
   const verdict = classifyConnectionError(err, { connection, recent429 });
+
+  // A `soft` verdict means "this attempt failed, but do not write health". The one case today
+  // is an OAuth account's unclassifiable 429: its body is redacted by design, and a lone
+  // subscription has no sibling credential to corroborate with, so charging it a cooldown
+  // would take the user's only account out of rotation over a provider-wide limit.
+  if (verdict.soft) {
+    return { verdict: verdict.verdict, reason: verdict.reason, cooldownMs: 0, state, soft: true };
+  }
 
   if (verdict.verdict === "global" || verdict.verdict === "node") {
     return { verdict: verdict.verdict, reason: verdict.reason, others: verdict.others, state };

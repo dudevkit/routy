@@ -13,6 +13,7 @@ import {
   classifyConnectionError, recordConnectionFailure, recordConnectionSuccess,
   connectionState, isConnectionAvailable, earliestRecovery, connectionScope,
 } from "../core/key-health.mjs";
+import { settleFailure } from "../core/dispatch.mjs";
 import { CONNECTION_COOLDOWN_MS, CONNECTION_COOLDOWN_MAX_MS } from "../core/limits.mjs";
 
 let tmp, db, repos, node;
@@ -110,6 +111,31 @@ describe("classifyConnectionError", () => {
     const same = classifyConnectionError(err(429, "rate limited"), { connection: connA, recent429: set });
     expect(same.verdict).not.toBe("global");
   });
+
+  it("does not cool a lone OAuth account on an unclassifiable 429", () => {
+    // The CodeBuddy executor redacts the provider body (it can echo tokens), so its 429
+    // arrives as this exact sanitized message. A subscription has no sibling credential,
+    // so the multi-key heuristic can never fire — the old default cooled the user's only
+    // account for 5-10 minutes over a provider-wide limit.
+    const oauth = { id: "o1", credentials: { authType: "oauth", accessToken: "at" } };
+    const v = classifyConnectionError(err(429, "codebuddy rate limited (429)"), { connection: oauth, recent429: new Set(["o1"]) });
+    expect(v.verdict).toBe("cooldown");
+    expect(v.soft).toBe(true);
+  });
+
+  it("still cools an OAuth account when the body plainly names its credential", () => {
+    const oauth = { id: "o1", credentials: { authType: "oauth", accessToken: "at" } };
+    const v = classifyConnectionError(err(429, "your api key has exceeded its per-key rate limit"), { connection: oauth });
+    expect(v.verdict).toBe("cooldown");
+    expect(v.soft).toBeUndefined();
+  });
+
+  it("still cools an API-key connection on the same unclassifiable body", () => {
+    const apiKey = { id: "k1", credentials: { apiKey: "sk" } };
+    const v = classifyConnectionError(err(429, "codebuddy rate limited (429)"), { connection: apiKey, recent429: new Set(["k1"]) });
+    expect(v.verdict).toBe("cooldown");
+    expect(v.soft).toBeUndefined();
+  });
 });
 
 describe("recordConnectionFailure", () => {
@@ -186,6 +212,45 @@ describe("recordConnectionFailure", () => {
     expect(s.state).toBe("closed");
     expect(s.failures).toBe(0);
     expect(isConnectionAvailable(s)).toBe(true);
+  });
+
+  it("writes no health for a soft OAuth 429, so the account stays in rotation", () => {
+    const now = Date.now();
+    const oauth = repos.connections.create({
+      nodeId: node.id, name: "oauth-1",
+      credentials: { authType: "oauth", accessToken: "at", authState: "active" },
+    });
+    const v = recordConnectionFailure(repos, oauth, err(429, "codebuddy rate limited (429)"), {}, now);
+    expect(v.verdict).toBe("cooldown");
+    expect(v.soft).toBe(true);
+    expect(v.cooldownMs).toBe(0);
+    // Nothing was persisted: the account is still available and carries no cooldown streak.
+    const s = connectionState(repos, oauth.id);
+    expect(s.state).not.toBe("cooldown");
+    expect(isConnectionAvailable(s, now)).toBe(true);
+    expect(s.cooldownStreak ?? 0).toBe(0);
+    expect(repos.connections.get(oauth.id).status).toBe("active");
+  });
+});
+
+describe("settleFailure", () => {
+  it("reports a soft OAuth 429 as a key action without writing health", () => {
+    const now = Date.now();
+    const oauth = repos.connections.create({
+      nodeId: node.id, name: "oauth-2",
+      credentials: { authType: "oauth", accessToken: "at", authState: "active" },
+    });
+    const settled = settleFailure(repos, {
+      node,
+      connection: oauth,
+      result: { status: 429, errorCode: "rate_limited", message: "codebuddy rate limited (429)", retryAfterMs: 30_000 },
+      cooledHere: [],
+    });
+    expect(settled.action).toBe("key");
+    expect(settled.soft).toBe(true);
+    // nothing was rolled back (nothing was cooled), and nothing is on cooldown
+    expect(connectionState(repos, oauth.id).state).not.toBe("cooldown");
+    expect(isConnectionAvailable(connectionState(repos, oauth.id), now)).toBe(true);
   });
 });
 

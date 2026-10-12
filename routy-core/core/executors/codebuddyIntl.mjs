@@ -104,6 +104,10 @@ export class CodeBuddyIntlExecutor extends DefaultExecutor {
    * CodeBuddy chat error bodies are never surfaced verbatim — only the status. A
    * bounded, allowlisted message keeps tokens and raw provider text out of logs,
    * API errors, and request-detail captures.
+   *
+   * This redaction is deliberate and stays: the provider's error text may echo tokens.
+   * key-health knows an OAuth 429 arrives unclassifiable and treats it as provider-wide
+   * instead of cooling the user's only account, so no body signal is needed here.
    */
   errorMessage(status) {
     if (status === 401 || status === 403) return "codebuddy auth rejected (401/403)";

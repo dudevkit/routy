@@ -191,11 +191,13 @@ export function settleFailure(repos, { node, connection, result, settings = {}, 
   }
 
   // Only a cooldown is rollback-able; a disable is a strike the key earned.
-  if (verdict.verdict === "cooldown") cooledHere.push(connection.id);
-  log?.warn?.(tag, `node ${node.prefix}: key ${connection.name} — ${verdict.verdict} (${result.errorCode})`, {
+  if (verdict.verdict === "cooldown" && !verdict.soft) cooledHere.push(connection.id);
+  log?.warn?.(tag, verdict.soft
+    ? `node ${node.prefix}: key ${connection.name} — rate limited, account kept in rotation (${verdict.reason})`
+    : `node ${node.prefix}: key ${connection.name} — ${verdict.verdict} (${result.errorCode})`, {
     reason: verdict.reason, status: result.status ?? null,
   });
-  return { action: "key", verdict: verdict.verdict, reason: verdict.reason };
+  return { action: "key", verdict: verdict.verdict, reason: verdict.reason, soft: verdict.soft === true };
 }
 
 /**

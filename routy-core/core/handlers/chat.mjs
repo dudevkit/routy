@@ -267,6 +267,10 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       const OPTIONAL_REASONING_PARAMS = ["reasoning_effort", "reasoning", "thinking"];
       let paramRetryUsed = false;
       const keyQueue = keys.map((c) => ({ connection: c, body: null })); // body=null -> build from request
+      // A soft 429 (OAuth account, unclassifiable body) writes no health, so it is invisible to
+      // the cooling-key bookkeeping below. Remember that we saw one so the exhausted-route
+      // response reports an upstream rate limit instead of the misleading "keys cooling down".
+      let softLimited = false;
 
       // Index loop over a growable queue: a requeued param-retry is appended and will be
       // reached after the current pass's remaining keys.
@@ -488,7 +492,12 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           // One label for every key-scoped line: name to read, mask to disambiguate
           // keys that share a name (auto-named ones do until they are renamed).
           const keyLabel = connectionLabel(connection);
-          if (verdict.verdict === "cooldown") {
+          if (verdict.soft) {
+            // An OAuth account's unclassifiable 429: no health was written, so this is not a
+            // cooldown and must not be logged as one. Say what happened and keep rotating.
+            softLimited = true;
+            log.warn("CHAT", `node ${r.node.prefix} key "${keyLabel}" rate limited — account kept in rotation (${verdict.reason})`);
+          } else if (verdict.verdict === "cooldown") {
             cooledHere.push(connection.id);
             log.warn("CHAT", `node ${r.node.prefix} key "${keyLabel}" cooling down ${Math.round(verdict.cooldownMs / 1000)}s: ${verdict.reason}`);
           } else if (verdict.verdict === "disable") {
@@ -644,6 +653,18 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       if (nodeDied) continue; // combo fallback: next node
       const recovery = earliestRecovery(repos, keys);
       const retryAfterMs = recovery ? Math.max(0, recovery - Date.now()) : null;
+      if (softLimited && !recovery) {
+        // The only thing that failed was a provider rate limit that wrote no health. Saying
+        // "keys cooling down" would be false — they are not — so report the real condition and
+        // keep it honest for the caller.
+        lastError = {
+          status: 429,
+          errorCode: "upstream_rate_limited",
+          message: `provider ${r.node.prefix} is rate-limiting this model — account kept in rotation; retry or pick another upstream/model`,
+          retryAfterMs: lastKeyError?.retryAfterMs ?? null,
+        };
+        continue;
+      }
       if (lastKeyError) {
         // The last failure's own Retry-After only speaks for that one key; when keys are
         // cooling, the soonest cooldown expiry is the honest answer to "when can I retry".
@@ -659,7 +680,11 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
     }
 
     const err = lastError || { status: 503, errorCode: "all_unavailable", message: "no healthy route" };
-    const status = err.errorCode === "auth_error" ? 502 : err.status === 501 ? 501 : err.status === 400 ? 400 : 503;
+    const status = err.errorCode === "auth_error" ? 502
+      : err.errorCode === "upstream_rate_limited" ? 429
+      : err.status === 501 ? 501
+      : err.status === 400 ? 400
+      : 503;
     return json(res, status, {
       error: {
         message: err.errorCode || "all_unavailable",
