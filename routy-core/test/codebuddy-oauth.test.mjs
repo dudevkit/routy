@@ -259,6 +259,31 @@ describe("executor", () => {
     expect(headers["x-codebuddy-request"]).toBe("1");
   });
 
+  it("carries the five conversation headers the gateway's channel check requires", () => {
+    const CONVO = [
+      "X-Conversation-ID", "X-Parent-Conversation-ID", "X-Conversation-Request-ID",
+      "X-Conversation-Message-ID", "X-Session-ID",
+    ];
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    const first = codebuddyChatHeaders();
+    for (const h of CONVO) expect(first[h]).toMatch(UUID);
+    // fresh per call: these are per-request correlation ids, never reused
+    const second = codebuddyChatHeaders();
+    for (const h of CONVO) expect(second[h]).not.toBe(first[h]);
+    // identity rides only when a verified uid exists — never invented
+    expect(first["X-User-Id"]).toBeUndefined();
+    expect(first["X-Domain"]).toBeUndefined();
+    const withUid = codebuddyChatHeaders("uid-42");
+    expect(withUid["X-User-Id"]).toBe("uid-42");
+    expect(withUid["X-Domain"]).toBe(CODEBUDDY_INTL.host);
+    // and the executor forwards the connection's uid
+    const ex = new CodeBuddyIntlExecutor(
+      { prefix: "cb", baseUrl: "x", data: { authProvider: "codebuddy-intl-oauth" } },
+      { credentials: { authType: "oauth", accessToken: "AT", providerSpecificData: { quotaIdentity: { uid: "uid-42" } } } },
+    );
+    expect(ex.buildHeaders()["X-User-Id"]).toBe("uid-42");
+  });
+
   it("sanitizes error bodies so token-shaped text never escapes", () => {
     const ex = new CodeBuddyIntlExecutor({ prefix: "cb", baseUrl: "x", data: {} }, { credentials: {} });
     const msg = ex.errorMessage(401, "access_token=super-secret refresh_token=also-secret");

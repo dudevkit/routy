@@ -23,6 +23,8 @@
 # ── Local state ─────────────────────────────────────────────────────────────
 node_modules/
 *.log
+# gateway console output of a local dev run (Start-Process redirection)
+/logs/
 .DS_Store
 tests/golden/.tmp-data/
 

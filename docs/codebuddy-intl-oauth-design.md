@@ -58,6 +58,8 @@ Observed upstream flow (the same route shapes exist on both hosts):
 
 Chat uses `https://www.workbuddy.ai/v2/chat/completions` by default, forces streaming, and sets registry headers including User-Agent `IDE/2.108.1 CodeBuddy/2.108.1`, `X-Product: SaaS`, `X-IDE-Type`, `X-IDE-Name`, `x-requested-with`, and `x-codebuddy-request: 1`.
 
+**Channel verification (observed live 2026-10-17, fresh OAuth account).** The gateway refuses any chat request that does not carry all five conversation headers together — `X-Conversation-ID`, `X-Parent-Conversation-ID`, `X-Conversation-Request-ID`, `X-Conversation-Message-ID`, `X-Session-ID` — with HTTP 400 `{code: 11128, msg: "request illegal"}` ("this call failed channel verification … not sent from an official client"). Each header alone, and every pair tested, still fails; all five as fresh per-request UUIDs flip the identical request to `200` + an SSE stream. The flip does not come from anywhere else tested: identity headers (`X-User-Id` from the verified login uid, `X-Domain`), gateway cookies, HTTP/2, product/`X-Stainless-*` fingerprints, and model choice all still 400 without the five. Identity headers ride along when a verified uid exists, and are never invented. Once past the gate the body rule applies — the first message must be a system prompt, which `transformCodebuddyBody` already guarantees.
+
 ## 3. User experience
 
 ### Entry points and accounts

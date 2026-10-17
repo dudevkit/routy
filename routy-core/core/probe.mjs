@@ -434,7 +434,7 @@ export async function probeCodeBuddyOAuth(repos, node, connection, log = null, {
       headers: {
         "content-type": "application/json",
         "content-length": String(Buffer.byteLength(payload)),
-        ...codebuddyChatHeaders(),
+        ...codebuddyChatHeaders(live?.credentials?.providerSpecificData?.quotaIdentity?.uid ?? null),
         ...(token ? { authorization: `Bearer ${token}` } : {}),
       },
       body: payload,

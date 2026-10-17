@@ -14,6 +14,7 @@
 //
 // Error bodies are sanitized: the provider may echo token-shaped text, and the shared
 // executor's default would put the first 500 characters into logs and error details.
+import { randomUUID } from "node:crypto";
 import { DefaultExecutor } from "./default.mjs";
 import { CODEBUDDY_INTL } from "../oauth/codebuddyIntl.mjs";
 
@@ -82,8 +83,37 @@ export function transformCodebuddyBody(model, body) {
   return b;
 }
 
-/** The fixed registry headers (registry transport.headers) for a CodeBuddy chat call. */
-export function codebuddyChatHeaders() {
+/**
+ * The five conversation headers WorkBuddy's gateway requires on every chat call.
+ *
+ * Observed live 2026-10-17 against `POST /v2/chat/completions` with a fresh OAuth
+ * account: without them the gateway answers HTTP 400 `{code: 11128, msg: "request
+ * illegal"}` — its channel-verification refusal for a call it does not recognise as
+ * coming from the official client. Each of the five alone, and each pair tested, still
+ * 400s; all five together flip the identical request to `200` + an SSE stream, after
+ * which only the body rules apply (the first message must be a system prompt, which
+ * transformCodebuddyBody already guarantees). Identity headers, cookies, HTTP/2 and
+ * every product/stainless header combination reproduced none of that flip, so this set
+ * is the gate.
+ *
+ * Values are fresh UUIDs per request — correlation ids the gateway never reads back.
+ */
+export function codebuddyConversationHeaders() {
+  return {
+    "X-Conversation-ID": randomUUID(),
+    "X-Parent-Conversation-ID": randomUUID(),
+    "X-Conversation-Request-ID": randomUUID(),
+    "X-Conversation-Message-ID": randomUUID(),
+    "X-Session-ID": randomUUID(),
+  };
+}
+
+/**
+ * The fixed registry headers (registry transport.headers) for a CodeBuddy chat call,
+ * plus the verified account identity and the conversation set above. `uid` is the
+ * WorkBuddy account identity captured at login; without it no identity header is sent.
+ */
+export function codebuddyChatHeaders(uid = null) {
   return {
     "User-Agent": CODEBUDDY_INTL.chatUserAgent,
     "X-Product": "SaaS",
@@ -91,6 +121,8 @@ export function codebuddyChatHeaders() {
     "X-IDE-Name": "IDE",
     "x-requested-with": "XMLHttpRequest",
     "x-codebuddy-request": "1",
+    ...(uid ? { "X-User-Id": uid, "X-Domain": CODEBUDDY_INTL.host } : {}),
+    ...codebuddyConversationHeaders(),
   };
 }
 
@@ -121,7 +153,8 @@ export class CodeBuddyIntlExecutor extends DefaultExecutor {
    * honour a media-style `auth` if one is ever passed.
    */
   buildHeaders(auth = null, contentType = null, extra = null) {
-    const base = { ...codebuddyChatHeaders(), ...super.buildHeaders(auth, contentType, extra) };
+    const uid = this.connection?.credentials?.providerSpecificData?.quotaIdentity?.uid ?? null;
+    const base = { ...codebuddyChatHeaders(uid), ...super.buildHeaders(auth, contentType, extra) };
     if (!auth) {
       const token = this.connection?.credentials?.accessToken;
       if (token) base.authorization = `Bearer ${token}`;
