@@ -62,6 +62,19 @@ export function looksProviderWide(body) {
   return GLOBAL_429.test(String(body || "").toLowerCase());
 }
 
+// 429 bodies that name the ADDRESS rather than the account: the only evidence that a
+// proxy exit is what got metered. A body that says neither (opaque, or redacted by the
+// executor) is not evidence against the exit — see classifyProxyFailure.
+const ADDRESS_429 = /this (address|ip|network|host)|your (ip|address|network)|ip address|per[- ]ip|from this network|region|geolocat/;
+
+/**
+ * Does this 429 body blame the caller's network address? Only this wording justifies
+ * cooling a proxy exit and spending the fleet on it.
+ */
+export function looksAddressScoped(body) {
+  return ADDRESS_429.test(String(body || "").toLowerCase());
+}
+
 export function classifyConnectionError(err, { connection, recent429 } = {}) {
   const status = err?.status ?? 0;
   const body = String(err?.message || "").toLowerCase();

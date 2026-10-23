@@ -106,11 +106,16 @@ disabled or emptied falls back to the provider's route rather than failing: the 
 still proxied, so nothing leaks.
 
 **Failover.** A request tries exits in rotation order. When one fails *as an address* — it
-cannot be reached, it answers 407, or it comes back 429 — the request is retried through the
-next exit. Nothing else rotates: a 5xx is the provider's, and burning the fleet over it would
-punish good addresses for a bad upstream. Attempts are capped (5 exits per request; rate-limit
-rotations stop at 3, because a 429 that answers from several exits is a limit no address can
-dodge) — so a pathological fleet costs a bounded amount instead of one request per exit.
+cannot be reached, it answers 407, or it comes back 429 **naming the address** ("rate limit
+exceeded for this address", "per-IP") — the request is retried through the next exit. Nothing
+else rotates: a 5xx is the provider's, and burning the fleet over it would punish good
+addresses for a bad upstream. A 429 that names the provider is provider-wide; a 429 that names
+*neither* (an opaque body, or one an executor redacts by design — CodeBuddy's does) is not
+evidence against the address either, so it is reported as an upstream rate limit and leaves the
+fleet alone. Reading it as per-IP is what cooled an entire pool on WorkBuddy and then skipped
+the provider's other accounts. Attempts are capped (5 exits per request; rate-limit rotations
+stop at 3, because a 429 that answers from several exits is a limit no address can dodge) — so a
+pathological fleet costs a bounded amount instead of one request per exit.
 
 **Cooldown.** A failed exit leaves the rotation instead of being offered again next cycle.
 The window starts at `proxyCooldownMs` (default 60s, since the limits worth rotating around

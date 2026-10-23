@@ -199,6 +199,26 @@ describe("failover across a fleet", () => {
     expect(healthOf(pool, 0).openUntil ?? null).toBeNull();
   }, 20_000);
 
+  it("does not blame the exits for a 429 that names neither the address nor the provider", async () => {
+    // WorkBuddy's executor redacts its 429 body by design, so the only text that reaches
+    // this decision is "codebuddy rate limited (429)". Reading that as a per-IP limit is
+    // how a per-ACCOUNT limit cooled every exit of the fleet and then broke out of the key
+    // loop, so the other accounts were never tried (observed live 2026-10-23).
+    const opaque = await startUpstream({ status: 429, body: '{"code":429,"msg":"too many requests"}' });
+    const okProxy = await startProxy({ toPort: opaque.port });
+    const second = await startProxy({ toPort: opaque.port });
+    const pool = bindFleet([okProxy.url, second.url]);
+
+    const result = await run();
+    expect(result.ok).toBe(false);
+    // reported as an upstream rate limit, not as a spent address
+    expect(result.errorCode).toBe("rate_limited");
+    // and neither exit carries the blame — they are still usable
+    expect(isExitAvailable(healthOf(pool, 0))).toBe(true);
+    expect(isExitAvailable(healthOf(pool, 1))).toBe(true);
+    expect(healthOf(pool, 0).openUntil ?? null).toBeNull();
+  }, 20_000);
+
   it("does not rotate on a 5xx from the provider", async () => {
     const broken = await startUpstream({ status: 500, body: "boom" });
     const ok = await startUpstream();
@@ -278,6 +298,82 @@ describe("when the fleet cannot serve at all", () => {
 function poolStrictOf(pool) {
   return repos.proxyPools.get(pool.id).config.strict !== false;
 }
+
+describe("key rotation behind a provider-bound pool", () => {
+  /** Two keys on one node, both egressing through the same provider pool. */
+  async function withTwoKeys(upstream) {
+    node = repos.nodes.create({ name: "A", prefix: "a", apiType: "openai", baseUrl: `http://127.0.0.1:45999/v1` });
+    const pool = repos.proxyPools.create({ name: "fleet", config: { strict: true } });
+    repos.proxyPoolEntries.addMany(pool.id, [(await startProxy({ toPort: upstream.port })).url]);
+    repos.nodes.update(node.id, { data: { proxy: { poolIds: [pool.id], strategy: "none" } } });
+    repos.connections.create({ nodeId: node.id, name: "k1", credentials: { apiKey: "sk-aaa" } });
+    repos.connections.create({ nodeId: node.id, name: "k2", credentials: { apiKey: "sk-bbb" } });
+    repos.settings.update({ requireApiKey: false });
+    return pool;
+  }
+
+  const handlerFor = () => {
+    const handler = createChatHandler(repos);
+    const server = http.createServer((req, res) => handler(req, res));
+    servers.push(server);
+    return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+  };
+
+  const chatOnce = (port) =>
+    new Promise((resolve, reject) => {
+      const payload = JSON.stringify({ model: "a/m1", stream: true, messages: [{ role: "user", content: "x" }] });
+      const req = http.request(
+        { host: "127.0.0.1", port, path: "/v1/chat/completions", method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } },
+        (res) => { let b = ""; res.on("data", (c) => (b += c)); res.on("end", () => resolve({ status: res.statusCode, body: b })); },
+      );
+      req.on("error", reject);
+      req.end(payload);
+    });
+
+  it("still rotates to the second account when a redacted 429 arrives through the pool", async () => {
+    // The regression: proxy_exhausted with proxySource="provider" broke out of the key
+    // loop, so the request never reached key 2 even though it was healthy.
+    const stub = await startUpstream({ status: 429, body: "codebuddy rate limited (429)" });
+    const pool = await withTwoKeys(stub);
+    const port = await handlerFor();
+
+    const r = await chatOnce(port);
+    expect(r.status).toBe(429);
+    // Both keys were tried: the 429 is not an address problem, so the key loop keeps going.
+    expect(stub.hits).toHaveLength(2);
+    // and the exit is not sitting in a cooldown it did not earn
+    expect(isExitAvailable(healthOf(pool, 0))).toBe(true);
+  }, 20_000);
+
+  it("serves from the second account when the first is the one rate limited", async () => {
+    // Per-key limits are the real shape of this provider: one account metered, the other
+    // fine. The 429 comes back from the upstream per request, so the stub answers by key.
+    const hits = [];
+    const server = http.createServer((req, res) => {
+      const chunks = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => {
+        const auth = req.headers.authorization || "";
+        hits.push(auth);
+        if (auth.includes("sk-aaa")) return res.writeHead(429, { "content-type": "application/json" }).end("codebuddy rate limited (429)");
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write(`data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n`);
+        res.write("data: [DONE]\n\n");
+        res.end();
+      });
+    });
+    const port = await listen(server);
+    servers.push(server);
+
+    await withTwoKeys({ port });
+    const gateway = await handlerFor();
+    const r = await chatOnce(gateway);
+
+    expect(r.status).toBe(200);
+    expect(r.body).toContain("ok");
+    expect(hits.some((a) => a.includes("sk-bbb"))).toBe(true); // key 2 actually served it
+  }, 20_000);
+});
 
 describe("probe path", () => {
   it("uses one exit and leaves traffic health alone", async () => {

@@ -13,7 +13,7 @@
 // address and the request looks like it succeeded. Opt out per pool, not in.
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 import { log } from "../lib/log.mjs";
-import { looksProviderWide } from "./key-health.mjs";
+import { looksProviderWide, looksAddressScoped } from "./key-health.mjs";
 import { PROXY_COOLDOWN_MAX_MS, PROXY_COOLDOWN_MS } from "./limits.mjs";
 
 // ProxyAgent owns its own connection pool to the proxy; the tuned per-origin Agent in
@@ -95,15 +95,27 @@ export function isExitAvailable(state, now = Date.now()) {
  * Only three signals are evidence about the ADDRESS:
  *   connect-level failure   the exit could not be reached at all
  *   407                     the exit rejected our credentials
- *   429                     this address is being metered — unless the body names the
- *                           provider, in which case no address can fix it
+ *   429 naming the address  "rate limit exceeded for this address" — the one wording that
+ *                           says the IP was metered. A body naming the provider means no
+ *                           address can fix it, and a body that names NEITHER (opaque, or
+ *                           redacted by the executor) is not evidence against the exit
+ *                           either: cooling a whole fleet on a guess is how a per-account
+ *                           limit became "every exit is spent, the keys were never tried".
+ *                           Observed live 2026-10-23 on WorkBuddy: a redacted 429
+ *                           ("codebuddy rate limited (429)") was read as per-IP, three
+ *                           exits were cooled, all 13 were eventually out, and the chat
+ *                           handler then broke out of the key loop because the pool was
+ *                           provider-bound — so the other accounts were never rotated to.
  * Everything else (5xx, 401, a timeout) is about the provider, and cooling exits for it
  * would take the whole fleet out over one upstream's bad day.
  */
 export function classifyProxyFailure({ status = 0, message = "", kind = null } = {}) {
   if (kind === "connect") return "exit";
   if (status === 407) return "exit";
-  if (status === 429) return looksProviderWide(message) ? "provider" : "exit";
+  if (status === 429) {
+    if (looksProviderWide(message)) return "provider";
+    return looksAddressScoped(message) ? "exit" : "provider";
+  }
   return "provider";
 }
 
