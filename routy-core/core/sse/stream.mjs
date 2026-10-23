@@ -139,6 +139,10 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
   // included). idleTimeoutMs = 0 disables it.
   let stalled = false;
   let errored = false;
+  // Why the stream broke. Returned to the caller so the failure is diagnosable from the
+  // log line and the usage row — "upstream_stream_failed" alone names no cause, and the
+  // cause is the only thing that separates a dead upstream from a throttled one.
+  let errorDetail = null;
   const readWithIdle = async () => {
     if (!idleTimeoutMs) return reader.read();
     let timer;
@@ -203,10 +207,11 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
     if (err instanceof StallError) {
       stalled = true;
       errored = true;
+      errorDetail = `no upstream data for ${idleTimeoutMs}ms`;
       try { await reader.cancel(); } catch { /* already gone */ }
       signal?.abort?.();
       if (!clientGone && !res.writableEnded) {
-        const detail = `no upstream data for ${idleTimeoutMs}ms`;
+        const detail = errorDetail;
         if (!res.write(formatSse("error", JSON.stringify({ error: { message: "upstream_stalled", detail, retryAfterMs: null } })))) {
           await onceDrain(res);
         }
@@ -215,8 +220,11 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
       // upstream died mid-stream: emit a terminal error frame so the client doesn't hang
       errored = true;
       const detail = String(err?.message || err).slice(0, 200);
+      // undici hides the real cause one level down; the code is what tells an aborted
+      // socket from a reset one.
+      errorDetail = [detail, err?.cause?.code, err?.cause?.message].filter(Boolean).join(" · ").slice(0, 240);
       if (!res.writableEnded) {
-        if (!res.write(formatSse("error", JSON.stringify({ error: { message: "upstream_stream_failed", detail } })))) {
+        if (!res.write(formatSse("error", JSON.stringify({ error: { message: "upstream_stream_failed", detail, retryAfterMs: null } })))) {
           await onceDrain(res);
         }
       }
@@ -225,7 +233,7 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
     res.off("close", onClose);
     if (!res.writableEnded) res.end();
   }
-  return { clientGone, completed, stalled, errored, frames, bytes, durationMs: Date.now() - t0 };
+  return { clientGone, completed, stalled, errored, errorDetail, frames, bytes, durationMs: Date.now() - t0 };
 }
 
 function onceDrain(res) {

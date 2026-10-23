@@ -11,6 +11,7 @@ import { createRepos } from "../db/repos.mjs";
 import { createChatHandler } from "../core/handlers/chat.mjs";
 import { recordFailure } from "../core/dispatch.mjs";
 import { isTerminalFrame, LogBuffer } from "../core/sse/stream.mjs";
+import { subscribeLog } from "../lib/log.mjs";
 
 let tmp, db, repos, handlerServer, handlerPort, stubServer, stubPort, stubState;
 
@@ -100,7 +101,31 @@ describe("chaos: upstream dies mid-stream", () => {
     const b = repos.breakers.get(`node:${node.id}`);
     expect(b.failures).toBe(1);
     repos.usage.flush();
-    expect(repos.usage.query({ limit: 10 })).toHaveLength(1);
+    const events = repos.usage.query({ limit: 10 });
+    expect(events).toHaveLength(1);
+    // The failure is diagnosable after the fact: the row carries WHY, not just "error".
+    // Before this, a mid-stream break reached the DB with a null error_code and the log
+    // ring (200 lines) had already dropped the cause by the time anyone looked.
+    expect(events[0].status).toBe("error");
+    expect(events[0].errorCode ?? events[0].error_code).toBe("upstream_stream_failed");
+  }, 10_000);
+
+  it("names the socket-level cause of a mid-stream death in the log", async () => {
+    stubState.handler = (req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}\n\n`);
+      setTimeout(() => res.socket?.destroy(), 20);
+    };
+    const lines = [];
+    const unsub = subscribeLog((text) => { try { lines.push(JSON.parse(text)); } catch { /* not ours */ } });
+    try {
+      await post({ model: "a/m1", stream: true, messages: [{ role: "user", content: "x" }] });
+    } finally { unsub(); }
+    const broke = lines.find((l) => String(l.msg || "").includes("stream broke"));
+    expect(broke).toBeTruthy();
+    // the verdict AND the cause, so an operator can tell a dead socket from a throttle
+    expect(broke.data?.errorCode).toBe("upstream_stream_failed");
+    expect(String(broke.data?.detail || "").length).toBeGreaterThan(0);
   }, 10_000);
 
   it("trips the breaker after 3 consecutive mid-stream deaths (headers are not success)", async () => {

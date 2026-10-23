@@ -518,6 +518,9 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         if (stream && result.response.headers?.get?.("content-type")?.includes("text/event-stream")) {
           const usage = new UsageTracker({ promptText: JSON.stringify(body.messages || body.input || "") });
           const logBuffer = new LogBuffer();
+          // Set when the upstream stream breaks mid-flight; carried into the usage row so a
+          // failure is diagnosable after the fact instead of only while the log ring holds it.
+          let streamErrorCode = null;
           let translator = null;
           let transform;
           let flushFrames = null;
@@ -554,7 +557,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             trailingDone = true;
           }
 
-          const { clientGone, completed, stalled, errored, frames, bytes, durationMs } = await pumpSse({
+          const { clientGone, completed, stalled, errored, errorDetail, frames, bytes, durationMs } = await pumpSse({
             upstream: result.response, res, signal: clientAbort.signal, t0, usage, logBuffer,
             transform, flushFrames, trailingDone, idleTimeoutMs,
           });
@@ -571,12 +574,26 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           if (errored) {
             // Upstream broke mid-stream (stall or death) — that is node health, not
             // a client problem, so it counts against the breaker like any other failure.
+            const errorCode = stalled ? "upstream_stalled" : "upstream_stream_failed";
             recordFailure(repos, r.node, {
-              errorCode: stalled ? "upstream_stalled" : "upstream_stream_failed",
+              errorCode,
               status: 504,
-              message: stalled ? `no upstream data for ${idleTimeoutMs}ms` : "upstream stream failed mid-response",
+              message: stalled ? `no upstream data for ${idleTimeoutMs}ms` : (errorDetail || "upstream stream failed mid-response"),
             });
-            log.warn("CHAT", `node ${r.node.prefix} stream broke (${stalled ? "stalled" : "failed"})`);
+            // Name the cause, not just the verdict: "stream broke (failed)" left an operator
+            // with nothing to act on, and the cause is what separates a dead upstream from a
+            // throttled one (an aborted socket mid-answer reads exactly like a slow answer
+            // until you see ECONNRESET or UND_ERR_SOCKET).
+            log.warn("CHAT", `node ${r.node.prefix} stream broke (${stalled ? "stalled" : "failed"})`, {
+              errorCode,
+              detail: errorDetail ?? null,
+              frames,
+              bytes,
+              afterMs: durationMs,
+              ttftMs: usage.ttftMs ?? null,
+              key: connectionLabel(connection),
+            });
+            streamErrorCode = errorCode;
           } else if (!genuineAbort) {
             recordSuccess(repos, r.node);
           }
@@ -595,6 +612,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             attempts,
             pool: proxy?.poolName ?? null,
             combo: comboFor(r),
+            errorCode: streamErrorCode,
           });
           saveDetail(repos, { usageEventId, request: body, responseText: logBuffer, truncated: logBuffer.truncated });
           return;
@@ -720,7 +738,7 @@ async function withIdleTimeout(promise, timeoutMs, onTimeout) {
   }
 }
 
-function recordUsage(repos, log, route, connection, clientModel, { status, usage, durationMs, apiKeyId, attempts = 1, pool = null, combo = null }) {
+function recordUsage(repos, log, route, connection, clientModel, { status, usage, durationMs, apiKeyId, attempts = 1, pool = null, combo = null, errorCode = null }) {
   // Metered nodes carry pricing config; unmetered ones record null and can never
   // consume budget. Latency memory is fed here so routing has one write path.
   const costUsd = costOf(route.node, { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens });
@@ -738,6 +756,10 @@ function recordUsage(repos, log, route, connection, clientModel, { status, usage
     ttftMs: usage.ttftMs ?? null,
     durationMs,
     costUsd: Number.isFinite(costUsd) ? costUsd : null,
+    // Why a failure happened, in the row itself. The Recent-failures list could only say
+    // "error" before, and the log ring is 200 lines deep — a mid-stream break was gone
+    // before anyone could look.
+    errorCode: errorCode ?? null,
   });
   // Console visibility on the healthy path (ui-ux contract round 2, item 5a).
   // The key label belongs here as much as on the failure lines: with rotation live,
