@@ -228,6 +228,25 @@ describe("management API", () => {
     expect(b?.failures ?? 0).toBe(0);
   });
 
+  it("ends the stream on a timer, so a proxying edge can deliver it", async () => {
+    // A never-ending SSE response is not delivered through Cloudflare (observed live
+    // 2026-10-24: zero bytes through a tunnel, fine on the LAN). The stream must close
+    // itself; the client reconnects for the next window.
+    const started = Date.now();
+    const result = await new Promise((resolve) => {
+      let captured = "";
+      const req = http.get({ host: "127.0.0.1", port: handlerPort, path: "/api/logs/stream?maxMs=300" }, (res) => {
+        res.on("data", (c) => (captured += c.toString()));
+        res.on("end", () => resolve({ captured, ended: true }));
+      });
+      req.on("error", () => resolve({ captured, ended: false }));
+      setTimeout(() => { req.destroy(); resolve({ captured, ended: false }); }, 3000);
+    });
+    expect(result.ended).toBe(true);           // the server closed it, not the client
+    expect(result.captured).toContain("event: init");
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
   it("streams logs: init snapshot then live lines", async () => {
     let captured = "";
     const req = http.get({ host: "127.0.0.1", port: handlerPort, path: "/api/logs/stream" }, (res) => {

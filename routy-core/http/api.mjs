@@ -36,6 +36,11 @@ import { createQuotaTracker } from "../core/oauth/workbuddyQuotaTracker.mjs";
 
 const uuid = () => crypto.randomUUID();
 
+// How long one /api/logs/stream connection lives before it ends and the client
+// reconnects. Short enough that a proxying edge never has to hold a never-ending
+// response, long enough that the reconnect is not chatter. See the route's note.
+const LOG_STREAM_MAX_MS = 20_000;
+
 // Imported, not re-exported: `export { maskKey } from "..."` creates no local binding,
 // so every maskKey() call in this module would throw at runtime.
 import { maskKey } from "../lib/mask.mjs";
@@ -1362,12 +1367,25 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
 
   // live log stream (SSE): init snapshot → live lines. ?level= filters server-side
   // (debug < info < warn < error); POST /api/logs/clear clears the ring + notifies.
+  //
+  // FINITE BY DESIGN, and that is a correctness requirement, not a preference. An SSE
+  // response that never ends is not delivered through a proxying edge: observed live
+  // 2026-10-24 behind a Cloudflare tunnel, an endless stream arrived as ZERO bytes
+  // ("stream 1 canceled by remote with error code 0") while the same stream on the LAN
+  // worked, and so did a stream that ended — even after 20s. Cloudflare has no
+  // streaming (no-buffering) origin behaviour, so the edge holds a chunked response
+  // until it can be framed. Ending the stream makes it a normal chunked response, and
+  // the client reconnects for the next window. `?maxMs=` bounds the window.
   route("GET", /^\/api\/logs\/stream$/, (req, res, p, url) => {
     const levelOrder = { debug: 10, info: 20, warn: 30, error: 40 };
     const minLevel = levelOrder[url.searchParams.get("level") || "debug"] || 10;
     const lineOk = (text) => {
       try { return levelOrder[JSON.parse(text).level] >= minLevel; } catch { return minLevel <= 10; }
     };
+    const requested = Number(url.searchParams.get("maxMs"));
+    const maxMs = Number.isFinite(requested) && requested > 0
+      ? Math.min(requested, LOG_STREAM_MAX_MS)
+      : LOG_STREAM_MAX_MS;
     res.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
@@ -1376,7 +1394,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const send = (event, payload) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
     };
-    send("init", { lines: recentLogs(200).filter(lineOk) });
+    send("init", { lines: recentLogs(200).filter(lineOk), maxMs });
     const unsub = subscribeLog((text) => {
       if (res.writableEnded || !lineOk(text)) return;
       try { send("line", { text }); } catch { /* client gone */ }
@@ -1388,7 +1406,13 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       if (!res.writableEnded) res.write(": ping\n\n");
     }, 15000);
     ping.unref?.();
-    res.on("close", () => { clearInterval(ping); unsub(); unsubClear(); });
+    // End the window on time: the client reconnects and gets a fresh snapshot, so no
+    // line is lost across the seam (the snapshot is the ring, not a cursor).
+    const close = setTimeout(() => {
+      if (!res.writableEnded) res.end();
+    }, maxMs);
+    close.unref?.();
+    res.on("close", () => { clearInterval(ping); clearTimeout(close); unsub(); unsubClear(); });
   });
   route("POST", /^\/api\/logs\/clear$/, (req, res) => {
     clearLogs();

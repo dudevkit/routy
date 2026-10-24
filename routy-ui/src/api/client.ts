@@ -185,6 +185,7 @@ export type StreamLevel = "debug" | "info" | "warn" | "error";
 export function streamLogs(handlers: LogStreamHandlers, level?: StreamLevel): () => void {
   const controller = new AbortController();
   let closed = false;
+  let reconnectTimer: number | undefined;
 
   const emit = (event: string, data: string) => {
     if (event === "init") {
@@ -205,7 +206,13 @@ export function streamLogs(handlers: LogStreamHandlers, level?: StreamLevel): ()
     }
   };
 
-  void (async () => {
+  /**
+   * One connection. The server ends each stream on a timer (a never-ending response is
+   * not delivered through a proxying edge — see the route note), so the end of a stream
+   * is a normal seam, not a failure: reconnect and take a fresh snapshot. Without this
+   * the console went silent the first time the stream ended.
+   */
+  const connect = async () => {
     try {
       const res = await fetch(LOG_STREAM_URL + qs({ level }), {
         headers: { accept: "text/event-stream" },
@@ -245,11 +252,17 @@ export function streamLogs(handlers: LogStreamHandlers, level?: StreamLevel): ()
     } catch {
       /* aborted on unsubscribe, or the connection dropped */
     }
-    if (!closed) handlers.onClose?.();
-  })();
+    if (closed) return;
+    // Reconnect for the next window. A short delay keeps a failing gateway from being
+    // hammered, and a successful window is 20s long, so this is not chatter.
+    reconnectTimer = window.setTimeout(() => { void connect(); }, 1000);
+  };
+
+  void connect();
 
   return () => {
     closed = true;
+    if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
     controller.abort();
   };
 }
