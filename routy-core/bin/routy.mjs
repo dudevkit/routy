@@ -178,6 +178,9 @@ function openDashboard(url) {
  * it attached to (a pid it did not). Both are stoppable; only the first has a child.
  */
 let gateway = { child: null, pid: null, ready: Promise.resolve(true), log: () => "", exitCode: () => null };
+// The quick tunnel this menu started, if any. Owned here so quitting takes it down
+// with the gateway it exposes.
+let tunnel = null;
 
 /** Start the gateway as a child so the menu can restart it without re-execing. */
 function startGateway() {
@@ -223,6 +226,108 @@ function startGateway() {
   });
 
   return { child, ready: waitReady, log: () => output, exitCode: () => exitCode };
+}
+
+// ── temporary public tunnel (Cloudflare quick tunnel) ────────────────────────
+//
+// "Open the dashboard from the internet for a minute" is a real need — checking a
+// gateway from a phone, showing a colleague — and hand-running cloudflared is where
+// people get it wrong: the URL is printed once, mixed into a wall of log lines, and
+// the process is left orphaned when they forget it.
+//
+// A quick tunnel needs no Cloudflare account and no config: cloudflared prints
+// `https://<random>.trycloudflare.com` on stderr and proxies to us. We own the child,
+// so quitting the menu can take it down with the gateway it exposes.
+//
+// Two things this must not do: expose a gateway that has no password (a public URL
+// with the shipped default password is an open door), and leave the tunnel running
+// after the menu exits.
+
+const TUNNEL_URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
+
+/** The cloudflared binary, from PATH or the two install locations we have seen. */
+function findCloudflared() {
+  const candidates = [
+    env.ROUTY_CLOUDFLARED || null,
+    "cloudflared",
+    "/usr/local/bin/cloudflared",
+    "/usr/bin/cloudflared",
+    "/opt/homebrew/bin/cloudflared",
+    "C:\\Program Files (x86)\\cloudflared\\cloudflared.exe",
+    "C:\\Program Files\\cloudflared\\cloudflared.exe",
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (candidate === "cloudflared") return candidate; // resolved by PATH at spawn time
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch { /* unreadable path — try the next */ }
+  }
+  return null;
+}
+
+/**
+ * Start a quick tunnel to this gateway. Resolves with `{ child, url }` once cloudflared
+ * prints its public URL, or `{ child, url: null, error }` when it exits or stays quiet.
+ * The caller owns `child` and must stop it.
+ */
+function startTunnel({ timeoutMs = 30_000 } = {}) {
+  const bin = findCloudflared();
+  if (!bin) return Promise.resolve({ child: null, url: null, error: "cloudflared not found" });
+
+  return new Promise((resolve) => {
+    const child = spawn(bin, ["tunnel", "--url", apiBase(), "--no-autoupdate"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      env: process.env,
+    });
+
+    let settled = false;
+    let tail = "";
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ child, ...result });
+    };
+
+    // cloudflared prints the URL on stderr; stdout carries connection chatter. Watch both,
+    // because that split is an implementation detail of the version you happen to have.
+    const onData = (chunk) => {
+      const text = chunk.toString();
+      tail = (tail + text).slice(-4000);
+      const match = TUNNEL_URL_RE.exec(text);
+      if (match) finish({ url: match[0] });
+    };
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+
+    child.on("error", (err) => finish({ url: null, error: err.message }));
+    child.on("exit", (code) => {
+      finish({ url: null, error: `cloudflared exited (${code})${tail ? `: ${tail.trim().split("\n").slice(-2).join(" ")}` : ""}` });
+    });
+
+    const timer = setTimeout(() => finish({ url: null, error: "cloudflared did not print a URL in time" }), timeoutMs);
+    timer.unref?.();
+  });
+}
+
+/** Stop a tunnel we started. Never throws: quitting must not fail on cleanup. */
+function stopTunnel() {
+  if (!tunnel?.child) return;
+  try { tunnel.child.kill(); } catch { /* already gone */ }
+  tunnel = null;
+}
+
+/**
+ * Refuse to publish a gateway that anyone could walk into: a public URL plus the
+ * shipped default password is an open door, and the tunnel is the moment that matters.
+ */
+async function tunnelSafety() {
+  const auth = await apiGet("/api/auth");
+  if (!auth) return "the gateway is not answering — start it before opening a tunnel";
+  if (!auth.requireLogin) return "login is turned off, so a public URL would be open to anyone — turn it on in Settings first";
+  if (auth.passwordIsDefault) return "the dashboard is still on the default password — change it in Settings before exposing it publicly";
+  return null;
 }
 
 const apiBase = () => `http://${cfg.host === "0.0.0.0" ? "127.0.0.1" : cfg.host}:${cfg.port}`;
@@ -540,6 +645,11 @@ async function cmdStart() {
       options.push({ key: "update", label: `Update to v${updates.latest}  (running v${updates.current})` });
     }
     options.push({ key: "open", label: "Open the dashboard" });
+    options.push(
+      tunnel?.url
+        ? { key: "tunnel", label: `Public tunnel: ${tunnel.url}  (stop it)` }
+        : { key: "tunnel", label: "Open a temporary public tunnel (Cloudflare)" },
+    );
     options.push({ key: "key", label: "Show a client key to paste into a CLI tool" });
     options.push({ key: "restart", label: "Restart the gateway" });
     options.push({ key: "quit", label: "Stop the gateway and quit" });
@@ -553,6 +663,12 @@ async function cmdStart() {
       // Only clean up what we started. An attached gateway was somebody else's
       // process before this menu existed, and Ctrl-D is not a request to kill it.
       if (attached) {
+        // The tunnel is ours, not the attached gateway's: a public URL must not outlive
+        // the menu that opened it.
+        if (tunnel?.url) {
+          stopTunnel();
+          console.log("  tunnel closed");
+        }
         console.log("  left the gateway running");
         process.exit(0);
       }
@@ -563,6 +679,10 @@ async function cmdStart() {
     }
 
     if (chosen.key === "background") {
+      if (tunnel?.url) {
+        stopTunnel();
+        console.log("  tunnel closed — a background gateway is not reachable from the internet");
+      }
       if (attached) {
         // It is already detached — there is nothing to hand over.
         console.log(`  already running in the background — ${dashboard}`);
@@ -584,6 +704,44 @@ async function cmdStart() {
     if (chosen.key === "open") {
       const opened = openDashboard(dashboard);
       console.log(opened ? `  opened ${dashboard} in your browser` : `  open ${dashboard} in your browser`);
+      console.log("");
+      continue;
+    }
+
+    if (chosen.key === "tunnel") {
+      if (tunnel?.url) {
+        stopTunnel();
+        console.log("  tunnel stopped — the public URL no longer reaches this gateway");
+        console.log("");
+        continue;
+      }
+      const blocked = await tunnelSafety();
+      if (blocked) {
+        console.log(`  not opening a tunnel: ${blocked}`);
+        console.log("");
+        continue;
+      }
+      console.log("  starting a Cloudflare quick tunnel…");
+      const started = await startTunnel();
+      if (!started.url) {
+        stopTunnel();
+        console.log(`  could not open a tunnel: ${started.error}`);
+        console.log("  install cloudflared, or set ROUTY_CLOUDFLARED to its path.");
+        console.log("");
+        continue;
+      }
+      tunnel = started;
+      console.log("");
+      console.log("  ── public URL (works from anywhere, no VPN) ──");
+      console.log("");
+      console.log(`    ${started.url}`);
+      console.log("");
+      console.log("    dashboard  " + started.url);
+      console.log("    endpoint   " + started.url + "/v1");
+      console.log("");
+      console.log("  The dashboard still asks for the password you set — this URL is open to");
+      console.log("  the internet, so treat the link as public. It closes when you quit this");
+      console.log("  menu or pick this option again.");
       console.log("");
       continue;
     }
@@ -649,6 +807,12 @@ async function cmdStart() {
     }
 
     // quit
+    // Tunnel first: a public URL outliving the menu that opened it is the one thing a
+    // "temporary" tunnel must never do.
+    if (tunnel?.url) {
+      stopTunnel();
+      console.log("  tunnel closed");
+    }
     stopRunningGateway();
     await new Promise((r) => setTimeout(r, 300));
     rl?.close();
