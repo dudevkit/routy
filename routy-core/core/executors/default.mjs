@@ -222,8 +222,7 @@ export class DefaultExecutor {
           ttfbMs: Date.now() - t0,
         });
 
-        if (response.ok) return { ok: true, response, url, abort: (reason) => controller.abort(reason) };
-
+        if (response.ok) return { ok: true, response, url, exit, abort: (reason) => controller.abort(reason) };
         // 407 is the exit telling us its credentials are wrong — evidence about the exit,
         // not the provider, and not worth three delayed retries.
         if (exit && response.status === 407) {

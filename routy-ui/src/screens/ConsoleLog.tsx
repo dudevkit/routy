@@ -27,14 +27,28 @@ const levelTextClass: Record<Level, string> = {
 function asLevel(level: string): Level {
   return (LEVELS as readonly string[]).includes(level) ? (level as Level) : "info";
 }
-
 /** Rendering cap keeps the DOM honest on a chatty gateway; the buffer holds more. */
 const RENDER_CAP = 600;
+
+const COLOR_MAP: Record<string, { bg: string; text: string; border: string }> = {
+  red: { bg: "bg-red-500/15", text: "text-red-400", border: "border-red-500/30" },
+  blue: { bg: "bg-blue-500/15", text: "text-blue-400", border: "border-blue-500/30" },
+  green: { bg: "bg-emerald-500/15", text: "text-emerald-400", border: "border-emerald-500/30" },
+  purple: { bg: "bg-purple-500/15", text: "text-purple-400", border: "border-purple-500/30" },
+  orange: { bg: "bg-orange-500/15", text: "text-orange-400", border: "border-orange-500/30" },
+  yellow: { bg: "bg-yellow-500/15", text: "text-yellow-400", border: "border-yellow-500/30" },
+  cyan: { bg: "bg-cyan-500/15", text: "text-cyan-400", border: "border-cyan-500/30" },
+  pink: { bg: "bg-pink-500/15", text: "text-pink-400", border: "border-pink-500/30" },
+};
 
 function LogRow({ line }: { line: LogRecord }) {
   const [open, setOpen] = useState(false);
   const level = asLevel(line.level);
   const hasData = line.data !== undefined && line.data !== null;
+  const d = (hasData && typeof line.data === "object" ? line.data : null) as Record<string, unknown> | null;
+  const colorKey = typeof d?.color === "string" ? d.color : null;
+  const colorTheme = colorKey ? COLOR_MAP[colorKey] : null;
+  const phase = typeof d?.phase === "string" ? d.phase : null;
 
   return (
     <>
@@ -52,13 +66,30 @@ function LogRow({ line }: { line: LogRecord }) {
         className={cn(
           "flex w-full items-baseline gap-3 px-3 py-[3px] text-left font-mono text-xs leading-relaxed transition-colors hover:bg-surface-2/60 sm:text-[11.5px]",
           hasData && "cursor-pointer",
+          colorTheme && phase === "req" && "bg-surface-2/20",
         )}
       >
         <span className="shrink-0 tabular text-text-subtle">{fmtClockMs(line.t)}</span>
         <span className={cn("w-11 shrink-0 uppercase", levelTextClass[level])}>{level}</span>
-        <span className="w-16 shrink-0 truncate text-text-muted" title={line.tag}>{line.tag}</span>
+        <span className="w-16 shrink-0 truncate text-text-muted" title={line.tag}>
+          {line.tag}
+        </span>
         <span className="min-w-0 flex-1 break-all text-text-main">
           {hasData && <CaretRight size={10} className={cn("mr-1 inline-block transition-transform", open && "rotate-90")} />}
+          {colorTheme ? (
+            <span
+              className={cn(
+                "mr-1.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] font-semibold border",
+                colorTheme.bg,
+                colorTheme.text,
+                colorTheme.border,
+              )}
+            >
+              <span className="inline-block h-2 w-2 rounded-sm bg-current opacity-80" />
+              {phase ? phase.toUpperCase() : "REQ"}
+              {typeof d?.requestId === "number" || typeof d?.requestId === "string" ? ` #${d.requestId}` : ""}
+            </span>
+          ) : null}
           {line.msg}
         </span>
       </div>

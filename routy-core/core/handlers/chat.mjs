@@ -29,8 +29,8 @@ import { FORMATS, detectFormatByEndpoint } from "../translate/formats.js";
 import { detectFormat } from "../translate/deps/detectFormat.js";
 import { compressMessages, formatRtkLog } from "../rtk/index.js";
 import { STREAM_IDLE_TIMEOUT_MS, UPSTREAM_429_MEMO_MS } from "../limits.mjs";
+import { colorForRequestId, detectClient, nextSeqId } from "../../lib/lifecycle.mjs";
 
-// Stall watchdog: abort a stream that goes this long without a chunk. Reasoning
 // models can think for a while, so the default is generous; nodes can override
 // (or disable with 0) via data.streamIdleTimeoutMs.
 
@@ -86,10 +86,13 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
 
   async function handleChatCompletions(req, res) {
     const t0 = Date.now();
+    const reqId = nextSeqId();
+    const color = colorForRequestId(reqId);
 
     // auth (router client key)
     const settings = repos.settings.all();
     let apiKeyId = null;
+    let clientName = null;
     if (settings.requireApiKey !== false) {
       const token = extractBearer(req);
       const key = token ? repos.apiKeys.verify(token) : null;
@@ -97,7 +100,10 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         return json(res, 401, { error: { message: "auth_error", detail: "valid API key required" } });
       }
       apiKeyId = key.id;
+      clientName = key.name || null;
     }
+    const clientIdentity = detectClient(req, clientName);
+
     let body;
     try {
       body = JSON.parse((await readBody(req)).toString("utf8"));
@@ -134,6 +140,10 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
     let lastError = null;
 
     if (routes.length === 0 && budget.over) {
+      log.warn("REQ", `${color.emoji} FAIL #${reqId} · 0ms · 402 budget_exceeded (${clientIdentity})`, {
+        phase: "fail", requestId: reqId, color: color.id, client: clientIdentity,
+        status: "error", errorCode: "budget_exceeded", durationMs: 0,
+      });
       return json(res, 402, {
         error: {
           message: "budget_exceeded",
@@ -144,7 +154,6 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         },
       });
     }
-
     // Fail fast when every route has an open breaker — hammering a dead upstream
     // is what the breaker exists to prevent.
     const candidates = routes.filter((r) => r.kind === "node" && r.healthy);
@@ -169,9 +178,12 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         ? `every member of combo "${combo.name}" is unavailable${combo.skipped.length ? ` (${combo.skipped.map((s) => `${s.model}: ${s.why}`).join("; ")})` : ""}`
         : "all routes have open breakers";
       if (combo) log.warn("COMBO", `${combo.name} ← all ${combo.of ?? combo.order.length} member(s) unavailable`, { ...combo, retryAfterMs });
+      log.warn("REQ", `${color.emoji} FAIL #${reqId} · 0ms · 503 all_unavailable (${clientIdentity})`, {
+        phase: "fail", requestId: reqId, color: color.id, client: clientIdentity,
+        status: "error", errorCode: "all_unavailable", durationMs: 0,
+      });
       return json(res, 503, { error: { message: "all_unavailable", detail, retryAfterMs } });
     }
-
     // Announce the plan before dispatch — the members in the order the strategy produced, and
     // what was left out. The outcome lands on the request line once a member serves it.
     if (combo) log.info("COMBO", combo.line, { combo: combo.name, strategy: combo.strategy, stickyLimit: combo.stickyLimit, order: combo.order, skipped: combo.skipped });
@@ -210,13 +222,16 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       // wall with every key — the exact load the global verdict exists to avoid.
       const saturatedUntil = global429Memo.get(`${r.node.id}|${r.model}`);
       if (saturatedUntil && Date.now() < saturatedUntil) {
-        return json(res, 429, {
-          error: {
-            message: "upstream_rate_limited",
-            detail: `provider ${r.node.prefix} is still rate-limiting this model for everyone — pick another upstream or model`,
-            retryAfterMs: saturatedUntil - Date.now(),
-          },
-        });
+        const remainingMs = saturatedUntil - Date.now();
+        const remSec = Math.max(1, Math.round(remainingMs / 1000));
+        log.warn("CHAT", `node ${r.node.prefix} model ${r.model} blocked by global 429 memo (${remSec}s remaining)`);
+        lastError = {
+          status: 429,
+          errorCode: "upstream_rate_limited",
+          message: `provider ${r.node.prefix} is still rate-limiting this model for everyone — pick another upstream or model`,
+          retryAfterMs: remainingMs,
+        };
+        continue;
       }
 
       const keys = pickConnections(repos, r.node);
@@ -557,33 +572,35 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             trailingDone = true;
           }
 
-          const { clientGone, completed, stalled, errored, errorDetail, frames, bytes, durationMs } = await pumpSse({
+          const { clientGone, completed, stalled, errored, errorDetail, headersCommitted, frames, bytes, durationMs } = await pumpSse({
             upstream: result.response, res, signal: clientAbort.signal, t0, usage, logBuffer,
             transform, flushFrames, trailingDone, idleTimeoutMs,
           });
-          // Only a client that left BEFORE the answer was complete is an abort. Agents
-          // like Hermes close the socket the moment they see finish_reason, which is a
-          // successful request, and charging it as an abort meant the node was never
-          // credited, its latency was never learned, and every such call showed up in
-          // Recent failures.
           const genuineAbort = clientGone && !completed;
           log.debug("UPSTREAM", `← stream end ${r.node.prefix}`, {
             frames, bytes, durationMs, stalled, errored, clientGone, completed,
             ttftMs: usage.ttftMs ?? null,
           });
           if (errored) {
-            // Upstream broke mid-stream (stall or death) — that is node health, not
-            // a client problem, so it counts against the breaker like any other failure.
+            // If headers were NOT sent to client, pre-token failover is possible!
+            const preTokenFailure = !headersCommitted && (usage.ttftMs === null || usage.ttftMs === undefined);
             const errorCode = stalled ? "upstream_stalled" : "upstream_stream_failed";
-            recordFailure(repos, r.node, {
-              errorCode,
-              status: 504,
-              message: stalled ? `no upstream data for ${idleTimeoutMs}ms` : (errorDetail || "upstream stream failed mid-response"),
-            });
-            // Name the cause, not just the verdict: "stream broke (failed)" left an operator
-            // with nothing to act on, and the cause is what separates a dead upstream from a
-            // throttled one (an aborted socket mid-answer reads exactly like a slow answer
-            // until you see ECONNRESET or UND_ERR_SOCKET).
+
+            // Accurate blame: if the failure was a network/socket drop through an exit, blame the exit, not the node!
+            const isSocketDrop = errorDetail && /UND_ERR_SOCKET|ECONNRESET|ECONNREFUSED|other side closed|socket/i.test(errorDetail);
+            if (proxy && isSocketDrop) {
+              proxy.onFailed?.(result.exit ?? proxy.candidates?.[0], { kind: "connect", detail: errorDetail });
+              log.warn("PROXY", `exit socket reset mid-stream — blamed exit, spared node breaker`, {
+                node: r.node.prefix, detail: errorDetail,
+              });
+            } else {
+              recordFailure(repos, r.node, {
+                errorCode,
+                status: 504,
+                message: stalled ? `no upstream data for ${idleTimeoutMs}ms` : (errorDetail || "upstream stream failed mid-response"),
+              });
+            }
+
             log.warn("CHAT", `node ${r.node.prefix} stream broke (${stalled ? "stalled" : "failed"})`, {
               errorCode,
               detail: errorDetail ?? null,
@@ -593,6 +610,16 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
               ttftMs: usage.ttftMs ?? null,
               key: connectionLabel(connection),
             });
+
+            if (preTokenFailure) {
+              // We haven't sent any bytes to the client! Fail over to next key or combo member.
+              log.info("CHAT", `pre-token stream failure on ${r.node.prefix} — failover to next candidate without breaking client`, {
+                detail: errorDetail,
+              });
+              lastKeyError = { status: 502, errorCode: "upstream_stream_failed", message: errorDetail || "stream broke before first token" };
+              continue; // try next key!
+            }
+
             streamErrorCode = errorCode;
           } else if (!genuineAbort) {
             recordSuccess(repos, r.node);
@@ -613,6 +640,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             pool: proxy?.poolName ?? null,
             combo: comboFor(r),
             errorCode: streamErrorCode,
+            reqMeta: { reqId, color, client: clientIdentity },
           });
           saveDetail(repos, { usageEventId, request: body, responseText: logBuffer, truncated: logBuffer.truncated });
           return;
@@ -661,7 +689,10 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         res.writeHead(result.response.status, { "content-type": "application/json" });
         res.end(JSON.stringify(parsed ?? text));
         recordSuccess(repos, r.node);
-        const usageEventId = recordUsage(repos, log, r, connection, body.model, { status: "ok", usage, durationMs: Date.now() - t0, apiKeyId, attempts, pool: proxy?.poolName ?? null, combo: comboFor(r) });
+        const usageEventId = recordUsage(repos, log, r, connection, body.model, {
+          status: "ok", usage, durationMs: Date.now() - t0, apiKeyId, attempts,
+          pool: proxy?.poolName ?? null, combo: comboFor(r), reqMeta: { reqId, color, client: clientIdentity },
+        });
         saveDetail(repos, { usageEventId, request: body, responseText: new LogBuffer(), truncated: false });
         return;
       }
@@ -696,13 +727,17 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         lastError = { status: 503, errorCode: "all_keys_exhausted", message: `all ${keys.length} keys of ${r.node.prefix} are cooling down or disabled`, retryAfterMs };
       }
     }
-
     const err = lastError || { status: 503, errorCode: "all_unavailable", message: "no healthy route" };
     const status = err.errorCode === "auth_error" ? 502
       : err.errorCode === "upstream_rate_limited" ? 429
       : err.status === 501 ? 501
       : err.status === 400 ? 400
       : 503;
+    log.warn("REQ", `${color.emoji} FAIL #${reqId} · ${Date.now() - t0}ms · ${status} ${err.errorCode || "all_unavailable"} (${clientIdentity})`, {
+      phase: "fail", requestId: reqId, color: color.id, client: clientIdentity,
+      status: "error", errorCode: err.errorCode || "all_unavailable", durationMs: Date.now() - t0,
+      detail: err.message || "",
+    });
     return json(res, status, {
       error: {
         message: err.errorCode || "all_unavailable",
@@ -738,7 +773,7 @@ async function withIdleTimeout(promise, timeoutMs, onTimeout) {
   }
 }
 
-function recordUsage(repos, log, route, connection, clientModel, { status, usage, durationMs, apiKeyId, attempts = 1, pool = null, combo = null, errorCode = null }) {
+function recordUsage(repos, log, route, connection, clientModel, { status, usage, durationMs, apiKeyId, attempts = 1, pool = null, combo = null, errorCode = null, reqMeta = null }) {
   // Metered nodes carry pricing config; unmetered ones record null and can never
   // consume budget. Latency memory is fed here so routing has one write path.
   const costUsd = costOf(route.node, { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens });
@@ -756,37 +791,41 @@ function recordUsage(repos, log, route, connection, clientModel, { status, usage
     ttftMs: usage.ttftMs ?? null,
     durationMs,
     costUsd: Number.isFinite(costUsd) ? costUsd : null,
-    // Why a failure happened, in the row itself. The Recent-failures list could only say
-    // "error" before, and the log ring is 200 lines deep — a mid-stream break was gone
-    // before anyone could look.
     errorCode: errorCode ?? null,
   });
-  // Console visibility on the healthy path (ui-ux contract round 2, item 5a).
-  // The key label belongs here as much as on the failure lines: with rotation live,
-  // "which key served this?" is the question a successful line otherwise cannot answer.
+
   const genMs = Number.isFinite(usage.ttftMs) ? durationMs - usage.ttftMs : durationMs;
-  // A generation window this short cannot measure a rate: an upstream that answers in
-  // one burst leaves a 1ms window, and dividing 544 tokens by it reports half a million
-  // tokens per second. Below the threshold the honest answer is "no rate", not a
-  // spectacular one.
   const RATE_WINDOW_MIN_MS = 250;
   const tokensPerSec = usage.completionTokens > 0 && genMs >= RATE_WINDOW_MIN_MS
     ? Number((usage.completionTokens / (genMs / 1000)).toFixed(1))
     : null;
-  log.info("REQ", combo ? `${combo.name} → ${combo.member} ← ${status} · try ${combo.attempt}/${combo.of}` : `${route.node.prefix} ← ${status}`, {
-    requestId: event.id,
+
+  const reqId = reqMeta?.reqId ?? event.id;
+  const color = reqMeta?.color ?? colorForRequestId(reqId);
+  const clientTag = reqMeta?.client ? `(${reqMeta.client})` : "";
+  const keyName = connection?.name || connectionLabel(connection);
+  const durSec = (durationMs / 1000).toFixed(1);
+  const ttftStr = usage.ttftMs != null ? `${(usage.ttftMs / 1000).toFixed(1)}s` : "-";
+  const inTokens = usage.promptTokens ?? 0;
+  const outTokens = usage.completionTokens ?? 0;
+
+  let doneMsg = `${color.emoji} DONE #${reqId} · ok · ${durSec}s · TTFT ${ttftStr} · In ${inTokens} · Out ${outTokens} · ${clientModel} · ${keyName} ${clientTag}`.trim();
+  if (status !== "ok") {
+    const errTag = errorCode || status;
+    doneMsg = `${color.emoji} FAIL #${reqId} · ${durSec}s · TTFT ${ttftStr} · In ${inTokens} · Out ${outTokens} · ${errTag} ${clientTag}`.trim();
+  }
+  log.info("REQ", doneMsg, {
+    phase: status === "ok" ? "done" : "fail",
+    requestId: reqId,
+    color: color.id,
+    client: reqMeta?.client ?? null,
     model: clientModel,
     nodeId: route.node.id,
     connectionId: connection.id ?? null,
     key: connectionLabel(connection),
-    // How a combo request was served: which member, where it sat in the strategy's order, and
-    // what the strategy skipped. Without these the line cannot tell a correct `fallback`
-    // (member 1 by design) from a broken `round-robin` (member 1 every time).
     ...(combo
       ? { combo: combo.name, strategy: combo.strategy, member: combo.member, attempt: combo.attempt, of: combo.of, order: combo.order, skipped: combo.skipped }
       : {}),
-    // Which proxy egressed this request — the same question the key answers, for the
-    // other half of "how did this request leave the building".
     pool,
     status,
     attempts,
@@ -796,6 +835,7 @@ function recordUsage(repos, log, route, connection, clientModel, { status, usage
     completionTokens: usage.completionTokens ?? null,
     tokensPerSec,
     costUsd: Number.isFinite(costUsd) ? Number(costUsd.toFixed(6)) : null,
+    errorCode: errorCode ?? null,
   });
   return event.id;
 }

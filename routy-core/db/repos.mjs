@@ -374,10 +374,10 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
       if (typeof candidate !== "string" || !candidate) return null;
       const { hashKey } = authHelpers();
       const hash = hashKey(candidate);
-      const row = db.prepare(`SELECT id, enabled FROM api_keys WHERE key_hash = ?`).get(hash);
+      const row = db.prepare(`SELECT id, name, enabled FROM api_keys WHERE key_hash = ?`).get(hash);
       if (!row || !row.enabled) return null;
       db.prepare(`UPDATE api_keys SET last_used_at = ? WHERE id = ?`).run(new Date().toISOString(), row.id);
-      return { id: row.id };
+      return { id: row.id, name: row.name || null };
     },
     setEnabled(id, enabled) {
       return db.prepare(`UPDATE api_keys SET enabled = ? WHERE id = ?`).run(enabled ? 1 : 0, id).changes > 0;

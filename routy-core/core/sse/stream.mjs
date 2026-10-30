@@ -114,21 +114,25 @@ export function isTerminalFrame(text) {
 }
 
 export async function pumpSse({ upstream, res, signal, t0, transform = null, flushFrames = null, usage = null, logBuffer = null, maxEmptyReads = 4, trailingDone = false, idleTimeoutMs = 0 }) {
-  res.writeHead(upstream.status, SSE_HEADERS);
+  // Headers are DEFERRED until the first frame is ready to write.
+  // If the upstream socket resets or disconnects before the first token,
+  // pumpSse returns without committing headers, allowing the handler
+  // to failover to another key/node transparently.
+  let headersCommitted = false;
+  const ensureHeaders = () => {
+    if (!headersCommitted && !res.headersSent && !res.writableEnded) {
+      res.writeHead(upstream.status, SSE_HEADERS);
+      headersCommitted = true;
+    }
+  };
   const parser = new SseParser();
   const reader = upstream.body.getReader();
   let clientGone = false;
-  // Set once the client has been handed the end of the answer, or the upstream stream
-  // ran out on its own -- either way there is nothing left to deliver. Clients such as
-  // CLI agents stop reading the instant they see finish_reason / [DONE] and close the
-  // socket, so clientGone on its own cannot tell "walked away mid-generation" from
-  // "got the whole answer and hung up first". Conflating them charged every completed
-  // request as an abort: the node was never credited, its latency was never learned,
-  // and a healthy provider filled the Recent failures list.
   let completed = false;
   const onClose = () => { clientGone = true; };
   res.on("close", onClose);
   const write = (out) => {
+    ensureHeaders();
     const more = res.write(out);
     if (!completed && isTerminalFrame(out)) completed = true;
     return more;
@@ -203,6 +207,7 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
     // Upstream parity: 9Router's transform+flush both emit [DONE] — clients stop at
     // the first one, so the duplicate is benign. Keep it for byte-identical output.
     if (trailingDone && !res.writableEnded && !clientGone) write("data: [DONE]\n\n");
+    if (completed && !headersCommitted) ensureHeaders();
   } catch (err) {
     if (err instanceof StallError) {
       stalled = true;
@@ -210,20 +215,19 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
       errorDetail = `no upstream data for ${idleTimeoutMs}ms`;
       try { await reader.cancel(); } catch { /* already gone */ }
       signal?.abort?.();
-      if (!clientGone && !res.writableEnded) {
+      if (!clientGone && !res.writableEnded && headersCommitted) {
         const detail = errorDetail;
         if (!res.write(formatSse("error", JSON.stringify({ error: { message: "upstream_stalled", detail, retryAfterMs: null } })))) {
           await onceDrain(res);
         }
       }
     } else if (!clientGone) {
-      // upstream died mid-stream: emit a terminal error frame so the client doesn't hang
+      // upstream died: if headers were already sent, emit a terminal error frame so client doesn't hang.
+      // If headers were NOT sent, leave res untouched so caller can failover.
       errored = true;
       const detail = String(err?.message || err).slice(0, 200);
-      // undici hides the real cause one level down; the code is what tells an aborted
-      // socket from a reset one.
       errorDetail = [detail, err?.cause?.code, err?.cause?.message].filter(Boolean).join(" · ").slice(0, 240);
-      if (!res.writableEnded) {
+      if (headersCommitted && !res.writableEnded) {
         if (!res.write(formatSse("error", JSON.stringify({ error: { message: "upstream_stream_failed", detail, retryAfterMs: null } })))) {
           await onceDrain(res);
         }
@@ -231,9 +235,9 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
     }
   } finally {
     res.off("close", onClose);
-    if (!res.writableEnded) res.end();
+    if (headersCommitted && !res.writableEnded) res.end();
   }
-  return { clientGone, completed, stalled, errored, errorDetail, frames, bytes, durationMs: Date.now() - t0 };
+  return { clientGone, completed, stalled, errored, errorDetail, headersCommitted, frames, bytes, durationMs: Date.now() - t0 };
 }
 
 function onceDrain(res) {
