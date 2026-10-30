@@ -121,6 +121,33 @@ describe("combo strategy: round-robin", () => {
     expect(stubState.served.length).toBeGreaterThanOrEqual(2);
     expect(stubState.served.at(-1)).toBe(nodeB.id);
   }, 20_000);
+
+  it("falls through to the next combo member when a member hits a global 429 rate limit", async () => {
+    stubServer.removeAllListeners("request");
+    stubServer.on("request", (req, res) => {
+      req.on("data", () => {});
+      req.on("end", () => {
+        const isB = req.url.includes("node-b");
+        stubState.served.push(isB ? nodeB.id : nodeA.id);
+        if (!isB) {
+          // Body naming provider saturation: triggers verdict === 'global'
+          res.writeHead(429, { "content-type": "application/json" });
+          return res.end(JSON.stringify({ error: { message: "upstream capacity exceeded, try again later" } }));
+        }
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write(`data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"ok-from-b"},"finish_reason":"stop"}]}\n\n`);
+        res.write("data: [DONE]\n\n");
+        res.end();
+      });
+    });
+
+    // Ensure combo is in fallback strategy starting with nodeA
+    repos.combos.update(repos.combos.byName("combo1").id, { strategy: "fallback" });
+    const r = await chat();
+    expect(r.status).toBe(200);
+    expect(r.body).toContain("ok-from-b");
+    expect(stubState.served.at(-1)).toBe(nodeB.id);
+  }, 20_000);
 });
 
 describe("combo strategy: sticky", () => {

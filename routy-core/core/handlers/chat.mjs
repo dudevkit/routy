@@ -504,15 +504,26 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             log.warn("CHAT", `node ${r.node.prefix}: upstream-wide rate limit — not a key problem, failing through`, {
               keys: keys.length, errorCode: result.errorCode, rolledBack: cooledHere.length,
             });
+            lastError = {
+              status: 429,
+              errorCode: "upstream_rate_limited",
+              message: `provider ${r.node.prefix} is rate-limiting this model for everyone${verdict.others ? ` (429 across ${verdict.others} keys)` : ""} — not a per-key credit or rate-limit issue; pick another upstream or model`,
+              retryAfterMs: Math.max(0, until - Date.now()),
+            };
+            // If this request is part of a multi-route combo, advance to the next member
+            // instead of aborting the entire request immediately!
+            if (candidates.length > 1) {
+              nodeDied = true;
+              break;
+            }
             return json(res, 429, {
               error: {
                 message: "upstream_rate_limited",
-                detail: `provider ${r.node.prefix} is rate-limiting this model for everyone${verdict.others ? ` (429 across ${verdict.others} keys)` : ""} — not a per-key credit or rate-limit issue; pick another upstream or model`,
-                retryAfterMs: Math.max(0, until - Date.now()),
+                detail: lastError.message,
+                retryAfterMs: lastError.retryAfterMs,
               },
             });
           }
-
           if (verdict.verdict === "node") {
             // Not the key's fault: the node breaker owns it, and rotating keys into a
             // sick upstream would just multiply the load by the key count.
