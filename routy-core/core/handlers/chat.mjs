@@ -140,7 +140,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
     let lastError = null;
 
     if (routes.length === 0 && budget.over) {
-      log.warn("REQ", `${color.emoji} FAIL #${reqId} · 0ms · 402 budget_exceeded (${clientIdentity})`, {
+      log.warn("REQ", `402 budget_exceeded (${clientIdentity})`, {
         phase: "fail", requestId: reqId, color: color.id, client: clientIdentity,
         status: "error", errorCode: "budget_exceeded", durationMs: 0,
       });
@@ -178,7 +178,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         ? `every member of combo "${combo.name}" is unavailable${combo.skipped.length ? ` (${combo.skipped.map((s) => `${s.model}: ${s.why}`).join("; ")})` : ""}`
         : "all routes have open breakers";
       if (combo) log.warn("COMBO", `${combo.name} ← all ${combo.of ?? combo.order.length} member(s) unavailable`, { ...combo, retryAfterMs });
-      log.warn("REQ", `${color.emoji} FAIL #${reqId} · 0ms · 503 all_unavailable (${clientIdentity})`, {
+      log.warn("REQ", `503 all_unavailable (${clientIdentity})`, {
         phase: "fail", requestId: reqId, color: color.id, client: clientIdentity,
         status: "error", errorCode: "all_unavailable", durationMs: 0,
       });
@@ -378,12 +378,12 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         const idleTimeoutMs = r.node.data?.streamIdleTimeoutMs ?? globalIdleTimeoutMs;
         attempts++;
         // Emit REQ log at front door of dispatch with full spec:
-        // [color] REQ #id · model · provider · X msgs · Y tools · key (client)
+        // [color] REQ · model · provider · X msgs · Y tools · key (client)
         const msgsCount = Array.isArray(body?.messages) ? body.messages.length : (body?.prompt ? 1 : 0);
         const toolsCount = Array.isArray(body?.tools) ? body.tools.length : 0;
         const keyLabel = connection?.name || connectionLabel(connection);
         const clientLabel = clientIdentity ? `(${clientIdentity})` : "";
-        const reqLine = `${color.emoji} REQ #${reqId} · ${body.model} · ${r.node.prefix} · ${msgsCount} msgs · ${toolsCount} tools · ${keyLabel} ${clientLabel}`.trim();
+        const reqLine = `${body.model} · ${r.node.prefix} · ${msgsCount} msgs · ${toolsCount} tools · ${keyLabel} ${clientLabel}`.trim();
         log.info("REQ", reqLine, {
           phase: "req",
           requestId: reqId,
@@ -397,7 +397,6 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           messagesCount: msgsCount,
           toolsCount,
         });
-
         const result = await executor.execute({
           model: r.model, body: outbound, stream, signal: clientAbort.signal, log,
           // When the downstream client IS the opencode app it carries its own session,
@@ -754,7 +753,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       : err.status === 501 ? 501
       : err.status === 400 ? 400
       : 503;
-    log.warn("REQ", `${color.emoji} FAIL #${reqId} · ${Date.now() - t0}ms · ${status} ${err.errorCode || "all_unavailable"} (${clientIdentity})`, {
+    log.warn("REQ", `${Date.now() - t0}ms · ${status} ${err.errorCode || "all_unavailable"} (${clientIdentity})`, {
       phase: "fail", requestId: reqId, color: color.id, client: clientIdentity,
       status: "error", errorCode: err.errorCode || "all_unavailable", durationMs: Date.now() - t0,
       detail: err.message || "",
@@ -830,15 +829,14 @@ function recordUsage(repos, log, route, connection, clientModel, { status, usage
   const inTokens = usage.promptTokens ?? 0;
   const outTokens = usage.completionTokens ?? 0;
 
-  let doneMsg = `${color.emoji} DONE #${reqId} · ok · ${durSec}s · TTFT ${ttftStr} · In ${inTokens} · Out ${outTokens} · ${clientModel} · ${keyName} ${clientTag}`.trim();
+  let doneMsg = `ok · ${durSec}s · TTFT ${ttftStr} · In ${inTokens} · Out ${outTokens} · ${clientModel} · ${keyName} ${clientTag}`.trim();
   if (status !== "ok") {
     const errTag = errorCode || status;
-    doneMsg = `${color.emoji} FAIL #${reqId} · ${durSec}s · TTFT ${ttftStr} · In ${inTokens} · Out ${outTokens} · ${errTag} ${clientTag}`.trim();
+    doneMsg = `${durSec}s · TTFT ${ttftStr} · In ${inTokens} · Out ${outTokens} · ${errTag} ${clientTag}`.trim();
   }
   log.info("REQ", doneMsg, {
     phase: status === "ok" ? "done" : "fail",
     requestId: reqId,
-    color: color.id,
     client: reqMeta?.client ?? null,
     model: clientModel,
     nodeId: route.node.id,

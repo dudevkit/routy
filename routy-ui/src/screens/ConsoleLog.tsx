@@ -50,11 +50,11 @@ function LogRow({ line }: { line: LogRecord }) {
   const colorTheme = colorKey ? COLOR_MAP[colorKey] : null;
   const phase = typeof d?.phase === "string" ? d.phase : null;
 
-  // When rendered with a colored badge, clean up redundant leading text in msg (e.g. emoji or repeated DONE #id)
+  // When rendered with a colored badge, clean up any leading emoji or repeated phase words
   let displayMsg = line.msg;
   if (colorTheme && phase) {
     displayMsg = displayMsg.replace(/^[🔴🔵🟢🟣🟠🟡🩵🌸]\s*/, "");
-    displayMsg = displayMsg.replace(/^(DONE|REQ|FAIL)\s*#\w+\s*·\s*/i, "");
+    displayMsg = displayMsg.replace(/^(DONE|REQ|FAIL)(\s*#\w+)?\s*·\s*/i, "");
   }
 
   return (
@@ -85,15 +85,14 @@ function LogRow({ line }: { line: LogRecord }) {
           {colorTheme ? (
             <span
               className={cn(
-                "mr-1.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] font-semibold border",
+                "mr-2 inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-[11px] font-semibold border",
                 colorTheme.bg,
                 colorTheme.text,
                 colorTheme.border,
               )}
             >
-              <span className="inline-block h-2 w-2 rounded-sm bg-current opacity-80" />
+              <span className="inline-block h-2 w-2 rounded-sm bg-current" />
               {phase ? phase.toUpperCase() : "REQ"}
-              {typeof d?.requestId === "number" || typeof d?.requestId === "string" ? ` #${d.requestId}` : ""}
             </span>
           ) : null}
           {displayMsg}
