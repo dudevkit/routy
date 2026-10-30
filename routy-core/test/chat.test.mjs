@@ -202,16 +202,18 @@ describe("chat handler (end-to-end)", () => {
     expect(rtkLines[0].msg).toContain("saved");
   });
 
-  it("emits exactly one REQ info line per successful request (R3-1)", async () => {
+  it("emits paired REQ info lines (start and finish) per successful request (R3-1)", async () => {
     const seen = [];
     const { subscribeLog } = await import("../lib/log.mjs");
     const unsub = subscribeLog((text) => { const p = JSON.parse(text); if (p.tag === "REQ") seen.push(p); });
     repos.settings.update({ requireApiKey: false });
     await post({ model: "a/m1", stream: true, messages: [{ role: "user", content: "x" }] });
     unsub();
-    expect(seen).toHaveLength(1);
-    expect(seen[0].data.status).toBe("ok");
-    expect(seen[0].data.nodeId).toBe(repos.nodes.list()[0].id);
+    expect(seen).toHaveLength(2);
+    expect(seen[0].data.phase).toBe("req");
+    expect(seen[1].data.phase).toBe("done");
+    expect(seen[1].data.status).toBe("ok");
+    expect(seen[1].data.nodeId).toBe(repos.nodes.list()[0].id);
   });
 
   it("503s with all_unavailable when the only node is disabled (R3-4)", async () => {

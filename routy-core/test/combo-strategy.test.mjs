@@ -182,7 +182,7 @@ describe("combo logging", () => {
     // Rotation is visible in the plan: the order the strategy produced differs per request.
     expect(plans[0].data.order).not.toEqual(plans[1].data.order);
 
-    const reqs = lines.filter((l) => l.tag === "REQ");
+    const reqs = lines.filter((l) => l.tag === "REQ" && l.data?.phase === "done");
     expect(reqs).toHaveLength(2);
     for (const r of reqs) {
       expect(r.data.combo).toBe("combo1");
@@ -213,6 +213,6 @@ describe("combo logging", () => {
     expect(plan.data.order).toEqual(["na/m1"]);
     expect(plan.data.skipped).toEqual([{ model: "nb/m1", why: expect.stringContaining("breaker open") }]);
     expect(plan.msg).toContain("skipped");
-    expect(lines.find((l) => l.tag === "REQ").data.attempt).toBe(1);
+    expect(lines.find((l) => l.tag === "REQ" && l.data?.phase === "done").data.attempt).toBe(1);
   }, 20_000);
 });

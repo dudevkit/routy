@@ -11,7 +11,7 @@ import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { StatusDot } from "../components/ui/StatusDot";
 import { useToast } from "../components/ui/Toast";
-import { CaretRight, Trash } from "../components/icons";
+import { Trash } from "../components/icons";
 import { cn } from "../utils/cn";
 
 const LEVELS = ["debug", "info", "warn", "error"] as const;
@@ -50,6 +50,13 @@ function LogRow({ line }: { line: LogRecord }) {
   const colorTheme = colorKey ? COLOR_MAP[colorKey] : null;
   const phase = typeof d?.phase === "string" ? d.phase : null;
 
+  // When rendered with a colored badge, clean up redundant leading text in msg (e.g. emoji or repeated DONE #id)
+  let displayMsg = line.msg;
+  if (colorTheme && phase) {
+    displayMsg = displayMsg.replace(/^[🔴🔵🟢🟣🟠🟡🩵🌸]\s*/, "");
+    displayMsg = displayMsg.replace(/^(DONE|REQ|FAIL)\s*#\w+\s*·\s*/i, "");
+  }
+
   return (
     <>
       <div
@@ -75,7 +82,6 @@ function LogRow({ line }: { line: LogRecord }) {
           {line.tag}
         </span>
         <span className="min-w-0 flex-1 break-all text-text-main">
-          {hasData && <CaretRight size={10} className={cn("mr-1 inline-block transition-transform", open && "rotate-90")} />}
           {colorTheme ? (
             <span
               className={cn(
@@ -90,7 +96,7 @@ function LogRow({ line }: { line: LogRecord }) {
               {typeof d?.requestId === "number" || typeof d?.requestId === "string" ? ` #${d.requestId}` : ""}
             </span>
           ) : null}
-          {line.msg}
+          {displayMsg}
         </span>
       </div>
       {open && hasData && (

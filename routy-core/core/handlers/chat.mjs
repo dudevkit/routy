@@ -377,6 +377,27 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         // Per-node stall budget; 0 disables the watchdog.
         const idleTimeoutMs = r.node.data?.streamIdleTimeoutMs ?? globalIdleTimeoutMs;
         attempts++;
+        // Emit REQ log at front door of dispatch with full spec:
+        // [color] REQ #id · model · provider · X msgs · Y tools · key (client)
+        const msgsCount = Array.isArray(body?.messages) ? body.messages.length : (body?.prompt ? 1 : 0);
+        const toolsCount = Array.isArray(body?.tools) ? body.tools.length : 0;
+        const keyLabel = connection?.name || connectionLabel(connection);
+        const clientLabel = clientIdentity ? `(${clientIdentity})` : "";
+        const reqLine = `${color.emoji} REQ #${reqId} · ${body.model} · ${r.node.prefix} · ${msgsCount} msgs · ${toolsCount} tools · ${keyLabel} ${clientLabel}`.trim();
+        log.info("REQ", reqLine, {
+          phase: "req",
+          requestId: reqId,
+          color: color.id,
+          client: clientIdentity,
+          model: body.model,
+          provider: r.node.prefix,
+          nodeId: r.node.id,
+          connectionId: connection.id ?? null,
+          key: connectionLabel(connection),
+          messagesCount: msgsCount,
+          toolsCount,
+        });
+
         const result = await executor.execute({
           model: r.model, body: outbound, stream, signal: clientAbort.signal, log,
           // When the downstream client IS the opencode app it carries its own session,
