@@ -122,7 +122,12 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       return json(res, 404, { error: { message: "invalid_model", detail: `unresolvable model: ${body.model}` } });
     }
 
-    const stream = body.stream !== false; // claude clients often omit; explicit false respected
+    // OpenAI and Anthropic both document `stream` as default-false: a request that omits
+    // the flag wants a single JSON object back. Some CLI clients omit the flag but
+    // advertise their stream via `Accept: text/event-stream`, so honor that header
+    // instead of streaming for everyone. Explicit values keep their historical meaning.
+    const acceptsSSE = String(req.headers?.accept || "").includes("text/event-stream");
+    const stream = body.stream === undefined ? acceptsSSE : body.stream !== false;
     const clientAbort = new AbortController();
 
     // Combo order follows its strategy (fallback/fastest/cheapest/round-robin/sticky);

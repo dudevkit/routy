@@ -169,6 +169,30 @@ describe("chat handler (end-to-end)", () => {
     expect(repos.usage.query({ limit: 1 })[0].completion_tokens).toBe(2);
   });
 
+  // Regression: `stream` omitted must NOT mean streaming. Both the OpenAI and Anthropic
+  // specs default it to false, and every SDK that doesn't ask for streaming (cron jobs,
+  // scripts, curl) got an SSE body it could not parse before this fix.
+  it("omitted stream flag defaults to JSON, not SSE", async () => {
+    repos.settings.update({ requireApiKey: false });
+    stubState.handler = (req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: "x", usage: { prompt_tokens: 3, completion_tokens: 1 }, choices: [{ message: { content: "json-not-sse" } }] }));
+    };
+    const r = await post({ model: "a/m1", messages: [{ role: "user", content: "x" }] }); // no `stream` key
+    expect(r.status).toBe(200);
+    expect(r.headers["content-type"]).toContain("application/json");
+    expect(r.headers["content-type"]).not.toContain("text/event-stream");
+    expect(JSON.parse(r.body).choices[0].message.content).toBe("json-not-sse");
+  });
+
+  it("omitted stream flag + Accept: text/event-stream still streams (CLI clients)", async () => {
+    repos.settings.update({ requireApiKey: false });
+    const r = await post({ model: "a/m1", messages: [{ role: "user", content: "hi" }] }, { accept: "text/event-stream" });
+    expect(r.status).toBe(200);
+    expect(r.headers["content-type"]).toContain("text/event-stream");
+    expect(r.body).toContain('"content":"hi"');
+  });
+
   it("RTK compresses large tool_result bodies before dispatch (default-on)", async () => {
     repos.settings.update({ requireApiKey: false });
     const lines = ["diff --git a/src/app.js b/src/app.js", "--- a/src/app.js", "+++ b/src/app.js"];
