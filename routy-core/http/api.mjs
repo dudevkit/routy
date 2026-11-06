@@ -28,9 +28,12 @@ import { connectionState, connectionsForNode, resetConnection } from "../core/ke
 import { DEFAULT_PROXY_TEST_URL, forgetExitHealth, poolExits, proxyIdentity, resetPoolHealth, resolveNodeProxy, testProxyUrl } from "../core/proxy.mjs";
 import { CONNECTION_COOLDOWN_MS, PROXY_COOLDOWN_MS } from "../core/limits.mjs";
 import { allStatuses, connectTool, disconnectTool, findAdapter, toolStatus } from "../core/cli-tools.mjs";
-import { CODEBUDDY_INTL, startFlow, pollFlow, fetchLoginAccount, credentialFromTokens, fetchModels } from "../core/oauth/codebuddyIntl.mjs";
+import { CODEBUDDY_INTL, startFlow as codebuddyStartFlow, pollFlow, fetchLoginAccount, credentialFromTokens, fetchModels } from "../core/oauth/codebuddyIntl.mjs";
 import { createFlowManager } from "../core/oauth/flowManager.mjs";
 import { codebuddyIntlMarker, isCodeBuddyIntlOAuth } from "../core/executors/codebuddyIntl.mjs";
+import { antigravityMarker, isAntigravityOAuth, ANTIGRAVITY, ANTIGRAVITY_MODELS } from "../core/oauth/antigravity.mjs";
+import * as antigravity from "../core/oauth/antigravity.mjs";
+import { probeAntigravityOAuth } from "../core/probe.mjs";
 import { isOAuthConnection, resolveOAuthCredentials } from "../core/oauth/credentials.mjs";
 import { createQuotaTracker } from "../core/oauth/workbuddyQuotaTracker.mjs";
 
@@ -81,6 +84,7 @@ export const PUBLIC_API_PATHS = new Set([
   "/api/auth/logout",
   "/api/health",
   "/api/version",
+  "/callback",
 ]);
 
 /**
@@ -391,19 +395,19 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (!existing) return json(res, 404, { error: { message: "not_found" } });
     // A CodeBuddy OAuth node is server-owned: its marker, fixed endpoint and apiType are
     // immutable here, and a generic API-key write is refused (mixed auth is out of scope).
-    if (isCodeBuddyIntlOAuth(existing)) {
+    const isOAuth = isCodeBuddyIntlOAuth(existing) || isAntigravityOAuth(existing);
+    if (isOAuth) {
       if (typeof input.apiKey === "string" && input.apiKey.length > 0) {
         return json(res, 409, { error: { message: "conflict", detail: "this is an OAuth node — API keys cannot be added to it" } });
       }
       if (input.apiType !== undefined && input.apiType !== existing.apiType) {
         return json(res, 409, { error: { message: "conflict", detail: "this node's apiType is managed by its OAuth provider" } });
       }
+      const allowedUrls = isAntigravityOAuth(existing)
+        ? new Set([ANTIGRAVITY.chatUrl])
+        : new Set([CODEBUDDY_INTL.chatUrl, CODEBUDDY_INTL.chatUrlAlt]);
       if (input.baseUrl !== undefined && input.baseUrl !== existing.baseUrl) {
-        // The endpoint may only move between the two allowlisted service hosts (the same
-        // service answers on both). Anything else is refused, so a stored node can never
-        // redirect OAuth bearer credentials to an arbitrary URL.
-        const allowed = new Set([CODEBUDDY_INTL.chatUrl, CODEBUDDY_INTL.chatUrlAlt]);
-        if (!allowed.has(input.baseUrl)) {
+        if (!allowedUrls.has(input.baseUrl)) {
           return json(res, 409, { error: { message: "conflict", detail: "this node's endpoint is fixed by its OAuth provider" } });
         }
       }
@@ -411,8 +415,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
         return json(res, 409, { error: { message: "conflict", detail: "the OAuth provider marker cannot be changed" } });
       }
       if (input.data?.chatUrl !== undefined) {
-        const allowed = new Set([CODEBUDDY_INTL.chatUrl, CODEBUDDY_INTL.chatUrlAlt]);
-        if (!allowed.has(input.data.chatUrl)) {
+        if (!allowedUrls.has(input.data.chatUrl)) {
           return json(res, 409, { error: { message: "conflict", detail: "this node's chat URL is fixed by its OAuth provider" } });
         }
       }
@@ -617,6 +620,10 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     // failure). Their model list comes from the product config `/v3/config`, read with the
     // account's bearer token. Refresh within the lead window first so an expired token is
     // not what makes the import fail.
+    if (isAntigravityOAuth(node)) {
+      const summary = repos.nodeModels.import(node.id, [...ANTIGRAVITY_MODELS]);
+      return json(res, 200, { ...summary, listed: ANTIGRAVITY_MODELS.length, models: repos.nodeModels.list(node.id) });
+    }
     if (isCodeBuddyIntlOAuth(node)) {
       const resolved = await resolveOAuthCredentials(repos, node, conn, { log });
       if (!resolved.ok) {
@@ -690,9 +697,10 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
    */
   const probeModelRow = (node, row, conn, log, proxy = null) => {
     if (isCodeBuddyIntlOAuth(node) && (!row.kind || row.kind === CHAT_KIND)) {
-      // A CodeBuddy OAuth node probes with the real executor request and the account's
-      // bearer token — the generic /models or chat-with-apiKey probe cannot validate it.
       return probeCodeBuddyOAuth(repos, node, conn, log, { proxy });
+    }
+    if (isAntigravityOAuth(node) && (!row.kind || row.kind === CHAT_KIND)) {
+      return probeAntigravityOAuth(repos, node, conn, log, { proxy });
     }
     if (row.kind === "systemone") return probeSystemone(node, row.model, conn, { log, proxy });
     if (!row.kind || row.kind === CHAT_KIND) return probeModel(node, row.model, conn, { log, proxy });
@@ -708,7 +716,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (!node) return json(res, 404, { error: { message: "not_found" } });
     // An OAuth node's probe sends a real chat request that may consume provider quota, so
     // it must be an explicit same-origin action — the generic probe path is not guarded.
-    if (isCodeBuddyIntlOAuth(node) && !sameOriginAction(req, res, cfg)) return;
+    if ((isCodeBuddyIntlOAuth(node) || isAntigravityOAuth(node)) && !sameOriginAction(req, res, cfg)) return;
     const row = repos.nodeModels.get(p.modelId);
     if (!row || row.nodeId !== node.id) return json(res, 404, { error: { message: "not_found" } });
     const conns = repos.connections.list(node.id);
@@ -731,8 +739,14 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     // real chat probe that may consume quota. It never touches usage/budget/breakers.
     if (isOAuthConnection(conn)) {
       if (!sameOriginAction(req, res, cfg)) return;
-      if (!isCodeBuddyIntlOAuth(node)) return json(res, 400, { error: { message: "bad_request", detail: "unsupported OAuth provider" } });
-      const result = await probeCodeBuddyOAuth(repos, node, conn, log);
+      let result;
+      if (isAntigravityOAuth(node)) {
+        result = await probeAntigravityOAuth(repos, node, conn, log);
+      } else if (isCodeBuddyIntlOAuth(node)) {
+        result = await probeCodeBuddyOAuth(repos, node, conn, log);
+      } else {
+        return json(res, 400, { error: { message: "bad_request", detail: "unsupported OAuth provider" } });
+      }
       repos.connections.recordTest(conn.id, { ok: result.ok, latencyMs: result.latencyMs, error: result.ok ? null : result.error });
       return json(res, 200, { connectionId: conn.id, ok: result.ok, latencyMs: result.latencyMs, modelCount: 0, error: result.error ?? null, kind: "chat", quotaNote: "this probe sent one real chat request and may have consumed provider quota" });
     }
@@ -747,7 +761,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/keys\/test$/, async (req, res, p) => {
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
-    if (isCodeBuddyIntlOAuth(node)) {
+    if (isCodeBuddyIntlOAuth(node) || isAntigravityOAuth(node)) {
       return json(res, 400, { error: { message: "bad_request", detail: "bulk probing is disabled for OAuth nodes — test each account individually" } });
     }
     const active = repos.connections.list(node.id).filter((c) => c.status === "active");
@@ -1427,7 +1441,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const input = JSON.parse((await readBody(req)).toString("utf8"));
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
-    if (isCodeBuddyIntlOAuth(node)) {
+    if (isCodeBuddyIntlOAuth(node) || isAntigravityOAuth(node)) {
       return json(res, 409, { error: { message: "conflict", detail: "this is an OAuth node — connect accounts through the OAuth flow, not with an API key" } });
     }
     // Auto-name server-side rather than "key": two unnamed singles must never render
@@ -1458,7 +1472,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (entries.length === 0) return json(res, 400, { error: { message: "bad_request", detail: "entries array required (non-empty keys)" } });
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
-    if (isCodeBuddyIntlOAuth(node)) {
+    if (isCodeBuddyIntlOAuth(node) || isAntigravityOAuth(node)) {
       return json(res, 409, { error: { message: "conflict", detail: "this is an OAuth node — connect accounts through the OAuth flow, not with API keys" } });
     }
 
@@ -1507,13 +1521,24 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   /** Supported OAuth providers, for the dashboard's dedicated OAuth section. */
   route("GET", /^\/api\/providers\/oauth$/, (req, res) => {
     json(res, 200, {
-      providers: [{
-        id: "codebuddy-intl",
-        name: "WorkBuddy",
-        website: "https://www.workbuddy.ai",
-        marker: codebuddyIntlMarker(),
-        models: ["glm-5.2", "glm-5.1", "glm-5.0", "glm-5v-turbo", "glm-4.7", "minimax-m3", "minimax-m2.7", "kimi-k2.7", "kimi-k2.6", "kimi-k2.5", "deepseek-v4-pro", "deepseek-v4-flash"],
-      }],
+      providers: [
+        {
+          id: "codebuddy-intl",
+          name: "WorkBuddy",
+          website: "https://www.workbuddy.ai",
+          marker: codebuddyIntlMarker(),
+          defaultPrefix: "cbai",
+          models: ["glm-5.2", "glm-5.1", "glm-5.0", "glm-5v-turbo", "glm-4.7", "minimax-m3", "minimax-m2.7", "kimi-k2.7", "kimi-k2.6", "kimi-k2.5", "deepseek-v4-pro", "deepseek-v4-flash"],
+        },
+        {
+          id: "antigravity",
+          name: "Antigravity",
+          website: "https://antigravity.google",
+          marker: antigravityMarker(),
+          defaultPrefix: "ag",
+          models: [...ANTIGRAVITY_MODELS],
+        },
+      ],
     });
   });
 
@@ -1526,55 +1551,78 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     return json(res, status, { error: { message: code, detail: err?.message || "OAuth flow failed" } });
   }
 
+  function isOAuthNodeMatching(node, provider) {
+    if (provider === "antigravity") return isAntigravityOAuth(node);
+    return isCodeBuddyIntlOAuth(node);
+  }
+
   /**
    * Build the synchronous commit for a flow. It runs inside the flow manager's
    * committing phase (no await) and returns the safe node/connection view.
    */
-  function commitFor(intent) {
+  function commitFor(intent, provider = "codebuddy-intl") {
     return (tokens) => {
-      // `tokens.quotaIdentity` rides along from the poll wrapper: a verified `{ uid }` for
-      // this exact login, or null when the lookup was unavailable. It is private metadata
-      // for the quota tracker and never appears in a safe node/connection view.
-      const credentials = credentialFromTokens(tokens, { quotaIdentity: tokens.quotaIdentity ?? null });
+      let credentials;
+      if (provider === "antigravity") {
+        credentials = antigravity.credentialFromTokens(tokens, {
+          projectId: tokens.projectId,
+          tierId: tokens.tierId,
+        });
+      } else {
+        credentials = credentialFromTokens(tokens, { quotaIdentity: tokens.quotaIdentity ?? null });
+      }
+
       if (intent.kind === "create") {
         if (repos.nodes.byPrefix(intent.prefix)) {
           const err = new Error(`prefix "${intent.prefix}" is already in use`);
           err.code = "conflict";
           throw err;
         }
+        const isAg = provider === "antigravity";
         const node = repos.oauth.createNodeWithConnection({
           name: intent.name,
           prefix: intent.prefix,
-          baseUrl: CODEBUDDY_INTL.chatUrl,
-          data: { authProvider: codebuddyIntlMarker(), chatUrl: CODEBUDDY_INTL.chatUrl, provider: "codebuddy-intl" },
-          connection: { name: intent.accountLabel || `${intent.name} account`, credentials },
+          baseUrl: isAg ? ANTIGRAVITY.chatUrl : CODEBUDDY_INTL.chatUrl,
+          data: isAg
+            ? { authProvider: antigravityMarker(), chatUrl: ANTIGRAVITY.chatUrl, provider: "antigravity", preset: "antigravity" }
+            : { authProvider: codebuddyIntlMarker(), chatUrl: CODEBUDDY_INTL.chatUrl, provider: "codebuddy-intl" },
+          connection: { name: intent.accountLabel || (tokens.email ? `${intent.name} (${tokens.email})` : `${intent.name} account`), credentials },
         });
+        if (isAg) {
+          for (const model of ANTIGRAVITY_MODELS) {
+            try { repos.nodeModels.add(node.id, { model, kind: model.includes("image") ? "image" : "llm" }); } catch {}
+          }
+        }
         return { node: nodeView(repos, node), connectionId: repos.connections.list(node.id)[0]?.id ?? null };
       }
       if (intent.kind === "add") {
         const node = repos.nodes.get(intent.nodeId);
-        if (!node || !isCodeBuddyIntlOAuth(node)) {
-          const err = new Error("target node is not a CodeBuddy Intl OAuth node");
+        if (!node || !isOAuthNodeMatching(node, provider)) {
+          const err = new Error(`target node is not a ${provider} OAuth node`);
           err.code = "bad_target";
           throw err;
         }
-        const conn = repos.oauth.addConnection({ nodeId: node.id, name: intent.accountLabel || `${node.name} account`, credentials });
+        const connName = intent.accountLabel || (tokens.email ? `${node.name} (${tokens.email})` : `${node.name} account`);
+        const conn = repos.oauth.addConnection({ nodeId: node.id, name: connName, credentials });
         return { node: nodeView(repos, node), connectionId: conn.id };
       }
       // reconnect
       const existing = repos.connections.get(intent.connectionId);
       if (!existing) { const err = new Error("connection not found"); err.code = "bad_target"; throw err; }
       const node = repos.nodes.get(existing.nodeId);
-      if (!node || !isCodeBuddyIntlOAuth(node)) { const err = new Error("target is not a CodeBuddy Intl OAuth connection"); err.code = "bad_target"; throw err; }
+      if (!node || !isOAuthNodeMatching(node, provider)) { const err = new Error(`target is not a ${provider} OAuth connection`); err.code = "bad_target"; throw err; }
       const updated = repos.connections.update(existing.id, { credentials, status: "active" });
-      // A reconnect can be a different account: never keep the previous snapshot.
-      quotaTracker.invalidate(existing.id);
+      if (provider === "codebuddy-intl") quotaTracker.invalidate(existing.id);
       return { node: nodeView(repos, node), connectionId: updated.id };
     };
   }
 
-  route("POST", /^\/api\/providers\/codebuddy-intl\/oauth\/start$/, async (req, res) => {
+  route("POST", /^\/api\/providers\/(?<provider>[^/]+)\/oauth\/start$/, async (req, res, p) => {
     if (!sameOriginAction(req, res, cfg)) return;
+    const provider = p.provider;
+    if (!["codebuddy-intl", "antigravity"].includes(provider)) {
+      return json(res, 404, { error: { message: "not_found", detail: `unsupported OAuth provider "${provider}"` } });
+    }
     let input;
     try { input = JSON.parse((await readBody(req)).toString("utf8") || "{}"); } catch { return json(res, 400, { error: { message: "bad_request", detail: "invalid JSON body" } }); }
     const kind = input?.intent;
@@ -1592,19 +1640,25 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     } else if (kind === "add") {
       const node = repos.nodes.get(input.nodeId);
       if (!node) return json(res, 404, { error: { message: "not_found" } });
-      if (!isCodeBuddyIntlOAuth(node)) return json(res, 400, { error: { message: "bad_request", detail: "not a CodeBuddy Intl OAuth node" } });
+      if (!isOAuthNodeMatching(node, provider)) return json(res, 400, { error: { message: "bad_request", detail: `not a ${provider} OAuth node` } });
       intent = { kind, nodeId: node.id, accountLabel: typeof input.accountLabel === "string" ? input.accountLabel.trim() : "" };
     } else {
       const conn = repos.connections.get(input.connectionId);
       if (!conn) return json(res, 404, { error: { message: "not_found" } });
       const node = repos.nodes.get(conn.nodeId);
-      if (!node || !isCodeBuddyIntlOAuth(node)) return json(res, 400, { error: { message: "bad_request", detail: "not a CodeBuddy Intl OAuth connection" } });
+      if (!node || !isOAuthNodeMatching(node, provider)) return json(res, 400, { error: { message: "bad_request", detail: `not a ${provider} OAuth connection` } });
       intent = { kind, connectionId: conn.id, nodeId: node.id, accountLabel: typeof input.accountLabel === "string" ? input.accountLabel.trim() : "" };
     }
 
     let started;
     try {
-      started = await startFlow({});
+      if (provider === "antigravity") {
+        const redirectUri = `http://localhost:${cfg.port || 8010}/callback`;
+        started = antigravity.startFlow({ redirectUri });
+        intent.redirectUri = redirectUri;
+      } else {
+        started = await codebuddyStartFlow({});
+      }
     } catch (err) {
       return oauthError(res, err);
     }
@@ -1615,8 +1669,8 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
         verificationUrl: started.verificationUrl,
         upstreamState: started.upstreamState,
         expiresAt: started.expiresAt,
-        pollIntervalMs: CODEBUDDY_INTL.pollIntervalMs,
-        commit: commitFor(intent),
+        pollIntervalMs: provider === "antigravity" ? ANTIGRAVITY.pollIntervalMs : CODEBUDDY_INTL.pollIntervalMs,
+        commit: commitFor(intent, provider),
       });
     } catch (err) {
       return oauthError(res, err);
@@ -1624,13 +1678,21 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     json(res, 200, created);
   });
 
-  route("POST", /^\/api\/providers\/codebuddy-intl\/oauth\/flows\/(?<flowId>[^/]+)\/poll$/, async (req, res, p) => {
+  route("POST", /^\/api\/providers\/(?<provider>[^/]+)\/oauth\/flows\/(?<flowId>[^/]+)\/poll$/, async (req, res, p) => {
     if (!sameOriginAction(req, res, cfg)) return;
+    const provider = p.provider;
     try {
-      // The flow manager commits synchronously, so the state-bound identity lookup must
-      // happen here, inside the async poll wrapper, while `state` (the login handle) is
-      // still in hand. A failed lookup leaves `quotaIdentity` null: chat login still
-      // succeeds, the account is simply quota-ineligible until reconnect.
+      if (provider === "antigravity") {
+        const flow = flows.get(p.flowId);
+        const result = await flows.poll(p.flowId, async () => {
+          if (flow?.readyToCommit && flow?.tokens) {
+            return { state: "complete", tokens: flow.tokens };
+          }
+          return { state: "pending" };
+        });
+        return json(res, 200, result);
+      }
+
       const result = await flows.poll(p.flowId, async (state) => {
         const outcome = await pollFlow(state);
         if (outcome?.state === "complete" && outcome.tokens?.accessToken) {
@@ -1645,7 +1707,92 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     }
   });
 
-  route("DELETE", /^\/api\/providers\/codebuddy-intl\/oauth\/flows\/(?<flowId>[^/]+)$/, (req, res, p) => {
+  route("POST", /^\/api\/providers\/(?<provider>[^/]+)\/oauth\/flows\/(?<flowId>[^/]+)\/callback$/, async (req, res, p) => {
+    if (!sameOriginAction(req, res, cfg)) return;
+    let input;
+    try { input = JSON.parse((await readBody(req)).toString("utf8") || "{}"); } catch { return json(res, 400, { error: { message: "bad_request", detail: "invalid JSON body" } }); }
+    let code = typeof input?.code === "string" ? input.code.trim() : "";
+    if (code.includes("code=")) {
+      try {
+        const u = new URL(code.startsWith("http") ? code : `http://localhost/${code}`);
+        code = u.searchParams.get("code") || code;
+      } catch {}
+    }
+    if (!code) return json(res, 400, { error: { message: "bad_request", detail: "code is required" } });
+    const flow = flows.get(p.flowId);
+    if (!flow) return json(res, 404, { error: { message: "flow_not_found", detail: "login flow not found or expired" } });
+
+    if (p.provider === "antigravity") {
+      try {
+        const redirectUri = flow.intent?.redirectUri || `http://localhost:${cfg.port || 8010}/callback`;
+        const tokens = await antigravity.exchangeToken(code, redirectUri);
+        const extra = await antigravity.postExchange(tokens.access_token);
+        const normalized = antigravity.normalizeTokens(tokens, null, extra);
+        flow.tokens = normalized;
+        flow.readyToCommit = true;
+        const result = await flows.poll(p.flowId, async () => {
+          return { state: "complete", tokens: normalized };
+        });
+        return json(res, 200, result);
+      } catch (err) {
+        return oauthError(res, err);
+      }
+    }
+    return json(res, 400, { error: { message: "bad_request", detail: "manual callback not supported for this provider" } });
+  });
+
+  route("GET", /^\/callback$/, async (req, res, p, url) => {
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    const error = url.searchParams.get("error");
+    const errorDescription = url.searchParams.get("error_description");
+
+    if (error) {
+      res.writeHead(400, { "content-type": "text/html; charset=utf-8" });
+      res.end(`<!DOCTYPE html><html><body style="font-family:system-ui;text-align:center;padding:40px;background:#18181b;color:#f87171"><h2>Authentication Failed</h2><p>${String(errorDescription || error).slice(0, 200)}</p></body></html>`);
+      return;
+    }
+
+    if (!code || !state) {
+      res.writeHead(400, { "content-type": "text/html; charset=utf-8" });
+      res.end(`<!DOCTYPE html><html><body style="font-family:system-ui;text-align:center;padding:40px;background:#18181b;color:#f87171"><h2>Missing OAuth Parameters</h2><p>No code or state was returned by the provider.</p></body></html>`);
+      return;
+    }
+
+    const matchingFlow = [...flows._flows.values()].find((f) => f.upstreamState === state);
+    if (matchingFlow) {
+      try {
+        const redirectUri = matchingFlow.intent?.redirectUri || `http://localhost:${cfg.port || 8010}/callback`;
+        const tokens = await antigravity.exchangeToken(code, redirectUri);
+        const extra = await antigravity.postExchange(tokens.access_token);
+        const normalized = antigravity.normalizeTokens(tokens, null, extra);
+        matchingFlow.tokens = normalized;
+        matchingFlow.readyToCommit = true;
+      } catch (err) {
+        /* flow remains pending */
+      }
+    }
+
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    res.end(`<!DOCTYPE html>
+<html>
+<head><title>Authentication Complete</title></head>
+<body style="font-family:system-ui;text-align:center;padding:40px;background:#18181b;color:#f4f4f5">
+  <h2 style="color:#4ade80">✓ Authentication Successful</h2>
+  <p>You can close this tab and return to the Routy dashboard.</p>
+  <script>
+    try {
+      if (window.opener) {
+        window.opener.postMessage({ type: 'oauth_callback', data: { code: ${JSON.stringify(code)}, state: ${JSON.stringify(state)} } }, '*');
+      }
+    } catch(e) {}
+    setTimeout(() => { try { window.close(); } catch(e) {} }, 1500);
+  </script>
+</body>
+</html>`);
+  });
+
+  route("DELETE", /^\/api\/providers\/(?<provider>[^/]+)\/oauth\/flows\/(?<flowId>[^/]+)$/, (req, res, p) => {
     if (!sameOriginAction(req, res, cfg)) return;
     try {
       json(res, 200, flows.cancel(p.flowId));

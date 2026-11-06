@@ -21,6 +21,7 @@ import { opencodeTarget, transformOpencodeBody } from "./executors/opencode.mjs"
 import { transformCodebuddyBody, codebuddyChatHeaders } from "./executors/codebuddyIntl.mjs";
 import { CODEBUDDY_INTL } from "./oauth/codebuddyIntl.mjs";
 import { isOAuthConnection } from "./oauth/credentials.mjs";
+import { ANTIGRAVITY } from "./oauth/antigravity.mjs";
 import { qualifyModel } from "./routing.mjs";
 
 /**
@@ -485,6 +486,91 @@ export async function probeCodeBuddyOAuth(repos, node, connection, log = null, {
     return fail(`stream ended with no token after ${ttftMs}ms`);
   } catch (err) {
     if (controller.signal.aborted) return fail(`no token within ${timeoutMs}ms`);
+    return fail(shapeError(err));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+/**
+ * Probe an Antigravity OAuth connection with a real Gemini CloudCode stream ping.
+ */
+export async function probeAntigravityOAuth(repos, node, connection, log = null, { timeoutMs = MODEL_PROBE_TIMEOUT_MS, proxy = null } = {}) {
+  const t0 = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const fail = (error) => ({ ok: false, ttftMs: null, latencyMs: Date.now() - t0, error });
+  try {
+    let live = connection;
+    if (isOAuthConnection(connection)) {
+      const { resolveOAuthCredentials } = await import("./oauth/credentials.mjs");
+      const resolved = await resolveOAuthCredentials(repos, node, connection, { log });
+      if (!resolved.ok) return fail(resolved.error?.message || "OAuth credential unavailable");
+      live = resolved.connection;
+    }
+    const model = node?.data?.probeModel || "gemini-3.8-flash-high";
+    const { openaiToAntigravityRequest } = await import("./translate/request/openai-to-gemini.js");
+    const rawBody = {
+      model,
+      stream: true,
+      max_tokens: PROBE_MAX_TOKENS,
+      messages: [{ role: "user", content: "ping" }],
+    };
+    const body = openaiToAntigravityRequest(model, rawBody, true, live?.credentials);
+    const payload = JSON.stringify(body);
+    const token = live?.credentials?.accessToken;
+    const url = `${ANTIGRAVITY.chatUrl}:streamGenerateContent?alt=sse`;
+    const res = await undiciFetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(payload)),
+        "User-Agent": ANTIGRAVITY.userAgent,
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: payload,
+      signal: controller.signal,
+      dispatcher: getProxyAgent(primaryProxyUrl(proxy)) || getDispatcher(node),
+    });
+    if (!res.ok) {
+      return fail(`HTTP ${res.status}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let sawFrame = false;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buffer.indexOf("\n\n")) !== -1) {
+          const frame = buffer.slice(0, idx).trim();
+          buffer = buffer.slice(idx + 2);
+          const dataLine = frame.split("\n").find((l) => l.startsWith("data:"));
+          const data = dataLine ? dataLine.slice(5).trim() : "";
+          if (!data || data === "[DONE]") continue;
+          sawFrame = true;
+          try {
+            const obj = JSON.parse(data);
+            const text = obj?.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (text) {
+              const ttftMs = Date.now() - t0;
+              log?.info?.("PROBE", `← ok ${qualifyModel(node?.prefix ?? "?", model)} (Antigravity OAuth)`, { ttftMs, via: "content" });
+              return { ok: true, ttftMs, latencyMs: ttftMs, error: null, via: "content" };
+            }
+          } catch {}
+        }
+      }
+    } finally {
+      try { await reader.cancel(); } catch {}
+    }
+    if (sawFrame) {
+      const ttftMs = Date.now() - t0;
+      return { ok: true, ttftMs, latencyMs: ttftMs, error: null, via: "frame" };
+    }
+    return fail(`stream ended with no token after ${Date.now() - t0}ms`);
+  } catch (err) {
     return fail(shapeError(err));
   } finally {
     clearTimeout(timer);

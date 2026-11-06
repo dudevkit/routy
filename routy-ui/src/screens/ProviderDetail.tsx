@@ -624,7 +624,9 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
   const [allResults, setAllResults] = useState<KeyTestResult[] | null>(null);
   // A CodeBuddy Intl OAuth node manages ACCOUNTS, not API keys: the add-key inputs and bulk
   // test are replaced by a browser-login flow, and each row can be reconnected on its own.
-  const isOAuthNode = node.authProvider === "codebuddy-intl-oauth";
+  const isOAuthNode = Boolean(node.authProvider) || node.data?.authProvider === "codebuddy-intl-oauth" || node.data?.authProvider === "antigravity-oauth";
+  const oauthProviderId = node.authProvider === "antigravity-oauth" || node.data?.authProvider === "antigravity-oauth" ? "antigravity" : "codebuddy-intl";
+  const oauthProviderName = oauthProviderId === "antigravity" ? "Antigravity" : "CodeBuddy";
   const [oauthDialog, setOauthDialog] = useState<null | { kind: "add" } | { kind: "reconnect"; connectionId: string; accountLabel: string }>(null);
 
   const conns = connections.data ?? [];
@@ -706,7 +708,7 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
           {isOAuthNode ? (
             <>
               <p className="text-xs text-text-muted">
-                Each row is a signed-in CodeBuddy account. Connect another to add one, or reconnect a row whose session expired.
+                Each row is a signed-in {oauthProviderName} account. Connect another to add one, or reconnect a row whose session expired.
               </p>
               <Button variant="primary" size="sm" icon={<Plus size={14} />} className="ml-auto" onClick={() => setOauthDialog({ kind: "add" })}>
                 Connect another account
@@ -930,6 +932,9 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
       {isOAuthNode && (
         <OAuthDialog
           isOpen={oauthDialog !== null}
+          providerId={oauthProviderId}
+          providerName={oauthProviderName}
+          defaultPrefix={oauthProviderId === "antigravity" ? "ag" : "cbai"}
           onClose={() => setOauthDialog(null)}
           intent={oauthDialog?.kind === "reconnect"
             ? { kind: "reconnect", connectionId: oauthDialog.connectionId, accountLabel: oauthDialog.accountLabel }

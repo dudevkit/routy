@@ -10,7 +10,7 @@ import {
   useTestAllKeys,
   useUpdateNode,
 } from "../api/hooks";
-import type { ProviderPreset, NodeStatus, UpstreamNode } from "../api/types";
+import type { ProviderPreset, NodeStatus, UpstreamNode, OAuthProvider } from "../api/types";
 import { toastApiError } from "../utils/errors";
 import { fmtMs } from "../utils/format";
 import { Broadcast, CaretRight, Check, CheckCircle, Plus, Prohibit, WifiHigh, XCircle } from "../components/icons";
@@ -319,7 +319,7 @@ export function Upstreams() {
   const oauthProviders = useOAuthProviders();
   const addNode = useAddNode();
   const addModel = useAddModel();
-  const [oauthOpen, setOauthOpen] = useState(false);
+  const [selectedOauth, setSelectedOauth] = useState<OAuthProvider | null>(null);
 
   // Catalogue cards group by 9Router's own registry category — one section per category.
   // Non-chat providers (TTS, SearXNG, Devin) live under Media and CLI Tools, filtered out here.
@@ -423,7 +423,7 @@ export function Upstreams() {
                         Manage →
                       </Link>
                     ) : (
-                      <Button variant="secondary" size="sm" onClick={() => setOauthOpen(true)}>Connect</Button>
+                      <Button variant="secondary" size="sm" onClick={() => setSelectedOauth(p)}>Connect</Button>
                     )}
                   </div>
                 </div>
@@ -511,7 +511,14 @@ export function Upstreams() {
         onClose={() => setAddOpen(false)}
       />
 
-      <OAuthDialog isOpen={oauthOpen} intent={{ kind: "create" }} onClose={() => setOauthOpen(false)} />
+      <OAuthDialog
+        isOpen={selectedOauth !== null}
+        providerId={selectedOauth?.id}
+        providerName={selectedOauth?.name}
+        defaultPrefix={selectedOauth?.defaultPrefix}
+        intent={{ kind: "create" }}
+        onClose={() => setSelectedOauth(null)}
+      />
     </div>
   );
 }

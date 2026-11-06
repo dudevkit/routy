@@ -426,6 +426,10 @@ export const api = {
     return { state: "cancelled" };
   },
 
+  async oauthCallback(): Promise<OAuthFlowResult> {
+    return { state: "complete" };
+  },
+
   async workbuddyQuota(): Promise<WorkbuddyQuotaResponse> {
     return { accounts: [] };
   },

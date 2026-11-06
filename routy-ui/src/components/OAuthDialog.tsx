@@ -22,20 +22,24 @@ type Phase = "form" | "waiting" | "done" | "failed" | "cancelled";
 export interface OAuthDialogProps {
   isOpen: boolean;
   onClose: () => void;
+  providerId?: string;
+  providerName?: string;
+  defaultPrefix?: string;
   /** create = first account; add = another account on nodeId; reconnect = replace connectionId */
   intent: { kind: "create" } | { kind: "add"; nodeId: string; nodeName: string } | { kind: "reconnect"; connectionId: string; accountLabel: string };
   onConnected?: () => void;
 }
 
-export function OAuthDialog({ isOpen, onClose, intent, onConnected }: OAuthDialogProps) {
+export function OAuthDialog({ isOpen, onClose, intent, onConnected, providerId = "codebuddy-intl", providerName = "CodeBuddy", defaultPrefix = "cbai" }: OAuthDialogProps) {
   const toast = useToast();
   const invalidate = useInvalidator(NODES, CONNECTIONS);
   const [phase, setPhase] = useState<Phase>("form");
-  const [name, setName] = useState("CodeBuddy");
-  const [prefix, setPrefix] = useState("cbai");
+  const [name, setName] = useState(providerName);
+  const [prefix, setPrefix] = useState(defaultPrefix);
   const [accountLabel, setAccountLabel] = useState("");
   const [flowId, setFlowId] = useState<string | null>(null);
   const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
+  const [manualCode, setManualCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
   const cancelledRef = useRef(false);
@@ -47,19 +51,19 @@ export function OAuthDialog({ isOpen, onClose, intent, onConnected }: OAuthDialo
   // Reset whenever the dialog opens for a fresh intent.
   useEffect(() => {
     if (isOpen) {
-      setPhase("form"); setFlowId(null); setVerificationUrl(null); setError(null); cancelledRef.current = false;
+      setPhase("form"); setFlowId(null); setVerificationUrl(null); setError(null); setManualCode(""); cancelledRef.current = false;
+      setName(providerName); setPrefix(defaultPrefix);
     } else {
       stopPolling();
     }
-  }, [isOpen, stopPolling]);
-
+  }, [isOpen, providerName, defaultPrefix, stopPolling]);
   useEffect(() => stopPolling, [stopPolling]);
 
   const handleResult = useCallback((result: OAuthFlowResult) => {
     if (result.state === "complete") {
       setPhase("done");
       invalidate();
-      toast(intent.kind === "reconnect" ? "Account reconnected" : "CodeBuddy account connected");
+      toast(intent.kind === "reconnect" ? "Account reconnected" : `${providerName} account connected`);
       onConnected?.();
     } else if (result.state === "cancelled") {
       setPhase("cancelled");
@@ -71,7 +75,7 @@ export function OAuthDialog({ isOpen, onClose, intent, onConnected }: OAuthDialo
 
   const pollOnce = useCallback(async (id: string, intervalMs: number) => {
     try {
-      const result = await api.oauthPoll(id);
+      const result = await api.oauthPoll(id, providerId);
       if (cancelledRef.current) return;
       if (result.state === "pending") {
         pollRef.current = window.setTimeout(() => pollOnce(id, intervalMs), intervalMs);
@@ -80,10 +84,19 @@ export function OAuthDialog({ isOpen, onClose, intent, onConnected }: OAuthDialo
       }
     } catch (err) {
       if (cancelledRef.current) return;
-      // A transient poll error should not kill the flow — keep trying on the same cadence.
       pollRef.current = window.setTimeout(() => pollOnce(id, intervalMs), intervalMs);
     }
-  }, [handleResult]);
+  }, [handleResult, providerId]);
+
+  useEffect(() => {
+    const handleMsg = (ev: MessageEvent) => {
+      if (ev.data?.type === "oauth_callback" && ev.data?.data?.code && flowId) {
+        api.oauthCallback(flowId, ev.data.data.code, providerId).then(handleResult).catch(() => {});
+      }
+    };
+    window.addEventListener("message", handleMsg);
+    return () => window.removeEventListener("message", handleMsg);
+  }, [flowId, handleResult, providerId]);
 
   const start = useCallback(async () => {
     setError(null);
@@ -97,31 +110,43 @@ export function OAuthDialog({ isOpen, onClose, intent, onConnected }: OAuthDialo
       payload = { intent: "reconnect", connectionId: intent.connectionId, accountLabel: accountLabel.trim() || undefined };
     }
     try {
-      const flow = await api.oauthStart(payload);
+      const flow = await api.oauthStart(payload, providerId);
       setFlowId(flow.flowId);
       setVerificationUrl(flow.verificationUrl);
       setPhase("waiting");
-      pollRef.current = window.setTimeout(() => pollOnce(flow.flowId, Math.max(4000, flow.pollIntervalMs)), flow.pollIntervalMs);
+      pollRef.current = window.setTimeout(() => pollOnce(flow.flowId, Math.max(2500, flow.pollIntervalMs)), flow.pollIntervalMs);
     } catch (err) {
       toastApiError(toast, err, "Could not start the login flow");
       setError(err instanceof Error ? err.message : "Could not start the login flow");
     }
-  }, [accountLabel, intent, name, pollOnce, prefix, toast]);
+  }, [accountLabel, intent, name, pollOnce, prefix, providerId, toast]);
+
+  const submitManualCode = useCallback(async () => {
+    if (!flowId || !manualCode.trim()) return;
+    try {
+      setError(null);
+      const res = await api.oauthCallback(flowId, manualCode.trim(), providerId);
+      handleResult(res);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Callback submission failed");
+    }
+  }, [flowId, handleResult, manualCode, providerId]);
 
   const cancel = useCallback(async () => {
     cancelledRef.current = true;
     stopPolling();
     if (flowId) {
       try {
-        const result = await api.oauthCancel(flowId);
-        handleResult(result); // a commit that already won reports success here
+        const result = await api.oauthCancel(flowId, providerId);
+        handleResult(result);
         return;
-      } catch { /* fall through to a local cancel view */ }
+      } catch { /* fall through to local cancel */ }
     }
     setPhase("cancelled");
-  }, [flowId, handleResult, stopPolling]);
+  }, [flowId, handleResult, providerId, stopPolling]);
 
-  const title = intent.kind === "create" ? "Connect WorkBuddy" : intent.kind === "add" ? `Add account to ${intent.nodeName}` : `Reconnect ${intent.accountLabel}`;
+  const title = intent.kind === "create" ? `Connect ${providerName}` : intent.kind === "add" ? `Add account to ${intent.nodeName}` : `Reconnect ${intent.accountLabel}`;
+
 
   return (
     <Modal
@@ -146,13 +171,13 @@ export function OAuthDialog({ isOpen, onClose, intent, onConnected }: OAuthDialo
         {phase === "form" && (
           <>
             <p className="text-text-muted">
-              A browser tab opens on <span className="font-mono">www.workbuddy.ai</span> where you sign in. Keep this
+              A browser tab opens where you sign in to <span className="font-mono">{providerName}</span>. Keep this
               dialog open — it finishes automatically once you are back.
             </p>
             {intent.kind === "create" && (
               <>
                 <Input label="Provider name" value={name} onChange={(e) => setName(e.target.value)} required />
-                <Input label="Model prefix" value={prefix} onChange={(e) => setPrefix(e.target.value)} required hint="Used as prefix/model — for example cbai/glm-5.2" />
+                <Input label="Model prefix" value={prefix} onChange={(e) => setPrefix(e.target.value)} required hint={`Used as prefix/model — for example ${defaultPrefix}/model`} />
               </>
             )}
             {intent.kind !== "create" && (
@@ -160,7 +185,6 @@ export function OAuthDialog({ isOpen, onClose, intent, onConnected }: OAuthDialo
             )}
           </>
         )}
-
         {phase === "waiting" && (
           <>
             <p className="text-text-muted">Waiting for you to finish signing in…</p>
@@ -171,13 +195,30 @@ export function OAuthDialog({ isOpen, onClose, intent, onConnected }: OAuthDialo
                 rel="noopener noreferrer"
                 className="break-all text-sm font-medium text-primary hover:underline"
               >
-                Open the CodeBuddy login page →
+                Open {providerName} login page →
               </a>
             )}
-            <p className="text-xs text-text-subtle">If the tab did not open, use the link above.</p>
+            <p className="text-xs text-text-subtle">If the tab did not open automatically, click the link above.</p>
+            {providerId === "antigravity" && (
+              <div className="mt-2 flex flex-col gap-2 rounded border border-border-subtle bg-bg-alt p-3">
+                <span className="text-xs text-text-muted">
+                  If the callback did not redirect automatically, paste the redirect URL or authorization code here:
+                </span>
+                <div className="flex gap-2">
+                  <Input
+                    value={manualCode}
+                    onChange={(e) => setManualCode(e.target.value)}
+                    placeholder="Paste redirect URL (http://localhost:8010/callback?code=...) or code"
+                    className="flex-1"
+                  />
+                  <Button size="sm" variant="secondary" onClick={submitManualCode} disabled={!manualCode.trim()}>
+                    Submit
+                  </Button>
+                </div>
+              </div>
+            )}
           </>
         )}
-
         {phase === "done" && <p className="text-text-muted">Account connected. Its models are available under the provider’s page.</p>}
         {phase === "cancelled" && <p className="text-text-muted">Login cancelled — nothing was saved.</p>}
         {phase === "failed" && <p className="text-danger">{error ?? "The login flow failed. Try again."}</p>}

@@ -19,6 +19,7 @@ import { addSpend, budgetState } from "../budget.mjs";
 import { DefaultExecutor } from "../executors/default.mjs";
 import { OpenCodeExecutor, opencodeSpeaksResponses } from "../executors/opencode.mjs";
 import { CodeBuddyIntlExecutor, isCodeBuddyIntlOAuth } from "../executors/codebuddyIntl.mjs";
+import { AntigravityExecutor, isAntigravityOAuth } from "../executors/antigravity.mjs";
 import { resolveOAuthCredentials, refreshAfterAuthRejection, isOAuthConnection } from "../oauth/credentials.mjs";
 import { formatSse } from "../sse/parser.mjs";
 import { pumpSse, UsageTracker, LogBuffer } from "../sse/stream.mjs";
@@ -71,7 +72,8 @@ function connectionLabel(connection) {
 function targetFormatForNode(node, model) {
   if (node.apiType === "anthropic") return FORMATS.CLAUDE;
   if (node.apiType === "responses") return FORMATS.OPENAI_RESPONSES;
-  // opencode's muse-spark free models speak the Responses dialect on /zen/v1/responses —
+  if (isAntigravityOAuth(node)) return FORMATS.ANTIGRAVITY;
+  // opencode's muse-spark free models speak the Responses dialect on /inference/v1/responses —
   // decided per MODEL, not per node (its apiType stays "openai" for the rest of the list).
   if (node.data?.executor === "opencode" && opencodeSpeaksResponses(model)) return FORMATS.OPENAI_RESPONSES;
   return FORMATS.OPENAI;
@@ -332,7 +334,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             break;
           }
           try {
-            outbound = translateRequest(sourceFormat, targetFormat, r.model, structuredClone(sourceBody), stream, {}, null, null, [], null, null);
+            outbound = translateRequest(sourceFormat, targetFormat, r.model, structuredClone(sourceBody), stream, connection?.credentials || {}, null, null, [], null, null);
             if (!outbound) throw new Error("translateRequest returned falsy");
             toolNameMap = outbound._toolNameMap; delete outbound._toolNameMap;
             customToolNames = outbound._customToolNames; delete outbound._customToolNames;
@@ -377,7 +379,9 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         // other node keeps the default wire.
         const Executor = isCodeBuddyIntlOAuth(r.node)
           ? CodeBuddyIntlExecutor
-          : r.node.data?.executor === "opencode" ? OpenCodeExecutor : DefaultExecutor;
+          : isAntigravityOAuth(r.node)
+            ? AntigravityExecutor
+            : r.node.data?.executor === "opencode" ? OpenCodeExecutor : DefaultExecutor;
         const executor = new Executor(r.node, connection, { proxy });
         // Per-node stall budget; 0 disables the watchdog.
         const idleTimeoutMs = r.node.data?.streamIdleTimeoutMs ?? globalIdleTimeoutMs;

@@ -239,7 +239,7 @@ const server = http.createServer((req, res) => {
   }
 
   // /ui/* static SPA (routy-ui dist) — same origin, so no CORS needed
-  if (!pathname.startsWith("/api") && !pathname.startsWith("/v1") && pathname !== "/metrics" && req.method === "GET" && cfg.uiDir) {
+  if (!pathname.startsWith("/api") && !pathname.startsWith("/v1") && pathname !== "/metrics" && pathname !== "/callback" && req.method === "GET" && cfg.uiDir) {
     const uiPath = pathname.startsWith("/ui/") ? pathname.slice(3) : pathname === "/ui" ? "/" : pathname;
     if (serveStatic(res, cfg.uiDir, uiPath)) return;
   }

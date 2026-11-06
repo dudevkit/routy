@@ -19,8 +19,27 @@
 // failure is the OAuth lifecycle's business, not the API-key strike path.
 
 import crypto from "node:crypto";
-import { refreshTokens, credentialFromTokens, OAuthError } from "./codebuddyIntl.mjs";
+import * as codebuddyIntl from "./codebuddyIntl.mjs";
+import * as antigravity from "./antigravity.mjs";
+import { OAuthError } from "./codebuddyIntl.mjs";
 
+export { OAuthError };
+
+export function oauthProviderForNode(node) {
+  if (
+    node?.data?.authProvider === "antigravity-oauth" ||
+    node?.data?.provider === "antigravity" ||
+    node?.data?.preset === "antigravity"
+  ) {
+    return "antigravity";
+  }
+  return "codebuddy-intl";
+}
+
+export function getOAuthHelper(provider) {
+  if (provider === "antigravity") return antigravity;
+  return codebuddyIntl;
+}
 /** A per-process secret for the token fingerprint. Never persisted, never logged. */
 const FINGERPRINT_KEY = crypto.randomBytes(32);
 
@@ -97,12 +116,13 @@ export async function resolveOAuthCredentials(repos, node, connection, { now = D
   const observedRevision = Number.isFinite(credentials.oauthRevision) ? credentials.oauthRevision : 0;
   const observedRefresh = credentials.refreshToken;
 
+  const provider = oauthProviderForNode(node);
+  const helper = getOAuthHelper(provider);
   let tokens;
   try {
-    tokens = await singleFlight(node.data?.authProvider || "codebuddy-intl", observedRefresh, () => refreshTokens(observedRefresh));
+    tokens = await singleFlight(provider, observedRefresh, () => helper.refreshTokens(observedRefresh));
   } catch (err) {
     // A transient failure keeps credentials and lets the request fall back to another
-    // account/node. A definitive one (never produced today — no code is proven to mean
     // "revoked") would mark reauth-required.
     if (err?.transient === false) {
       markReauthRequired(repos, connection);
@@ -115,7 +135,14 @@ export async function resolveOAuthCredentials(repos, node, connection, { now = D
   // Apply with CAS: if a reconnect or another refresh already moved the row, keep theirs.
   // The verified quota identity is private metadata tied to the account, not the token, so
   // it must survive an access-token rotation.
-  const nextCreds = credentialFromTokens(tokens, { now, previousRevision: observedRevision, authState: "active", quotaIdentity: credentials.providerSpecificData?.quotaIdentity });
+  const nextCreds = helper.credentialFromTokens(tokens, {
+    now,
+    previousRevision: observedRevision,
+    authState: "active",
+    quotaIdentity: credentials.providerSpecificData?.quotaIdentity,
+    projectId: credentials.projectId,
+    tierId: credentials.tierId,
+  });
   const updated = repos.oauth.casCredentials(connection.id, {
     expectedRevision: observedRevision,
     expectedRefreshToken: observedRefresh,
@@ -155,14 +182,22 @@ export async function refreshAfterAuthRejection(repos, node, connection, { log =
   }
   const observedRevision = Number.isFinite(credentials.oauthRevision) ? credentials.oauthRevision : 0;
   const observedRefresh = credentials.refreshToken;
+  const provider = oauthProviderForNode(node);
+  const helper = getOAuthHelper(provider);
   let tokens;
   try {
-    tokens = await singleFlight(node.data?.authProvider || "codebuddy-intl", observedRefresh, () => refreshTokens(observedRefresh));
+    tokens = await singleFlight(provider, observedRefresh, () => helper.refreshTokens(observedRefresh));
   } catch (err) {
     if (err?.transient === false) markReauthRequired(repos, connection);
     return null;
   }
-  const nextCreds = credentialFromTokens(tokens, { previousRevision: observedRevision, authState: "active", quotaIdentity: credentials.providerSpecificData?.quotaIdentity });
+  const nextCreds = helper.credentialFromTokens(tokens, {
+    previousRevision: observedRevision,
+    authState: "active",
+    quotaIdentity: credentials.providerSpecificData?.quotaIdentity,
+    projectId: credentials.projectId,
+    tierId: credentials.tierId,
+  });
   const updated = repos.oauth.casCredentials(connection.id, {
     expectedRevision: observedRevision,
     expectedRefreshToken: observedRefresh,

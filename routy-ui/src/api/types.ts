@@ -350,14 +350,14 @@ export interface OAuthProvider {
   name: string;
   website: string;
   marker: string;
+  defaultPrefix?: string;
   models: string[];
 }
 
 export type OAuthIntent =
-  | { intent: "create"; name: string; prefix: string; accountLabel?: string }
-  | { intent: "add"; nodeId: string; accountLabel?: string }
-  | { intent: "reconnect"; connectionId: string; accountLabel?: string };
-
+  | { intent: "create"; name: string; prefix: string; accountLabel?: string; provider?: string }
+  | { intent: "add"; nodeId: string; accountLabel?: string; provider?: string }
+  | { intent: "reconnect"; connectionId: string; accountLabel?: string; provider?: string };
 export interface OAuthFlowStart {
   flowId: string;
   verificationUrl: string;

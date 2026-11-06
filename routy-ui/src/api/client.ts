@@ -325,15 +325,16 @@ export const api = {
   batchAddConnections: (id: string, input: BatchConnectionInput): Promise<BatchConnectionResult> =>
     postJson<BatchConnectionResult>(`/api/nodes/${enc(id)}/connections/batch`, input),
 
-  /* OAuth (CodeBuddy Intl) — provider-scoped, same-origin guarded server-side */
+  /* OAuth (CodeBuddy Intl & Antigravity) — provider-scoped, same-origin guarded server-side */
   oauthProviders: (): Promise<{ providers: OAuthProvider[] }> => getJson("/api/providers/oauth"),
-  oauthStart: (input: OAuthIntent): Promise<OAuthFlowStart> =>
-    postJson<OAuthFlowStart>("/api/providers/codebuddy-intl/oauth/start", input),
-  oauthPoll: (flowId: string): Promise<OAuthFlowResult> =>
-    postJson<OAuthFlowResult>(`/api/providers/codebuddy-intl/oauth/flows/${enc(flowId)}/poll`, {}),
-  oauthCancel: (flowId: string): Promise<OAuthFlowResult> =>
-    deleteJsonT<OAuthFlowResult>(`/api/providers/codebuddy-intl/oauth/flows/${enc(flowId)}`),
-
+  oauthStart: (input: OAuthIntent, provider: string = "codebuddy-intl"): Promise<OAuthFlowStart> =>
+    postJson<OAuthFlowStart>(`/api/providers/${enc(provider)}/oauth/start`, input),
+  oauthPoll: (flowId: string, provider: string = "codebuddy-intl"): Promise<OAuthFlowResult> =>
+    postJson<OAuthFlowResult>(`/api/providers/${enc(provider)}/oauth/flows/${enc(flowId)}/poll`, {}),
+  oauthCancel: (flowId: string, provider: string = "codebuddy-intl"): Promise<OAuthFlowResult> =>
+    deleteJsonT<OAuthFlowResult>(`/api/providers/${enc(provider)}/oauth/flows/${enc(flowId)}`),
+  oauthCallback: (flowId: string, code: string, provider: string = "codebuddy-intl"): Promise<OAuthFlowResult> =>
+    postJson<OAuthFlowResult>(`/api/providers/${enc(provider)}/oauth/flows/${enc(flowId)}/callback`, { code }),
   /* WorkBuddy quota tracker — read-only; GET is cache-only, refresh is an explicit POST */
   workbuddyQuota: (): Promise<WorkbuddyQuotaResponse> => getJson<WorkbuddyQuotaResponse>("/api/providers/workbuddy/quota"),
   refreshWorkbuddyQuota: (connectionId: string): Promise<WorkbuddyQuotaResponse["accounts"][number]> =>
