@@ -40,9 +40,9 @@ const ANTHROPIC_API_VERSION = "2023-06-01";
 const MAX_SESSION_LENGTH = 256;
 const MAX_TOOL_NAME_LEN = 128;
 const OPENCODE_SESSION_RE = /^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/;
-const OPENCODE_REQUEST_RE = /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/;
 const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
+export { OPENCODE_CIPHER_LIST } from "./pool.mjs";
 /** Exact upstream list — plus the same model family by name (helpers.js isMuseSparkModel). */
 const RESPONSES_MODELS = new Set([
   "muse-spark-1.2-contributor-free",
@@ -65,8 +65,15 @@ function unstableRandom() {
   return out;
 }
 
-// Canonical id shapes: 12 hex chars encoding the time, 14 base62 random. Upstream's
-// generateSessionId/generateRequestId, verbatim logic.
+// Canonical id shapes: 12 hex chars encoding the time, 14 base62 random.
+const SESSION_PREFIX_MASK = (1n << 48n) - 1n;
+
+function descendingTimeHex(time, counterValue) {
+  return (~(BigInt(time) * 0x1000n + BigInt(counterValue)) & SESSION_PREFIX_MASK)
+    .toString(16)
+    .padStart(12, "0");
+}
+
 let lastTimestamp = 0;
 let counter = 0;
 
@@ -76,32 +83,28 @@ function generateSessionId(timestamp = Date.now()) {
     counter = 0;
   }
   counter++;
-  const current = BigInt(timestamp) * 0x1000n + BigInt(counter);
-  const value = ~current;
-  const time = Array.from({ length: 6 }, (_, index) =>
-    Number((value >> BigInt(40 - 8 * index)) & 0xffn).toString(16).padStart(2, "0"),
-  ).join("");
-  return `ses_${time}${unstableRandom()}`;
+  return `ses_${descendingTimeHex(timestamp, counter)}${unstableRandom()}`;
 }
 
-function generateRequestId(timestamp = Date.now()) {
-  const current = BigInt(timestamp) * 0x1000n + 1n;
-  const time = Array.from({ length: 6 }, (_, index) =>
-    Number((current >> BigInt(40 - 8 * index)) & 0xffn).toString(16).padStart(2, "0"),
-  ).join("");
-  return `msg_${time}${unstableRandom()}`;
-}
+const translatedOpencodeSessions = new Map();
+const MAX_TRANSLATED_SESSIONS = 5000;
 
-/** Upstream translateSessionId: keep what is canonical, hash anything else into shape. */
-function translateSessionId(sessionId) {
+/** Upstream translateSessionId: keep canonical or mint at Date.now() with memoization. */
+export function translateSessionId(sessionId, clientTool = "") {
   if (typeof sessionId === "string" && OPENCODE_SESSION_RE.test(sessionId.trim())) return sessionId.trim();
-  const digest = createHash("sha256").update(`opencode\0generic\0${sessionId || ""}`).digest();
-  const timeHex = digest.subarray(0, 6).toString("hex");
-  let randomPart = "";
-  for (let i = 6; i < 20; i++) randomPart += BASE62_CHARS[digest[i] % 62];
-  return `ses_${timeHex}${randomPart}`;
+  const key = `${clientTool || "generic"}\0${sessionId || ""}`;
+  const existing = translatedOpencodeSessions.get(key);
+  if (existing) {
+    existing.lastUsed = Date.now();
+    return existing.sessionId;
+  }
+  const translated = `ses_${descendingTimeHex(Date.now(), 1)}${unstableRandom()}`;
+  if (translatedOpencodeSessions.size >= MAX_TRANSLATED_SESSIONS) {
+    translatedOpencodeSessions.delete(translatedOpencodeSessions.keys().next().value);
+  }
+  translatedOpencodeSessions.set(key, { sessionId: translated, lastUsed: Date.now() });
+  return translated;
 }
-
 function normalizeSession(value) {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
@@ -149,29 +152,11 @@ function lastUserText(body) {
   return "";
 }
 
-/** Upstream deriveRequestId: the CLI's per-turn message id — stable across retries. */
-function deriveRequestId(sessionId, body) {
-  const text = lastUserText(body);
-  if (!text) return generateRequestId();
-  const digest = createHash("sha256").update(`opencode-req\0${sessionId || ""}\0${text}`).digest();
-  const timeHex = digest.subarray(0, 6).toString("hex");
-  let randomPart = "";
-  for (let i = 6; i < 20; i++) randomPart += BASE62_CHARS[digest[i] % 62];
-  const id = `msg_${timeHex}${randomPart}`;
-  return OPENCODE_REQUEST_RE.test(id) ? id : generateRequestId();
-}
-
 function resolveSession(clientHeaders, node, body) {
   const raw = clientHeader(clientHeaders, "x-opencode-session");
   const incoming = normalizeSession(raw);
   if (!incoming) return stableSessionId(node.id);
-  return translateSessionId(incoming); // canonical passes through, anything else is hashed into shape
-}
-
-function resolveRequestId(clientHeaders, session, body) {
-  const raw = normalizeSession(clientHeader(clientHeaders, "x-opencode-request"));
-  if (raw && OPENCODE_REQUEST_RE.test(raw)) return raw;
-  return deriveRequestId(session, body);
+  return translateSessionId(incoming);
 }
 
 /** Strip a `model(level)` thinking suffix and any `prefix/` — upstream baseModelId. */
@@ -266,32 +251,28 @@ function applyResponsesShape(body) {
  *  chat path never sends. */
 export function opencodeUrl(baseUrl, model) {
   const base = String(baseUrl || "").replace(/\/+$/, "");
-  if (isResponsesModel(model)) return `${base}/zen/v1/responses`;
-  if (isMessagesModel(model)) return `${base}/zen/v1/messages`;
-  return `${base}/zen/v1/chat/completions`;
+  if (isResponsesModel(model)) return `${base}/inference/v1/responses`;
+  if (isMessagesModel(model)) return `${base}/inference/v1/messages`;
+  return `${base}/inference/v1/chat/completions`;
 }
 
-/** Canonical endpoint + headers for one request. The model probe uses this too — session,
- *  request id and UA all follow the v0.5.91 rules regardless of who is asking. */
+/** Canonical endpoint + headers for one request. The model probe uses this too. */
 export function opencodeTarget({ node, model, body = null, clientHeaders = null, stream = true }) {
   const url = opencodeUrl(node.baseUrl, model);
   const session = resolveSession(clientHeaders, node, body);
-  const request = resolveRequestId(clientHeaders, session, body);
   const downstreamUa = String(clientHeader(clientHeaders, "user-agent") || "");
   const headers = {
     "content-type": "application/json",
-    // The free gateway's whole auth — no key exists.
     authorization: "Bearer public",
-    // Versioned or passthrough: bare "opencode" is a 403 (their own unit test says so).
     "user-agent": hasValidOpencodeVersion(downstreamUa) ? downstreamUa : OPENCODE_UA,
     "x-opencode-client": clientHeader(clientHeaders, "x-opencode-client") || "desktop",
     "x-opencode-session": session,
-    "x-opencode-request": request,
+    "x-opencode-session-id": session,
     "x-opencode-project": clientHeader(clientHeaders, "x-opencode-project") || "global",
     accept: stream ? "text/event-stream" : "*/*",
   };
   if (url.endsWith("/messages")) headers["anthropic-version"] = ANTHROPIC_API_VERSION;
-  return { url, headers, session, request };
+  return { url, headers, session };
 }
 
 /** The request-body pass (upstream transformRequest), shared by the executor and the model
@@ -300,7 +281,7 @@ export function transformOpencodeBody(model, body) {
   const b = body && typeof body === "object" ? { ...body } : body;
   if (model && b && typeof b === "object" && !b.model) b.model = model;
   const responses = isResponsesModel(model);
-  // Zen rejects non-streaming free requests with 403 FreeTierError — always stream upstream;
+  const claude = isMessagesModel(model);
   // chat.mjs's forced-SSE->JSON path answers a non-streaming client.
   if (b && typeof b === "object") b.stream = true;
   if (responses && b && typeof b === "object") {
@@ -321,7 +302,7 @@ export function transformOpencodeBody(model, body) {
     // is a documented 403 (upstream transformRequest makes the same call).
     applyFingerprintTools(b, true);
   } else if (b && typeof b === "object") {
-    applyFingerprintTools(b, false);
+    applyFingerprintTools(b, false, { claude });
   }
   return b;
 }

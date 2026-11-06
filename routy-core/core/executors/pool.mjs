@@ -11,6 +11,25 @@
 // drop-in replacement for global fetch once a pool is attached.
 import { Agent, fetch as undiciFetch } from "undici";
 
+export const OPENCODE_CIPHER_LIST = [
+  "TLS_AES_128_GCM_SHA256",
+  "TLS_AES_256_GCM_SHA384",
+  "TLS_CHACHA20_POLY1305_SHA256",
+  "ECDHE-ECDSA-AES128-GCM-SHA256",
+  "ECDHE-RSA-AES128-GCM-SHA256",
+  "ECDHE-ECDSA-AES256-GCM-SHA384",
+  "ECDHE-RSA-AES256-GCM-SHA384",
+  "ECDHE-ECDSA-CHACHA20-POLY1305",
+  "ECDHE-RSA-CHACHA20-POLY1305",
+  "ECDHE-ECDSA-AES128-SHA",
+  "ECDHE-RSA-AES128-SHA",
+  "ECDHE-ECDSA-AES256-SHA",
+  "ECDHE-RSA-AES256-SHA",
+  "AES128-GCM-SHA256",
+  "AES256-GCM-SHA384",
+  "AES128-SHA",
+  "AES256-SHA",
+].join(":");
 export const DEFAULT_POOL = Object.freeze({
   // Generous: a queued request is added latency, and this is a local gateway.
   // Bounded rather than unlimited so one origin cannot exhaust the process.
@@ -37,7 +56,10 @@ export function originOf(baseUrl) {
 }
 
 export function resolvePoolConfig(node) {
-  return { ...DEFAULT_POOL, ...(node?.data?.pool || {}) };
+  const origin = originOf(node?.baseUrl);
+  const isOpencode = node?.data?.executor === "opencode" || origin === "https://opencode.ai";
+  const extra = isOpencode ? { ciphers: OPENCODE_CIPHER_LIST } : {};
+  return { ...DEFAULT_POOL, ...extra, ...(node?.data?.pool || {}) };
 }
 
 /**
@@ -67,7 +89,7 @@ export function getDispatcher(node) {
     pipelining: cfg.pipelining,
     keepAliveTimeout: cfg.keepAliveTimeoutMs,
     keepAliveMaxTimeout: cfg.keepAliveMaxTimeoutMs,
-    connect: { noDelay: cfg.noDelay },
+    connect: { noDelay: cfg.noDelay, ...(cfg.ciphers ? { ciphers: cfg.ciphers } : {}) },
   });
   pools.set(origin, { agent, key });
   return agent;

@@ -86,21 +86,25 @@ function post(model, headers = {}, body = {}) {
 const opencodeNode = () => addNode({ prefix: "oc", baseUrl: `http://127.0.0.1:${stubPort}`, data: { executor: "opencode" } });
 
 describe("opencode executor (ported from 9Router's OpenCodeExecutor)", () => {
-  it("composes /zen/v1/chat/completions and sends the free-gateway headers", async () => {
+  it("composes /inference/v1/chat/completions and sends the v2 free-gateway headers and <env> fingerprint", async () => {
     const node = opencodeNode();
     const r = await post("oc/plain-model");
     expect(r.status).toBe(200);
     const seen = stubState.requests[0];
-    expect(seen.path).toBe("/zen/v1/chat/completions");
+    expect(seen.path).toBe("/inference/v1/chat/completions");
     expect(seen.headers.authorization).toBe("Bearer public");
     expect(seen.headers["x-opencode-client"]).toBe("desktop");
     expect(seen.headers["x-opencode-session"]).toMatch(/^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/); // canonical, stable per node
+    expect(seen.headers["x-opencode-session-id"]).toBe(seen.headers["x-opencode-session"]);
+    expect(seen.headers["x-opencode-request"]).toBeUndefined(); // v2 rejects x-opencode-request with 403
     expect(seen.headers["user-agent"]).toBe("opencode/1.18.31"); // bare "opencode" is a 403 upstream
     expect(seen.body.model).toBe("plain-model");
-    expect(seen.body.stream).toBe(true); // zen rejects non-streaming free requests
+    expect(seen.body.stream).toBe(true); // free requests always stream upstream
+    expect(seen.body.messages.some((m) => typeof m?.content === "string" && m.content.includes("<env>"))).toBe(true);
     // The same node keeps the same session across requests (upstream caches it too).
     await post("oc/another-model");
     expect(stubState.requests[1].headers["x-opencode-session"]).toBe(seen.headers["x-opencode-session"]);
+    expect(stubState.requests[1].headers["x-opencode-session-id"]).toBe(seen.headers["x-opencode-session"]);
   });
 
   it("muse-spark models take /zen/v1/responses with the Responses body shape", async () => {
@@ -108,7 +112,8 @@ describe("opencode executor (ported from 9Router's OpenCodeExecutor)", () => {
     const r = await post("oc/muse-spark-1.3-contributor-free", {}, { max_tokens: 512, reasoning_effort: "Ultra" });
     expect(r.status).toBe(200);
     const seen = stubState.requests[0];
-    expect(seen.path).toBe("/zen/v1/responses");
+    expect(seen.path).toBe("/inference/v1/responses");
+    expect(seen.body.instructions).toContain("<env>");
     expect(seen.body.max_tokens).toBeUndefined();
     expect(seen.body.max_output_tokens).toBe(512);
     // Ultra arrives as xhigh: the openai->responses translator clamps effort to its dialect
@@ -164,7 +169,7 @@ describe("keyless presets (data.noAuth, zero connections)", () => {
     const r = await post("oc/plain-model");
     expect(r.status).toBe(200);
     const seen = stubState.requests[0];
-    expect(seen.path).toBe("/zen/v1/chat/completions");
+    expect(seen.path).toBe("/inference/v1/chat/completions");
     expect(seen.headers.authorization).toBe("Bearer public");
     expect(seen.headers["x-opencode-session"]).toBeTruthy();
   });
@@ -182,7 +187,7 @@ describe("keyless presets (data.noAuth, zero connections)", () => {
     const r = await probeModel(node, "muse-spark-1.3-contributor-free", null);
     expect(r.ok, r.error).toBe(true);
     const seen = stubState.requests[0];
-    expect(seen.path).toBe("/zen/v1/responses");
+    expect(seen.path).toBe("/inference/v1/responses");
     expect(seen.headers.authorization).toBe("Bearer public");
   });
 
