@@ -720,3 +720,46 @@ export interface CliTool {
   /** false for a tool with no local config to point at routy (Devin) */
   writable: boolean;
 }
+
+/* ── Quota Tracker ────────────────────────────────────────────────────────── */
+
+export interface ModelQuotaItem {
+  modelId?: string;
+  displayName?: string;
+  used: number;
+  total: number;
+  remainingPercentage: number;
+  resetAt: string | null;
+  unlimited?: boolean;
+}
+
+export interface QuotaAccount {
+  provider: string;
+  nodeId: string;
+  nodePrefix: string;
+  connectionId: string;
+  accountLabel: string;
+  connectionStatus: string;
+  authState: string;
+  eligibility: string | null;
+  fetchedAt: string | null;
+  stale: boolean;
+  plan: string;
+  projectId?: string | null;
+  quotas: Record<string, ModelQuotaItem>;
+  error?: string | null;
+  // WorkBuddy specific extensions
+  aggregate?: unknown;
+  resources?: unknown[];
+}
+
+export interface QuotaProvider {
+  id: string;
+  name: string;
+  type: "oauth" | "api_key";
+  accounts: QuotaAccount[];
+}
+
+export interface QuotaOverviewResponse {
+  providers: QuotaProvider[];
+}

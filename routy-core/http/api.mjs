@@ -36,6 +36,7 @@ import * as antigravity from "../core/oauth/antigravity.mjs";
 import { probeAntigravityOAuth } from "../core/probe.mjs";
 import { isOAuthConnection, resolveOAuthCredentials } from "../core/oauth/credentials.mjs";
 import { createQuotaTracker } from "../core/oauth/workbuddyQuotaTracker.mjs";
+import { createAntigravityQuotaTracker } from "../core/oauth/antigravityQuotaTracker.mjs";
 
 const uuid = () => crypto.randomUUID();
 
@@ -354,6 +355,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   // breakers, health, or test results. See docs/workbuddy-quota-tracker-spec.md.
   // `hooks.quotaFetch` lets tests inject a stub so no test can reach WorkBuddy.
   const quotaTracker = createQuotaTracker({ repos, now: () => Date.now(), fetchQuota: hooks.quotaFetch });
+  const antigravityQuota = createAntigravityQuotaTracker({ repos, now: () => Date.now(), fetchQuota: hooks.antigravityQuotaFetch });
 
   // nodes
   route("GET", /^\/api\/nodes$/, (req, res) => {
@@ -1825,6 +1827,79 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
         : code === "not_oauth_node" || code === "not_oauth_connection" ? 400
         : 502;
       return json(res, status, { error: { message: code, detail: err?.message || "the quota read failed" } });
+    }
+  });
+
+  // ── Antigravity quota tracker routes ──────────────────────────────────────
+  route("GET", /^\/api\/providers\/antigravity\/quota$/, (req, res) => {
+    json(res, 200, { accounts: antigravityQuota.accounts() });
+  });
+
+  route("POST", /^\/api\/providers\/antigravity\/quota\/refresh$/, async (req, res) => {
+    if (!sameOriginAction(req, res, cfg)) return;
+    let input;
+    try { input = JSON.parse((await readBody(req)).toString("utf8") || "{}"); } catch { return json(res, 400, { error: { message: "bad_request", detail: "invalid JSON body" } }); }
+    const connectionId = typeof input?.connectionId === "string" ? input.connectionId.trim() : "";
+    if (!connectionId) return json(res, 400, { error: { message: "bad_request", detail: "connectionId is required" } });
+    const connection = repos.connections.get(connectionId);
+    if (!connection) return json(res, 404, { error: { message: "not_found" } });
+    try {
+      const result = await antigravityQuota.refresh(connectionId);
+      json(res, 200, result);
+    } catch (err) {
+      const status = err?.status || 502;
+      return json(res, status, { error: { message: err?.reason || "upstream_error", detail: err?.message || "Antigravity quota read failed" } });
+    }
+  });
+
+  // ── Unified Quota Tracker (all trackable providers) ────────────────────────
+  route("GET", /^\/api\/quota$/, (req, res) => {
+    const wbAccounts = quotaTracker.accounts().map((acc) => ({ ...acc, provider: "codebuddy-intl" }));
+    const agAccounts = antigravityQuota.accounts();
+    json(res, 200, {
+      providers: [
+        {
+          id: "antigravity",
+          name: "Antigravity (Google)",
+          type: "oauth",
+          accounts: agAccounts,
+        },
+        {
+          id: "codebuddy-intl",
+          name: "WorkBuddy (CodeBuddy)",
+          type: "oauth",
+          accounts: wbAccounts,
+        },
+      ],
+    });
+  });
+
+  route("POST", /^\/api\/quota\/refresh$/, async (req, res) => {
+    if (!sameOriginAction(req, res, cfg)) return;
+    let input;
+    try { input = JSON.parse((await readBody(req)).toString("utf8") || "{}"); } catch { return json(res, 400, { error: { message: "bad_request", detail: "invalid JSON body" } }); }
+    const connectionId = typeof input?.connectionId === "string" ? input.connectionId.trim() : "";
+    const provider = typeof input?.provider === "string" ? input.provider.trim() : "";
+    if (!connectionId) return json(res, 400, { error: { message: "bad_request", detail: "connectionId is required" } });
+    const connection = repos.connections.get(connectionId);
+    if (!connection) return json(res, 404, { error: { message: "not_found" } });
+
+    const node = repos.nodes.get(connection.nodeId);
+    const resolvedProvider = provider || (isAntigravityOAuth(node) ? "antigravity" : isCodeBuddyIntlOAuth(node) ? "codebuddy-intl" : "");
+
+    try {
+      if (resolvedProvider === "antigravity") {
+        const result = await antigravityQuota.refresh(connectionId);
+        return json(res, 200, result);
+      }
+      if (resolvedProvider === "codebuddy-intl" || resolvedProvider === "workbuddy") {
+        const result = await quotaTracker.refresh(connectionId);
+        return json(res, 200, result);
+      }
+      return json(res, 400, { error: { message: "unsupported_provider", detail: `provider "${resolvedProvider}" does not support quota tracking` } });
+    } catch (err) {
+      const status = err?.status || (err?.code === "not_found" ? 404 : 502);
+      return json(res, status, { error: { message: err?.reason || err?.code || "upstream_error", detail: err?.message || "quota refresh failed" } });
     }
   });
 

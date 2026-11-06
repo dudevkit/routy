@@ -19,6 +19,7 @@ import { Stub } from "./screens/Stub";
 import { TokenSaver } from "./screens/TokenSaver";
 import { Upstreams } from "./screens/Upstreams";
 import { Usage } from "./screens/Usage";
+import { Quota } from "./screens/Quota";
 import { initTheme } from "./hooks/useTheme";
 
 /* Before first paint: a mode applied from an effect renders one frame of the wrong
@@ -70,6 +71,7 @@ function Shell() {
               <Route path="/upstreams" element={<Upstreams />} />
               <Route path="/upstreams/:id" element={<ProviderDetail />} />
               <Route path="/usage" element={<Usage />} />
+              <Route path="/quota" element={<Quota />} />
               <Route path="/console" element={<ConsoleLog />} />
               <Route path="/combos" element={<Combos />} />
               <Route path="/media" element={<Media />} />

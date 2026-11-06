@@ -15,6 +15,7 @@ const UPDATES: QueryKey = ["updates"];
 const CLI_TOOLS: QueryKey = ["cli-tools"];
 const ROUTABLE: QueryKey = ["routable-models"];
 export const QUOTA: QueryKey = ["workbuddy-quota"];
+export const QUOTA_OVERVIEW: QueryKey = ["quota-overview"];
 
 /* ── queries ───────────────────────────────────────────────────────────────── */
 export const useNodes = () => useQuery({ queryKey: NODES, queryFn: api.listNodes, refetchInterval: 20000 });
@@ -164,6 +165,25 @@ export const useImportModels = () => {
   return useMutation({
     mutationFn: ({ nodeId, connectionId }: { nodeId: string; connectionId?: string }) => api.importModels(nodeId, connectionId),
     onSuccess: () => invalidate(),
+  });
+};
+
+export const useQuotaOverview = () =>
+  useQuery({
+    queryKey: QUOTA_OVERVIEW,
+    queryFn: api.getQuotaOverview,
+    refetchInterval: 60000,
+  });
+
+export const useRefreshQuota = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ connectionId, provider }: { connectionId: string; provider?: string }) =>
+      api.refreshQuota(connectionId, provider),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QUOTA_OVERVIEW });
+      qc.invalidateQueries({ queryKey: QUOTA });
+    },
   });
 };
 

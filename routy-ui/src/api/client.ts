@@ -10,6 +10,7 @@
  */
 import type {
   CliTool,
+  QuotaProvider,
   UpdateApplyResult,
   UpdateState,
   BatchConnectionInput,
@@ -409,4 +410,10 @@ export const api = {
   /* logs */
   /** clears the server ring and notifies every open stream (`clear` event) */
   clearLogs: (): Promise<{ ok: boolean }> => postJson<{ ok: boolean }>("/api/logs/clear"),
+
+  /* quota tracker */
+  getQuotaOverview: (): Promise<{ providers: QuotaProvider[] }> =>
+    getJson<{ providers: QuotaProvider[] }>("/api/quota"),
+  refreshQuota: (connectionId: string, provider?: string): Promise<unknown> =>
+    postJson<unknown>("/api/quota/refresh", { connectionId, provider }),
 };

@@ -5,6 +5,7 @@ import {
   Broadcast,
   ChartBar,
   Coins,
+  Gauge,
   Gear,
   Images,
   Network,
@@ -32,6 +33,7 @@ const navItems: NavItemSpec[] = [
   { to: "/combos", label: "Combos & Aliases", icon: Stack },
   { to: "/media", label: "Media", icon: Images },
   { to: "/usage", label: "Usage", icon: ChartBar },
+  { to: "/quota", label: "Quota", icon: Gauge },
   { to: "/token-saver", label: "Token Saver", icon: Coins },
 ];
 

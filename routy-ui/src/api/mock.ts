@@ -17,8 +17,9 @@ import type {
   NewConnectionInput,
   NewNodeInput,
   KeyTestResult,
-  MediaKind,
+  QuotaProvider,
   ProviderPreset,
+  MediaKind,
   MediaCatalogEntry,
   MediaModelEntry,
   ModelBulkAction,
@@ -436,6 +437,44 @@ export const api = {
 
   async refreshWorkbuddyQuota(): Promise<WorkbuddyQuotaAccount> {
     throw new Error("The mock transport cannot read provider allowance — run against a live gateway.");
+  },
+
+  async getQuotaOverview(): Promise<{ providers: QuotaProvider[] }> {
+    return {
+      providers: [
+        {
+          id: "antigravity",
+          name: "Antigravity (Google)",
+          type: "oauth",
+          accounts: [
+            {
+              provider: "antigravity",
+              nodeId: "mock-ag-node",
+              nodePrefix: "ag",
+              connectionId: "mock-ag-conn",
+              accountLabel: "Main Google Account",
+              connectionStatus: "active",
+              authState: "active",
+              eligibility: null,
+              fetchedAt: new Date().toISOString(),
+              stale: false,
+              plan: "Pro",
+              projectId: "cloudaicompanion-test-project",
+              quotas: {
+                "gemini-2.5-flash": { displayName: "Gemini 2.5 Flash", used: 150, total: 1000, remainingPercentage: 85, resetAt: new Date(Date.now() + 14400000).toISOString() },
+                "claude-3-5-sonnet": { displayName: "Claude 3.5 Sonnet", used: 600, total: 1000, remainingPercentage: 40, resetAt: new Date(Date.now() + 7200000).toISOString() },
+                "gemini_weekly": { displayName: "Gemini (Weekly)", used: 250, total: 1000, remainingPercentage: 75, resetAt: new Date(Date.now() + 86400000 * 5).toISOString() },
+                "claude_gpt_weekly": { displayName: "Claude & GPT (Weekly)", used: 400, total: 1000, remainingPercentage: 60, resetAt: new Date(Date.now() + 86400000 * 5).toISOString() },
+              },
+            },
+          ],
+        },
+      ],
+    };
+  },
+
+  async refreshQuota(): Promise<unknown> {
+    return { ok: true };
   },
 
   async testConnectionKey(): Promise<KeyTestResult> {
