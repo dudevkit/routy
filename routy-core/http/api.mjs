@@ -326,9 +326,10 @@ function gatewayInfo(repos, cfg, version, req) {
   // The Host header is what the client already used to reach us, so it is the one
   // address we know works.
   const host = req?.headers?.host || `${cfg.host}:${cfg.port}`;
+  const proto = req?.headers?.["x-forwarded-proto"] || "http";
   return {
     online: true,
-    endpoint: `http://${host}/v1`,
+    endpoint: `${proto}://${host}/v1`,
     // Mask the real key. This used to render a hardcoded "re_…" prefix followed by
     // the key's *id*, so it never showed anything about the key itself — and after
     // the rename to sk- keys it advertised a format that no longer exists.

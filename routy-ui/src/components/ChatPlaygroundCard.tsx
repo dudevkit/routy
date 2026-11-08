@@ -18,8 +18,11 @@ export function ChatPlaygroundCard({ node }: { node: UpstreamNode }) {
   const models = useNodeModels(node.id);
 
   const clientKey = (keys.data ?? []).find((k) => k.enabled !== false)?.key ?? "";
-  const endpoint = useMemo(() => {
-    const base = gateway.data?.endpoint ?? "http://127.0.0.1:8010/v1";
+  // For in-browser execution, prefer same-origin relative path /v1/chat/completions
+  // so browsers don't trip over mixed-content (http vs https) or external domain routing.
+  const executeEndpoint = "/v1/chat/completions";
+  const displayEndpoint = useMemo(() => {
+    const base = gateway.data?.endpoint ?? `${window.location.origin}/v1`;
     return `${base.replace(/\/+$/, "")}/chat/completions`;
   }, [gateway.data?.endpoint]);
   const modelRows = (models.data?.models ?? []).filter(
@@ -74,12 +77,12 @@ export function ChatPlaygroundCard({ node }: { node: UpstreamNode }) {
   const curl = useMemo(() => {
     const key = clientKey || "sk-your-router-key";
     return [
-      `curl -X POST "${endpoint}" \\`,
+      `curl -X POST "${displayEndpoint}" \\`,
       `  -H "Content-Type: application/json" \\`,
       `  -H "Authorization: Bearer ${key}" \\`,
       `  -d '${JSON.stringify(payload, null, 2)}'`,
     ].join("\n");
-  }, [endpoint, clientKey, payload]);
+  }, [displayEndpoint, clientKey, payload]);
 
   const copyCurl = () => {
     void copy(curl);
@@ -101,7 +104,7 @@ export function ChatPlaygroundCard({ node }: { node: UpstreamNode }) {
         headers["Authorization"] = `Bearer ${clientKey}`;
       }
 
-      const res = await fetch(endpoint, {
+      const res = await fetch(executeEndpoint, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),

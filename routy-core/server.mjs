@@ -225,15 +225,25 @@ const server = http.createServer((req, res) => {
   if (needsAuth && !authed) {
     return json(res, 401, { error: { message: "auth_error", detail: "sign in to manage this gateway" } });
   }
-  // Proxy surface: chat/messages enforce keys in-handler; /v1/models gets the
-  // guard here. Loopback (the SPA's own origin) is trusted by design.
-  if (pathname.startsWith("/v1") && repos.settings.get("requireApiKey", true) !== false) {
-    const addr = req.socket?.remoteAddress || "";
-    const loopback = addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
-    if (!loopback) {
-      const bearer = (req.headers.authorization || "").match(/^Bearer\s+(.+)$/i)?.[1];
-      if (!bearer || !repos.apiKeys.verify(bearer.trim())) {
-        return json(res, 401, { error: { message: "auth_error", detail: "valid API key required" } });
+  // Proxy surface: handle CORS for browser clients (e.g. playground, web UIs).
+  if (pathname.startsWith("/v1")) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, X-Requested-With, x-api-key");
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      return res.end();
+    }
+    // chat/messages enforce keys in-handler; other /v1 endpoints get the guard here.
+    // Loopback (the SPA's own origin) is trusted by design.
+    if (repos.settings.get("requireApiKey", true) !== false) {
+      const addr = req.socket?.remoteAddress || "";
+      const loopback = addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+      if (!loopback) {
+        const bearer = (req.headers.authorization || "").match(/^Bearer\s+(.+)$/i)?.[1];
+        if (!bearer || !repos.apiKeys.verify(bearer.trim())) {
+          return json(res, 401, { error: { message: "auth_error", detail: "valid API key required" } });
+        }
       }
     }
   }
