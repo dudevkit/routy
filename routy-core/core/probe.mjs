@@ -328,6 +328,7 @@ export async function probeModel(node, model, connection = null, { timeoutMs, lo
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
+        buffer = buffer.replaceAll("\r\n", "\n");
         let idx;
         while ((idx = buffer.indexOf("\n\n")) !== -1) {
           const frame = buffer.slice(0, idx).trim();
@@ -494,7 +495,7 @@ export async function probeCodeBuddyOAuth(repos, node, connection, log = null, {
 /**
  * Probe an Antigravity OAuth connection with a real Gemini CloudCode stream ping.
  */
-export async function probeAntigravityOAuth(repos, node, connection, log = null, { timeoutMs = MODEL_PROBE_TIMEOUT_MS, proxy = null } = {}) {
+export async function probeAntigravityOAuth(repos, node, connection, log = null, { timeoutMs = MODEL_PROBE_TIMEOUT_MS, proxy = null, model = null } = {}) {
   const t0 = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -507,15 +508,15 @@ export async function probeAntigravityOAuth(repos, node, connection, log = null,
       if (!resolved.ok) return fail(resolved.error?.message || "OAuth credential unavailable");
       live = resolved.connection;
     }
-    const model = node?.data?.probeModel || "gemini-3.8-flash-high";
+    const targetModel = model || node?.data?.probeModel || "gemini-3.8-flash-high";
     const { openaiToAntigravityRequest } = await import("./translate/request/openai-to-gemini.js");
     const rawBody = {
-      model,
+      model: targetModel,
       stream: true,
       max_tokens: PROBE_MAX_TOKENS,
       messages: [{ role: "user", content: "ping" }],
     };
-    const body = openaiToAntigravityRequest(model, rawBody, true, live?.credentials);
+    const body = openaiToAntigravityRequest(targetModel, rawBody, true, live?.credentials);
     const payload = JSON.stringify(body);
     const token = live?.credentials?.accessToken;
     const url = `${ANTIGRAVITY.chatUrl}:streamGenerateContent?alt=sse`;
@@ -543,6 +544,7 @@ export async function probeAntigravityOAuth(repos, node, connection, log = null,
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
+        buffer = buffer.replaceAll("\r\n", "\n");
         let idx;
         while ((idx = buffer.indexOf("\n\n")) !== -1) {
           const frame = buffer.slice(0, idx).trim();
@@ -553,10 +555,10 @@ export async function probeAntigravityOAuth(repos, node, connection, log = null,
           sawFrame = true;
           try {
             const obj = JSON.parse(data);
-            const text = obj?.candidates?.[0]?.content?.parts?.[0]?.text;
+            const text = obj?.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? obj?.candidates?.[0]?.content?.parts?.[0]?.text;
             if (text) {
               const ttftMs = Date.now() - t0;
-              log?.info?.("PROBE", `← ok ${qualifyModel(node?.prefix ?? "?", model)} (Antigravity OAuth)`, { ttftMs, via: "content" });
+              log?.info?.("PROBE", `← ok ${qualifyModel(node?.prefix ?? "?", targetModel)} (Antigravity OAuth)`, { ttftMs, via: "content" });
               return { ok: true, ttftMs, latencyMs: ttftMs, error: null, via: "content" };
             }
           } catch {}

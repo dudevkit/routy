@@ -702,7 +702,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       return probeCodeBuddyOAuth(repos, node, conn, log, { proxy });
     }
     if (isAntigravityOAuth(node) && (!row.kind || row.kind === CHAT_KIND)) {
-      return probeAntigravityOAuth(repos, node, conn, log, { proxy });
+      return probeAntigravityOAuth(repos, node, conn, log, { proxy, model: row.model });
     }
     if (row.kind === "systemone") return probeSystemone(node, row.model, conn, { log, proxy });
     if (!row.kind || row.kind === CHAT_KIND) return probeModel(node, row.model, conn, { log, proxy });

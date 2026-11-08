@@ -199,6 +199,7 @@ describe("Antigravity OAuth in End-to-End Chat Handler", () => {
     expect(call.body.project).toBe("cloudaicompanion-test-project");
     expect(call.body.userAgent).toBe("antigravity");
     expect(call.body.requestId).toMatch(/^agent[-/]/);
+    expect(call.body.stream).toBeUndefined();
     expect(call.body.request.contents).toBeDefined();
     expect(call.body.request.contents[0].parts[0].text).toBe("Hi");
   });

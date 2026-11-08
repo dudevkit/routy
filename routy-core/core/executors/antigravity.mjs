@@ -98,10 +98,14 @@ export class AntigravityExecutor extends DefaultExecutor {
     }
     const isImage = isImageModel(model);
     const url = this.buildUrl(model, stream);
+    const clone = { ...body };
+    delete clone.stream;
+    const bodyText = JSON.stringify(clone);
     return super.execute({
       ...rest,
       model,
-      body,
+      body: clone,
+      bodyText,
       stream: stream && !isImage,
       url,
     });
