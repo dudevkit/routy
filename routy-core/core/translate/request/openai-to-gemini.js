@@ -36,6 +36,29 @@ function sanitizeGeminiFunctionName(name) {
   return sanitized.substring(0, 64);
 }
 
+/**
+ * Rewrites duplicate tool_call_ids so every emitted functionCall id is unique.
+ * Gemini validates functionCall id uniqueness across the WHOLE history and
+ * answers 400/429 otherwise.
+ */
+function createToolCallIdUniquifier() {
+  const used = new Set();
+  return {
+    next(id) {
+      if (!id) return id;
+      if (!used.has(id)) {
+        used.add(id);
+        return id;
+      }
+      let n = 2;
+      let candidate = `${id}-${n}`;
+      while (used.has(candidate)) candidate = `${id}-${n++}`;
+      used.add(candidate);
+      return candidate;
+    },
+  };
+}
+
 // Core: Convert OpenAI request to Gemini format (base for all variants)
 function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG_SIGNATURE, sessionId = null) {
   const result = {
@@ -73,15 +96,17 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
     }
   }
 
-  // Build tool responses cache
+  // Build tool responses cache queued per id
   const toolResponses = {};
   if (body.messages && Array.isArray(body.messages)) {
     for (const msg of body.messages) {
       if (msg.role === ROLE.TOOL && msg.tool_call_id) {
-        toolResponses[msg.tool_call_id] = msg.content;
+        (toolResponses[msg.tool_call_id] ||= []).push(msg.content);
       }
     }
   }
+  const toolResponseCursor = {};
+  const toolCallIdUniquifier = createToolCallIdUniquifier();
 
   // Convert messages
   if (body.messages && Array.isArray(body.messages)) {
@@ -130,13 +155,13 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
 
             const args = tryParseJSON(tc.function?.arguments || "{}");
             const cachedSig = tc.id ? getGeminiThoughtSignatureSync(tc.id, sessionId) : null;
-            // First call gets cached signature or fallback; sibling calls remain unsigned if no cached sig
             const callSig = cachedSig || (!firstFunctionCallSeen ? signature : undefined);
             firstFunctionCallSeen = true;
+            const emitId = toolCallIdUniquifier.next(tc.id);
 
             const part = {
               functionCall: {
-                id: tc.id,
+                id: emitId,
                 name: sanitizeGeminiFunctionName(tc.function.name),
                 args: args
               }
@@ -145,7 +170,7 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
               part.thoughtSignature = callSig;
             }
             parts.push(part);
-            toolCallIds.push(tc.id);
+            toolCallIds.push({ origId: tc.id, emitId, name: tc.function?.name });
           }
 
           if (parts.length > 0) {
@@ -154,21 +179,30 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
 
           // Check if there are actual tool responses in the next messages
           const isIntermediate = i < body.messages.length - 1;
-          const hasActualResponses = toolCallIds.some(fid => toolResponses[fid] !== undefined);
+          const hasActualResponses = toolCallIds.some(
+            ({ origId }) => (toolResponseCursor[origId] || 0) < (toolResponses[origId]?.length ?? 0)
+          );
 
           if (hasActualResponses || isIntermediate) {
             const toolParts = [];
-            for (const fid of toolCallIds) {
-              let resp = toolResponses[fid];
-              if (resp === undefined) resp = "";
+            for (const { origId, emitId, name: callName } of toolCallIds) {
+              const queue = toolResponses[origId];
+              const cursor = toolResponseCursor[origId] || 0;
+              let resp;
+              if (queue && cursor < queue.length) {
+                resp = queue[cursor];
+                toolResponseCursor[origId] = cursor + 1;
+              } else {
+                resp = "";
+              }
 
-              let name = tcID2Name[fid];
+              let name = callName || tcID2Name[origId];
               if (!name) {
-                const idParts = fid.split("-");
+                const idParts = String(origId).split("-");
                 if (idParts.length > 2) {
                   name = idParts.slice(0, -2).join("-");
                 } else {
-                  name = fid;
+                  name = origId;
                 }
               }
 
@@ -181,7 +215,7 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
 
               toolParts.push({
                 functionResponse: {
-                  id: fid,
+                  id: emitId,
                   name: sanitizeGeminiFunctionName(name),
                   response: { result: parsedResp }
                 }
@@ -279,11 +313,10 @@ function wrapInCloudCodeEnvelope(model, geminiCLI, credentials = null, isAntigra
     }
   };
 
-  // Antigravity specific fields
-  if (isAntigravity) {
-    envelope.requestType = "agent";
-  } else {
-    // Keep safetySettings for Gemini CLI
+  // Antigravity specific fields.
+  // NOTE: official Antigravity client omits `requestType` on the chat path.
+  // Sending requestType: "agent" makes Google bucket the request and return 429 RESOURCE_EXHAUSTED.
+  if (!isAntigravity) {
     envelope.request.safetySettings = geminiCLI.safetySettings;
   }
 
@@ -305,7 +338,7 @@ function wrapInCloudCodeEnvelopeForClaude(model, claudeRequest, credentials = nu
     model: model,
     userAgent: "antigravity",
     requestId: `agent-${generateUUID()}`,
-    requestType: "agent",
+    // Omit requestType for Antigravity (see note in wrapInCloudCodeEnvelope)
     request: {
       sessionId: toNumericSessionId(credentials?._clientSessionId) || deriveSessionId(credentials?.email || credentials?.connectionId),
       contents: [],
