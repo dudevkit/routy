@@ -226,12 +226,21 @@ export const ADAPTERS = [
         path: "~/.hermes/config.yaml",
         format: "yaml",
         connectedWhen: "model.base_url",
-        patch: ({ baseUrl, model, apiKey }) => ({
-          "model.provider": "custom",
-          "model.base_url": baseUrl,
-          ...(model ? { "model.default": model } : {}),
-          ...(apiKey ? { "model.api_key": apiKey } : {}),
-        }),
+        apply: (text, { baseUrl, model, apiKey }) => {
+          const lines = [
+            "model:",
+            "  provider: custom",
+            `  base_url: "${baseUrl}"`,
+            ...(model ? [`  default: "${model}"`] : []),
+            ...(apiKey ? [`  api_key: "${apiKey}"`] : []),
+          ].join("\n");
+          // Replace entire top-level model: block so duplicate keys lower in the template (provider: auto, base_url: ...) are cleanly replaced
+          const re = /^model:[\s\S]*?(?=\n[^\s#]|\n# ===|$)/m;
+          if (re.test(text)) {
+            return text.replace(re, lines);
+          }
+          return `${lines}\n\n${text}`;
+        },
       },
     ],
   },
