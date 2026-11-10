@@ -155,8 +155,7 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
 
             const args = tryParseJSON(tc.function?.arguments || "{}");
             const cachedSig = tc.id ? getGeminiThoughtSignatureSync(tc.id, sessionId) : null;
-            const callSig = cachedSig || (!firstFunctionCallSeen ? signature : undefined);
-            firstFunctionCallSeen = true;
+            const callSig = cachedSig || signature;
             const emitId = toolCallIdUniquifier.next(tc.id);
 
             const part = {
