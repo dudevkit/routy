@@ -161,24 +161,24 @@ function yamlBlockRange(text, parent) {
   if (!m) return null;
   const start = m.index + m[0].length;
   const rest = text.slice(start);
-  const stop = rest.search(/^[^\s#]|^\s*\r?$/m);
+  const stop = rest.search(/^[^\s#]/m);
   const body = stop === -1 ? rest : rest.slice(0, stop);
   return { start, end: start + body.length, headerAt: m.index };
 }
 
-const yamlLine = (key, value) => `  ${key}: "${String(value).replace(/"/g, '\\"')}"`;
+const yamlLine = (key, value, indent = "  ") => `${indent}${key}: "${String(value).replace(/"/g, '\\"')}"`;
 
 function yamlGet(text, dotted) {
   const keys = split(dotted);
   if (keys.length === 1) {
-    const m = text.match(new RegExp(`^${keys[0]}:[ \\t]*["']?([^"'\\r\\n]+)["']?`, "m"));
-    return m ? m[1].trim() : undefined;
+    const all = [...text.matchAll(new RegExp(`^${keys[0]}:[ \\t]*["']?([^"'\\r\\n]+)["']?`, "gm"))];
+    return all.length ? all.at(-1)[1].trim() : undefined;
   }
   const range = yamlBlockRange(text, keys[0]);
   if (!range) return undefined;
   const body = text.slice(range.start, range.end);
-  const m = body.match(new RegExp(`^[ \\t]+${keys[1]}:[ \\t]*["']?([^"'\\r\\n]+)["']?`, "m"));
-  return m ? m[1].trim() : undefined;
+  const all = [...body.matchAll(new RegExp(`^[ \\t]+${keys[1]}:[ \\t]*["']?([^"'\\r\\n]+)["']?`, "gm"))];
+  return all.length ? all.at(-1)[1].trim() : undefined;
 }
 
 function yamlSet(text, dotted, value) {
@@ -198,11 +198,19 @@ function yamlSet(text, dotted, value) {
   }
 
   const body = text.slice(range.start, range.end);
-  const existing = body.match(new RegExp(`^[ \\t]+${child}:.*$`, "m"));
-  if (existing) {
-    return text.slice(0, range.start) + body.replace(existing[0], line) + text.slice(range.end);
-  }
-  return `${text.slice(0, range.start)}${line}\n${text.slice(range.start)}`;
+  const own = new RegExp(`^[ \\t]+${child}:`);
+  const rows = body.split(/(?<=\n)/);
+  let last = -1;
+  rows.forEach((row, i) => {
+    if (own.test(row)) last = i;
+  });
+  if (last === -1) return `${text.slice(0, range.start)}${line}\n${body}${text.slice(range.end)}`;
+  const patched = rows.map((row, i) => {
+    if (!own.test(row)) return row;
+    if (i !== last) return "";
+    return line + (row.endsWith("\r\n") ? "\r\n" : row.endsWith("\n") ? "\n" : "");
+  }).join("");
+  return text.slice(0, range.start) + patched + text.slice(range.end);
 }
 
 function yamlDelete(text, dotted) {
@@ -213,14 +221,37 @@ function yamlDelete(text, dotted) {
   const range = yamlBlockRange(text, keys[0]);
   if (!range) return text;
   const body = text.slice(range.start, range.end);
-  const existing = body.match(new RegExp(`^[ \\t]+${keys[1]}:.*\\r?\\n?`, "m"));
-  if (!existing) return text;
-  let next = text.slice(0, range.start) + body.replace(existing[0], "") + text.slice(range.end);
+  const removed = body.replace(new RegExp(`^[ \\t]+${keys[1]}:[^\\n]*\\r?\\n?`, "gm"), "");
+  if (removed === body) return text;
+  let next = text.slice(0, range.start) + removed + text.slice(range.end);
   const after = yamlBlockRange(next, keys[0]);
   if (after && next.slice(after.start, after.end).trim() === "") {
     next = next.slice(0, after.headerAt) + next.slice(after.end);
   }
   return next;
+}
+
+export function replaceYamlBlockChildren(text, parent, pairs) {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const rows = text.split(/\r?\n/);
+  const isHeader = (row) => /^[^\s#]/.test(row) && row.replace(/[ \t]+$/, "") === `${parent}:`;
+  const head = rows.findIndex(isHeader);
+  if (head === -1) {
+    const block = [`${parent}:`, ...pairs.map(([k, v]) => yamlLine(k, v))].join(eol);
+    return `${block}${eol}${eol}${text}`;
+  }
+  let end = head + 1;
+  while (end < rows.length && !/^[^\s#]/.test(rows[end])) end++;
+  const body = rows.slice(head + 1, end);
+  const firstKey = body.find((row) => /^[ \t]+(?!#)\S/.test(row));
+  const indent = firstKey ? firstKey.match(/^[ \t]+/)[0] : "  ";
+  const keys = new Set(pairs.map(([key]) => key));
+  const ours = (row) => {
+    const m = row.match(/^([ \t]+)([^\s:#]+):/);
+    return !!m && m[1] === indent && keys.has(m[2]);
+  };
+  const lines = pairs.map(([key, value]) => yamlLine(key, value, indent));
+  return [...rows.slice(0, head + 1), ...lines, ...body.filter((row) => !ours(row)), ...rows.slice(end)].join(eol);
 }
 
 // ── .env ────────────────────────────────────────────────────────────────────

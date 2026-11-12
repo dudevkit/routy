@@ -13,7 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { ROOT, deleteValues, getValue, setValues } from "../lib/formats.mjs";
+import { ROOT, deleteValues, getValue, setValues, replaceYamlBlockChildren } from "../lib/formats.mjs";
 
 /** Home-relative paths are expanded at use, never at import. */
 const expand = (p, home = os.homedir()) => (p.startsWith("~") ? path.join(home, p.slice(1)) : p);
@@ -220,27 +220,24 @@ export const ADAPTERS = [
     // "${OPENAI_API_KEY}" therefore sent that literal string as the bearer token and
     // the gateway answered 401 -- "Provider authentication failed". The key goes into
     // the config as itself; the file is 0600, same as the .env it replaced.
-    note: "YAML config. The model block is replaced; everything else in the file is untouched.",
+    note: "YAML config. Rewrites the keys routy owns inside the model block; Hermes' own template and your other sections are left alone.",
     files: [
       {
         path: "~/.hermes/config.yaml",
         format: "yaml",
         connectedWhen: "model.base_url",
-        apply: (text, { baseUrl, model, apiKey }) => {
-          const lines = [
-            "model:",
-            "  provider: custom",
-            `  base_url: "${baseUrl}"`,
-            ...(model ? [`  default: "${model}"`] : []),
-            ...(apiKey ? [`  api_key: "${apiKey}"`] : []),
-          ].join("\n");
-          // Replace entire top-level model: block so duplicate keys lower in the template (provider: auto, base_url: ...) are cleanly replaced
-          const re = /^model:[\s\S]*?(?=\n[^\s#]|\n# ===|$)/m;
-          if (re.test(text)) {
-            return text.replace(re, lines);
-          }
-          return `${lines}\n\n${text}`;
-        },
+        // Key by key, not block by block: Hermes ships a ~350-line commented template
+        // inside `model:` (see config.yaml), and replacing the block wholesale threw
+        // that away. Replacing only the *first* copy of a key was worse than useless —
+        // the template's later `default:`/`base_url:` won at parse time, so a connect
+        // reported success while Hermes kept its old model. replaceYamlBlockChildren
+        // drops every copy it owns and writes its own at the top of the block.
+        apply: (text, { baseUrl, model, apiKey }) => replaceYamlBlockChildren(text, "model", [
+          ["provider", "custom"],
+          ["base_url", baseUrl],
+          ...(model ? [["default", model]] : []),
+          ...(apiKey ? [["api_key", apiKey]] : []),
+        ]),
       },
     ],
   },
