@@ -405,7 +405,7 @@ export function Upstreams() {
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {oauthProviders.data?.providers.map((p) => {
-              const node = (nodes.data ?? []).find((n) => n.authProvider === p.marker);
+              const node = (nodes.data ?? []).find((n) => n.authProvider === p.marker || n.data?.authProvider === p.marker);
               return (
                 <div key={p.id} className="flex flex-col gap-1.5 rounded border border-border-subtle p-3">
                   <div className="flex items-start justify-between gap-2">

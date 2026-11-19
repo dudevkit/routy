@@ -20,6 +20,8 @@ import { DefaultExecutor } from "../executors/default.mjs";
 import { OpenCodeExecutor, opencodeSpeaksResponses } from "../executors/opencode.mjs";
 import { CodeBuddyIntlExecutor, isCodeBuddyIntlOAuth } from "../executors/codebuddyIntl.mjs";
 import { AntigravityExecutor, isAntigravityOAuth } from "../executors/antigravity.mjs";
+import { CodexExecutor, isCodexOAuth } from "../executors/codex.mjs";
+import { SseParser } from "../sse/parser.mjs";
 import { resolveOAuthCredentials, refreshAfterAuthRejection, isOAuthConnection } from "../oauth/credentials.mjs";
 import { formatSse } from "../sse/parser.mjs";
 import { pumpSse, UsageTracker, LogBuffer } from "../sse/stream.mjs";
@@ -70,6 +72,7 @@ function connectionLabel(connection) {
 }
 
 function targetFormatForNode(node, model) {
+  if (isCodexOAuth(node)) return FORMATS.OPENAI_RESPONSES;
   if (node.apiType === "anthropic") return FORMATS.CLAUDE;
   if (node.apiType === "responses") return FORMATS.OPENAI_RESPONSES;
   if (isAntigravityOAuth(node)) return FORMATS.ANTIGRAVITY;
@@ -328,7 +331,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         let toolNameMap = null;
         let customToolNames = null;
         if (translate) {
-          if (!stream && (targetFormat === FORMATS.CLAUDE || targetFormat === FORMATS.OPENAI_RESPONSES)) {
+          if (!stream && !isCodexOAuth(r.node) && (targetFormat === FORMATS.CLAUDE || targetFormat === FORMATS.OPENAI_RESPONSES)) {
             lastError = { status: 501, errorCode: "not_implemented", message: "non-streaming + translation lands in P1.6b" };
             nodeDied = true;
             break;
@@ -377,11 +380,13 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         // (core/executors/opencode.mjs); a CodeBuddy OAuth node uses the fixed-endpoint
         // executor (selected from the server-owned marker, never a client field); every
         // other node keeps the default wire.
-        const Executor = isCodeBuddyIntlOAuth(r.node)
-          ? CodeBuddyIntlExecutor
-          : isAntigravityOAuth(r.node)
-            ? AntigravityExecutor
-            : r.node.data?.executor === "opencode" ? OpenCodeExecutor : DefaultExecutor;
+        const Executor = isCodexOAuth(r.node)
+          ? CodexExecutor
+          : isCodeBuddyIntlOAuth(r.node)
+            ? CodeBuddyIntlExecutor
+            : isAntigravityOAuth(r.node)
+              ? AntigravityExecutor
+              : r.node.data?.executor === "opencode" ? OpenCodeExecutor : DefaultExecutor;
         const executor = new Executor(r.node, connection, { proxy });
         // Per-node stall budget; 0 disables the watchdog.
         const idleTimeoutMs = r.node.data?.streamIdleTimeoutMs ?? globalIdleTimeoutMs;
@@ -570,7 +575,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         // headers alone are not enough, since a stream can die mid-flight.
 
         // ── streaming: translate or passthrough ──
-        if (stream && result.response.headers?.get?.("content-type")?.includes("text/event-stream")) {
+        if (stream && (isCodexOAuth(r.node) || result.response.headers?.get?.("content-type")?.includes("text/event-stream"))) {
           const usage = new UsageTracker({ promptText: JSON.stringify(body.messages || body.input || "") });
           const logBuffer = new LogBuffer();
           // Set when the upstream stream breaks mid-flight; carried into the usage row so a
@@ -707,8 +712,34 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         }
         const usage = new UsageTracker({ promptText: JSON.stringify(body.messages || "") });
         let parsed = null;
-        if (upstreamCt.includes("text/event-stream")) {
-          parsed = parseSSEToOpenAIResponse(text, r.model);
+        if (isCodexOAuth(r.node) || upstreamCt.includes("text/event-stream")) {
+          if (isCodexOAuth(r.node)) {
+            const translator = createResponseTranslator({ sourceFormat: FORMATS.OPENAI, targetFormat, model: r.model, body, toolNameMap, customToolNames });
+            const parser = new SseParser();
+            const bytes = new TextEncoder().encode(text);
+            const frames = [];
+            for (let offset = 0; offset < bytes.length; offset += 65536) frames.push(...parser.push(bytes.subarray(offset, offset + 65536)));
+            frames.push(...parser.end());
+            const failure = frames.map((frame) => {
+              try { return JSON.parse(frame.data); } catch { return null; }
+            }).find((event) => event?.type === "response.failed" || event?.type === "error" || event?.error);
+            const openaiSse = frames.flatMap((frame) => translator.onFrame(frame)).concat(translator.flush()).join("");
+            parsed = failure ? { error: failure.error || failure.response?.error || { message: "Codex response failed" } } : parseSSEToOpenAIResponse(openaiSse, r.model);
+            if (parsed && sourceFormat === FORMATS.CLAUDE && !parsed.error) {
+              const choice = parsed.choices[0];
+              const message = choice.message;
+              const content = [];
+              if (message.content) content.push({ type: "text", text: message.content });
+              for (const call of message.tool_calls || []) {
+                let input;
+                try { input = JSON.parse(call.function.arguments); } catch { input = {}; }
+                content.push({ type: "tool_use", id: call.id, name: call.function.name, input });
+              }
+              parsed = { id: parsed.id, type: "message", role: "assistant", model: parsed.model, content, stop_reason: choice.finish_reason === "tool_calls" ? "tool_use" : "end_turn", stop_sequence: null, usage: { input_tokens: parsed.usage?.prompt_tokens || 0, output_tokens: parsed.usage?.completion_tokens || 0 } };
+            }
+          } else {
+            parsed = parseSSEToOpenAIResponse(text, r.model);
+          }
           if (parsed?.error) {
             recordFailure(repos, r.node, { errorCode: "upstream_error", status: 502, message: JSON.stringify(parsed.error).slice(0, 200) });
             return json(res, 502, { error: { message: "upstream_error", detail: JSON.stringify(parsed.error).slice(0, 300) } });

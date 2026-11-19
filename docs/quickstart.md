@@ -91,6 +91,9 @@ Click a provider in **Providers** to open its own page, with three tabs:
   result means the id genuinely serves. Each row has a copy button for the routable
   `<prefix>/<model>`, and **Select** turns on checkboxes with select-all plus bulk
   **Test / Hide / Show / Delete** over the selection.
+  For Codex, import uses routy's bundled chat-model catalogue based on 9Router,
+  rather than querying `/models`. Re-import after updating routy to mark removed
+  imported models stale; manually added models are preserved.
 - **API Keys** — add one key, or **Add bulk** with one per line as
   `label,key` (a bare key gets an auto label). *Test each key after adding* probes
   every new key, and **Test all keys** re-checks the lot.
@@ -140,6 +143,22 @@ Open <http://127.0.0.1:8010/> (or `/ui/`). Providers, combos and aliases, usage,
 token saver, proxy pools, a live console and settings. It is a static bundle served
 by the gateway itself — no separate process, and a broken UI cannot affect the
 proxy.
+
+### Codex and quota
+
+Connect OpenAI Codex from **Providers** using a ChatGPT account. Each connection is
+managed separately; reconnect an account if its refresh token is no longer valid.
+Codex uses ChatGPT's backend rather than an OpenAI API key, and its availability and
+models depend on the account and upstream service.
+Codex replies use a streaming Responses wire even when the upstream omits its SSE
+content type; routy translates that stream for OpenAI and Anthropic clients.
+
+The **Quota Tracker** shows available Codex session and weekly windows, and separate
+Review or Spark windows when the provider returns them. Percentages describe the
+provider's allowance, not token counts or routy's own usage. Opening the Quota page
+refreshes eligible accounts once; the refresh buttons fetch new snapshots on demand.
+Snapshots live in memory and are lost when the gateway restarts. Refreshing does not
+consume a reset credit or reset a provider limit.
 
 ---
 

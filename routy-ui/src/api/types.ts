@@ -733,6 +733,18 @@ export interface ModelQuotaItem {
   unlimited?: boolean;
 }
 
+export interface CodexQuotaWindow {
+  usedPercent: number | null;
+  remainingPercent: number | null;
+  resetAt: string | null;
+  windowMinutes: number | null;
+}
+
+export interface CodexQuotaWindows {
+  primary: CodexQuotaWindow | null;
+  secondary: CodexQuotaWindow | null;
+}
+
 export interface QuotaAccount {
   provider: string;
   nodeId: string;
@@ -744,10 +756,13 @@ export interface QuotaAccount {
   eligibility: string | null;
   fetchedAt: string | null;
   stale: boolean;
-  plan: string;
+  plan: string | null;
   projectId?: string | null;
   quotas: Record<string, ModelQuotaItem>;
-  error?: string | null;
+  error?: string | { code: string; message: string } | null;
+  windows?: CodexQuotaWindows;
+  additionalLimits?: Array<{ name: string | null; meteredFeature: string | null; windows: CodexQuotaWindows }>;
+  credits?: { hasCredits: boolean | null; unlimited: boolean | null; balance: string | null; resetCreditsAvailableCount: number | null } | null;
   // WorkBuddy specific extensions
   aggregate?: unknown;
   resources?: unknown[];

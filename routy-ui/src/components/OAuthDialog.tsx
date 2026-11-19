@@ -198,17 +198,17 @@ export function OAuthDialog({ isOpen, onClose, intent, onConnected, providerId =
                 Open {providerName} login page →
               </a>
             )}
-            <p className="text-xs text-text-subtle">If the tab did not open automatically, click the link above.</p>
-            {providerId === "antigravity" && (
+            <p className="text-xs text-text-subtle">Open the link above to continue signing in.</p>
+            {(providerId === "antigravity" || providerId === "codex") && (
               <div className="mt-2 flex flex-col gap-2 rounded border border-border-subtle bg-bg-alt p-3">
                 <span className="text-xs text-text-muted">
-                  If the callback did not redirect automatically, paste the redirect URL or authorization code here:
+                  {providerId === "codex" ? "If the callback did not complete, paste the full redirect URL including its state here:" : "If the callback did not redirect automatically, paste the redirect URL or authorization code here:"}
                 </span>
                 <div className="flex gap-2">
                   <Input
                     value={manualCode}
                     onChange={(e) => setManualCode(e.target.value)}
-                    placeholder="Paste redirect URL (http://localhost:8010/callback?code=...) or code"
+                    placeholder={providerId === "codex" ? "Paste the full localhost redirect URL" : "Paste redirect URL (http://localhost:8010/callback?code=...) or code"}
                     className="flex-1"
                   />
                   <Button size="sm" variant="secondary" onClick={submitManualCode} disabled={!manualCode.trim()}>
@@ -222,7 +222,7 @@ export function OAuthDialog({ isOpen, onClose, intent, onConnected, providerId =
         {phase === "done" && <p className="text-text-muted">Account connected. Its models are available under the provider’s page.</p>}
         {phase === "cancelled" && <p className="text-text-muted">Login cancelled — nothing was saved.</p>}
         {phase === "failed" && <p className="text-danger">{error ?? "The login flow failed. Try again."}</p>}
-        {phase === "form" && error && <p className="text-danger">{error}</p>}
+        {(phase === "form" || phase === "waiting") && error && <p className="text-danger">{error}</p>}
       </div>
     </Modal>
   );

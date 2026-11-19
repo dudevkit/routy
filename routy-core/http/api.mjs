@@ -34,9 +34,12 @@ import { codebuddyIntlMarker, isCodeBuddyIntlOAuth } from "../core/executors/cod
 import { antigravityMarker, isAntigravityOAuth, ANTIGRAVITY, ANTIGRAVITY_MODELS } from "../core/oauth/antigravity.mjs";
 import * as antigravity from "../core/oauth/antigravity.mjs";
 import { probeAntigravityOAuth } from "../core/probe.mjs";
+import { probeCodexOAuth } from "../core/probe.mjs";
+import * as codex from "../core/oauth/codex.mjs";
 import { isOAuthConnection, resolveOAuthCredentials } from "../core/oauth/credentials.mjs";
 import { createQuotaTracker } from "../core/oauth/workbuddyQuotaTracker.mjs";
 import { createAntigravityQuotaTracker } from "../core/oauth/antigravityQuotaTracker.mjs";
+import { createCodexQuotaTracker } from "../core/oauth/codexQuotaTracker.mjs";
 
 const uuid = () => crypto.randomUUID();
 
@@ -357,6 +360,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   // `hooks.quotaFetch` lets tests inject a stub so no test can reach WorkBuddy.
   const quotaTracker = createQuotaTracker({ repos, now: () => Date.now(), fetchQuota: hooks.quotaFetch });
   const antigravityQuota = createAntigravityQuotaTracker({ repos, now: () => Date.now(), fetchQuota: hooks.antigravityQuotaFetch });
+  const codexQuota = createCodexQuotaTracker({ repos, now: () => Date.now(), fetchQuota: hooks.codexQuotaFetch });
 
   // nodes
   route("GET", /^\/api\/nodes$/, (req, res) => {
@@ -398,7 +402,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (!existing) return json(res, 404, { error: { message: "not_found" } });
     // A CodeBuddy OAuth node is server-owned: its marker, fixed endpoint and apiType are
     // immutable here, and a generic API-key write is refused (mixed auth is out of scope).
-    const isOAuth = isCodeBuddyIntlOAuth(existing) || isAntigravityOAuth(existing);
+    const isOAuth = isCodeBuddyIntlOAuth(existing) || isAntigravityOAuth(existing) || codex.isCodexOAuth(existing);
     if (isOAuth) {
       if (typeof input.apiKey === "string" && input.apiKey.length > 0) {
         return json(res, 409, { error: { message: "conflict", detail: "this is an OAuth node — API keys cannot be added to it" } });
@@ -408,7 +412,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       }
       const allowedUrls = isAntigravityOAuth(existing)
         ? new Set([ANTIGRAVITY.chatUrl])
-        : new Set([CODEBUDDY_INTL.chatUrl, CODEBUDDY_INTL.chatUrlAlt]);
+        : codex.isCodexOAuth(existing) ? new Set([codex.CODEX.chatUrl]) : new Set([CODEBUDDY_INTL.chatUrl, CODEBUDDY_INTL.chatUrlAlt]);
       if (input.baseUrl !== undefined && input.baseUrl !== existing.baseUrl) {
         if (!allowedUrls.has(input.baseUrl)) {
           return json(res, 409, { error: { message: "conflict", detail: "this node's endpoint is fixed by its OAuth provider" } });
@@ -611,6 +615,11 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/models\/import$/, async (req, res, p, url) => {
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
+    if (codex.isCodexOAuth(node)) {
+      const ids = PROVIDERS.find((provider) => provider.id === "codex").models.map((model) => model.id);
+      const summary = repos.nodeModels.import(node.id, ids);
+      return json(res, 200, { ...summary, listed: ids.length, models: repos.nodeModels.list(node.id) });
+    }
     const body = await readBody(req).catch(() => Buffer.from("{}"));
     const input = JSON.parse(body.toString("utf8") || "{}");
     const conns = repos.connections.list(node.id);
@@ -699,6 +708,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
    * provider's own website) and calls it a verdict.
    */
   const probeModelRow = (node, row, conn, log, proxy = null) => {
+    if (codex.isCodexOAuth(node) && (!row.kind || row.kind === CHAT_KIND)) return probeCodexOAuth(repos, node, conn, log, { proxy, model: row.model });
     if (isCodeBuddyIntlOAuth(node) && (!row.kind || row.kind === CHAT_KIND)) {
       return probeCodeBuddyOAuth(repos, node, conn, log, { proxy });
     }
@@ -719,7 +729,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (!node) return json(res, 404, { error: { message: "not_found" } });
     // An OAuth node's probe sends a real chat request that may consume provider quota, so
     // it must be an explicit same-origin action — the generic probe path is not guarded.
-    if ((isCodeBuddyIntlOAuth(node) || isAntigravityOAuth(node)) && !sameOriginAction(req, res, cfg)) return;
+    if ((isCodeBuddyIntlOAuth(node) || isAntigravityOAuth(node) || codex.isCodexOAuth(node)) && !sameOriginAction(req, res, cfg)) return;
     const row = repos.nodeModels.get(p.modelId);
     if (!row || row.nodeId !== node.id) return json(res, 404, { error: { message: "not_found" } });
     const conns = repos.connections.list(node.id);
@@ -743,7 +753,9 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (isOAuthConnection(conn)) {
       if (!sameOriginAction(req, res, cfg)) return;
       let result;
-      if (isAntigravityOAuth(node)) {
+      if (codex.isCodexOAuth(node)) {
+        result = await probeCodexOAuth(repos, node, conn, log);
+      } else if (isAntigravityOAuth(node)) {
         result = await probeAntigravityOAuth(repos, node, conn, log);
       } else if (isCodeBuddyIntlOAuth(node)) {
         result = await probeCodeBuddyOAuth(repos, node, conn, log);
@@ -764,7 +776,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("POST", /^\/api\/nodes\/(?<id>[^/]+)\/keys\/test$/, async (req, res, p) => {
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
-    if (isCodeBuddyIntlOAuth(node) || isAntigravityOAuth(node)) {
+    if (isCodeBuddyIntlOAuth(node) || isAntigravityOAuth(node) || codex.isCodexOAuth(node)) {
       return json(res, 400, { error: { message: "bad_request", detail: "bulk probing is disabled for OAuth nodes — test each account individually" } });
     }
     const active = repos.connections.list(node.id).filter((c) => c.status === "active");
@@ -1444,7 +1456,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     const input = JSON.parse((await readBody(req)).toString("utf8"));
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
-    if (isCodeBuddyIntlOAuth(node) || isAntigravityOAuth(node)) {
+    if (isCodeBuddyIntlOAuth(node) || isAntigravityOAuth(node) || codex.isCodexOAuth(node)) {
       return json(res, 409, { error: { message: "conflict", detail: "this is an OAuth node — connect accounts through the OAuth flow, not with an API key" } });
     }
     // Auto-name server-side rather than "key": two unnamed singles must never render
@@ -1475,7 +1487,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (entries.length === 0) return json(res, 400, { error: { message: "bad_request", detail: "entries array required (non-empty keys)" } });
     const node = repos.nodes.get(p.id);
     if (!node) return json(res, 404, { error: { message: "not_found" } });
-    if (isCodeBuddyIntlOAuth(node) || isAntigravityOAuth(node)) {
+    if (isCodeBuddyIntlOAuth(node) || isAntigravityOAuth(node) || codex.isCodexOAuth(node)) {
       return json(res, 409, { error: { message: "conflict", detail: "this is an OAuth node — connect accounts through the OAuth flow, not with API keys" } });
     }
 
@@ -1513,13 +1525,38 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   });
   route("DELETE", /^\/api\/connections\/(?<id>[^/]+)$/, (req, res, p) => {
     quotaTracker.invalidate(p.id);
+    codexQuota.invalidate(p.id);
     return noContent(res, repos.connections.delete(p.id));
   });
 
-  // ── OAuth (CodeBuddy Intl) ────────────────────────────────────────────────
-  // One provider, deliberately: no generic OAuth framework. Every route enforces the
-  // same-origin action guard, and the flow manager owns all phase arbitration.
+  // OAuth flow management; mutations are same-origin guarded.
   const flows = createFlowManager();
+
+  async function consumeCodexCallback(flow, code, state) {
+    const current = flows.get(flow.id);
+    if (current !== flow || !["pending", "polling"].includes(flow.phase) || flow.callbackConsumed || flow.upstreamState?.state !== state) {
+      const err = new Error("invalid or expired OAuth callback"); err.code = "invalid_callback"; throw err;
+    }
+    flow.callbackConsumed = true;
+    flow.unregisterCallback?.();
+    let tokens;
+    try { tokens = await codex.exchangeToken(code, flow.upstreamState.verifier); }
+    catch (err) {
+      if (flows.get(flow.id) === flow && ["pending", "polling"].includes(flow.phase)) {
+        flow.phase = "failed";
+        flow.terminalAt = Date.now();
+        flow.upstreamState = null;
+        flow.result = { state: "failed", error: { code: "exchange_failed", message: "Codex authentication failed; start again" } };
+      }
+      throw err;
+    }
+    if (flows.get(flow.id) !== flow || !["pending", "polling"].includes(flow.phase)) return flows.publicView(flow);
+    flow.tokens = tokens;
+    const clearTokens = setTimeout(() => { flow.tokens = null; }, Math.max(0, flow.expiresAt - Date.now()));
+    clearTokens.unref?.();
+    flow.readyToCommit = true;
+    return { state: "pending" };
+  }
 
   /** Supported OAuth providers, for the dashboard's dedicated OAuth section. */
   route("GET", /^\/api\/providers\/oauth$/, (req, res) => {
@@ -1541,6 +1578,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
           defaultPrefix: "ag",
           models: [...ANTIGRAVITY_MODELS],
         },
+        { id: "codex", name: "Codex", website: "https://chatgpt.com", marker: codex.codexMarker(), defaultPrefix: "cx", models: PROVIDERS.find((provider) => provider.id === "codex").models.map((model) => model.id) },
       ],
     });
   });
@@ -1555,6 +1593,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   }
 
   function isOAuthNodeMatching(node, provider) {
+    if (provider === "codex") return codex.isCodexOAuth(node);
     if (provider === "antigravity") return isAntigravityOAuth(node);
     return isCodeBuddyIntlOAuth(node);
   }
@@ -1566,7 +1605,9 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   function commitFor(intent, provider = "codebuddy-intl") {
     return (tokens) => {
       let credentials;
-      if (provider === "antigravity") {
+      if (provider === "codex") {
+        credentials = codex.credentialFromTokens(tokens);
+      } else if (provider === "antigravity") {
         credentials = antigravity.credentialFromTokens(tokens, {
           projectId: tokens.projectId,
           tierId: tokens.tierId,
@@ -1585,8 +1626,8 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
         const node = repos.oauth.createNodeWithConnection({
           name: intent.name,
           prefix: intent.prefix,
-          baseUrl: isAg ? ANTIGRAVITY.chatUrl : CODEBUDDY_INTL.chatUrl,
-          data: isAg
+          baseUrl: provider === "codex" ? codex.CODEX.chatUrl : isAg ? ANTIGRAVITY.chatUrl : CODEBUDDY_INTL.chatUrl,
+          data: provider === "codex" ? { authProvider: codex.codexMarker(), chatUrl: codex.CODEX.chatUrl, provider: "codex" } : isAg
             ? { authProvider: antigravityMarker(), chatUrl: ANTIGRAVITY.chatUrl, provider: "antigravity", preset: "antigravity" }
             : { authProvider: codebuddyIntlMarker(), chatUrl: CODEBUDDY_INTL.chatUrl, provider: "codebuddy-intl" },
           connection: { name: intent.accountLabel || (tokens.email ? `${intent.name} (${tokens.email})` : `${intent.name} account`), credentials },
@@ -1596,6 +1637,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
             try { repos.nodeModels.add(node.id, { model, kind: model.includes("image") ? "image" : "llm" }); } catch {}
           }
         }
+        if (provider === "codex") repos.nodeModels.import(node.id, PROVIDERS.find((entry) => entry.id === "codex").models.map((model) => model.id));
         return { node: nodeView(repos, node), connectionId: repos.connections.list(node.id)[0]?.id ?? null };
       }
       if (intent.kind === "add") {
@@ -1614,8 +1656,10 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       if (!existing) { const err = new Error("connection not found"); err.code = "bad_target"; throw err; }
       const node = repos.nodes.get(existing.nodeId);
       if (!node || !isOAuthNodeMatching(node, provider)) { const err = new Error(`target is not a ${provider} OAuth connection`); err.code = "bad_target"; throw err; }
+      credentials.oauthRevision = (Number.isFinite(existing.credentials?.oauthRevision) ? existing.credentials.oauthRevision : 0) + 1;
       const updated = repos.connections.update(existing.id, { credentials, status: "active" });
       if (provider === "codebuddy-intl") quotaTracker.invalidate(existing.id);
+      if (provider === "codex") codexQuota.invalidate(existing.id);
       return { node: nodeView(repos, node), connectionId: updated.id };
     };
   }
@@ -1623,7 +1667,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("POST", /^\/api\/providers\/(?<provider>[^/]+)\/oauth\/start$/, async (req, res, p) => {
     if (!sameOriginAction(req, res, cfg)) return;
     const provider = p.provider;
-    if (!["codebuddy-intl", "antigravity"].includes(provider)) {
+    if (!["codebuddy-intl", "antigravity", "codex"].includes(provider)) {
       return json(res, 404, { error: { message: "not_found", detail: `unsupported OAuth provider "${provider}"` } });
     }
     let input;
@@ -1655,7 +1699,10 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
 
     let started;
     try {
-      if (provider === "antigravity") {
+      if (provider === "codex") {
+        await codex.ensureCallbackListener();
+        started = codex.startFlow();
+      } else if (provider === "antigravity") {
         const redirectUri = `http://localhost:${cfg.port || 8010}/callback`;
         started = antigravity.startFlow({ redirectUri });
         intent.redirectUri = redirectUri;
@@ -1665,6 +1712,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     } catch (err) {
       return oauthError(res, err);
     }
+    intent.provider = provider;
     let created;
     try {
       created = flows.create({
@@ -1672,11 +1720,15 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
         verificationUrl: started.verificationUrl,
         upstreamState: started.upstreamState,
         expiresAt: started.expiresAt,
-        pollIntervalMs: provider === "antigravity" ? ANTIGRAVITY.pollIntervalMs : CODEBUDDY_INTL.pollIntervalMs,
+        pollIntervalMs: provider === "codex" ? codex.CODEX.pollIntervalMs : provider === "antigravity" ? ANTIGRAVITY.pollIntervalMs : CODEBUDDY_INTL.pollIntervalMs,
         commit: commitFor(intent, provider),
       });
     } catch (err) {
       return oauthError(res, err);
+    }
+    if (provider === "codex") {
+      const flow = flows.get(created.flowId);
+      flow.unregisterCallback = codex.registerCallback(started.upstreamState.state, started.expiresAt, (code) => consumeCodexCallback(flow, code, started.upstreamState.state));
     }
     json(res, 200, created);
   });
@@ -1684,8 +1736,10 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("POST", /^\/api\/providers\/(?<provider>[^/]+)\/oauth\/flows\/(?<flowId>[^/]+)\/poll$/, async (req, res, p) => {
     if (!sameOriginAction(req, res, cfg)) return;
     const provider = p.provider;
+    const current = flows.get(p.flowId);
+    if (!current || current.intent.provider !== provider) return json(res, 404, { error: { message: "flow_not_found" } });
     try {
-      if (provider === "antigravity") {
+      if (provider === "antigravity" || provider === "codex") {
         const flow = flows.get(p.flowId);
         const result = await flows.poll(p.flowId, async () => {
           if (flow?.readyToCommit && flow?.tokens) {
@@ -1693,6 +1747,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
           }
           return { state: "pending" };
         });
+        if (provider === "codex" && result.state !== "pending") { flow.tokens = null; flow.unregisterCallback?.(); }
         return json(res, 200, result);
       }
 
@@ -1714,16 +1769,24 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (!sameOriginAction(req, res, cfg)) return;
     let input;
     try { input = JSON.parse((await readBody(req)).toString("utf8") || "{}"); } catch { return json(res, 400, { error: { message: "bad_request", detail: "invalid JSON body" } }); }
+    let callbackState = typeof input?.state === "string" ? input.state : "";
     let code = typeof input?.code === "string" ? input.code.trim() : "";
     if (code.includes("code=")) {
       try {
         const u = new URL(code.startsWith("http") ? code : `http://localhost/${code}`);
+        callbackState = u.searchParams.get("state") || callbackState;
         code = u.searchParams.get("code") || code;
       } catch {}
     }
     if (!code) return json(res, 400, { error: { message: "bad_request", detail: "code is required" } });
     const flow = flows.get(p.flowId);
     if (!flow) return json(res, 404, { error: { message: "flow_not_found", detail: "login flow not found or expired" } });
+    if (flow.intent.provider !== p.provider) return json(res, 404, { error: { message: "flow_not_found" } });
+    if (p.provider === "codex") {
+      if (!callbackState || callbackState !== flow.upstreamState?.state) return json(res, 400, { error: { message: "bad_request", detail: "invalid state" } });
+      try { return json(res, 200, await consumeCodexCallback(flow, code, callbackState)); }
+      catch (err) { return oauthError(res, err); }
+    }
 
     if (p.provider === "antigravity") {
       try {
@@ -1797,6 +1860,10 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
 
   route("DELETE", /^\/api\/providers\/(?<provider>[^/]+)\/oauth\/flows\/(?<flowId>[^/]+)$/, (req, res, p) => {
     if (!sameOriginAction(req, res, cfg)) return;
+    const flow = flows.get(p.flowId);
+    if (!flow || flow.intent.provider !== p.provider) return json(res, 404, { error: { message: "flow_not_found" } });
+    flow.unregisterCallback?.();
+    flow.tokens = null;
     try {
       json(res, 200, flows.cancel(p.flowId));
     } catch (err) {
@@ -1871,6 +1938,12 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
           type: "oauth",
           accounts: wbAccounts,
         },
+        {
+          id: "codex",
+          name: "Codex (OpenAI)",
+          type: "oauth",
+          accounts: codexQuota.accounts(),
+        },
       ],
     });
   });
@@ -1886,9 +1959,13 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
     if (!connection) return json(res, 404, { error: { message: "not_found" } });
 
     const node = repos.nodes.get(connection.nodeId);
-    const resolvedProvider = provider || (isAntigravityOAuth(node) ? "antigravity" : isCodeBuddyIntlOAuth(node) ? "codebuddy-intl" : "");
+    const resolvedProvider = provider || (node?.data?.authProvider === "codex-oauth" ? "codex" : isAntigravityOAuth(node) ? "antigravity" : isCodeBuddyIntlOAuth(node) ? "codebuddy-intl" : "");
 
     try {
+      if (resolvedProvider === "codex") {
+        const result = await codexQuota.refresh(connectionId);
+        return json(res, 200, result);
+      }
       if (resolvedProvider === "antigravity") {
         const result = await antigravityQuota.refresh(connectionId);
         return json(res, 200, result);

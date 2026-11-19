@@ -624,9 +624,10 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
   const [allResults, setAllResults] = useState<KeyTestResult[] | null>(null);
   // A CodeBuddy Intl OAuth node manages ACCOUNTS, not API keys: the add-key inputs and bulk
   // test are replaced by a browser-login flow, and each row can be reconnected on its own.
-  const isOAuthNode = Boolean(node.authProvider) || node.data?.authProvider === "codebuddy-intl-oauth" || node.data?.authProvider === "antigravity-oauth";
-  const oauthProviderId = node.authProvider === "antigravity-oauth" || node.data?.authProvider === "antigravity-oauth" ? "antigravity" : "codebuddy-intl";
-  const oauthProviderName = oauthProviderId === "antigravity" ? "Antigravity" : "CodeBuddy";
+  const oauthMarker = node.authProvider || node.data?.authProvider;
+  const isOAuthNode = Boolean(oauthMarker);
+  const oauthProviderId = oauthMarker === "antigravity-oauth" ? "antigravity" : oauthMarker === "codex-oauth" ? "codex" : "codebuddy-intl";
+  const oauthProviderName = oauthProviderId === "antigravity" ? "Antigravity" : oauthProviderId === "codex" ? "Codex" : "CodeBuddy";
   const [oauthDialog, setOauthDialog] = useState<null | { kind: "add" } | { kind: "reconnect"; connectionId: string; accountLabel: string }>(null);
 
   const conns = connections.data ?? [];
@@ -934,7 +935,7 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
           isOpen={oauthDialog !== null}
           providerId={oauthProviderId}
           providerName={oauthProviderName}
-          defaultPrefix={oauthProviderId === "antigravity" ? "ag" : "cbai"}
+          defaultPrefix={oauthProviderId === "antigravity" ? "ag" : oauthProviderId === "codex" ? "cx" : "cbai"}
           onClose={() => setOauthDialog(null)}
           intent={oauthDialog?.kind === "reconnect"
             ? { kind: "reconnect", connectionId: oauthDialog.connectionId, accountLabel: oauthDialog.accountLabel }

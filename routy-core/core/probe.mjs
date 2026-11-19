@@ -22,6 +22,9 @@ import { transformCodebuddyBody, codebuddyChatHeaders } from "./executors/codebu
 import { CODEBUDDY_INTL } from "./oauth/codebuddyIntl.mjs";
 import { isOAuthConnection } from "./oauth/credentials.mjs";
 import { ANTIGRAVITY } from "./oauth/antigravity.mjs";
+import { CodexExecutor } from "./executors/codex.mjs";
+import { openaiToOpenAIResponsesRequest } from "./translate/request/openai-responses.js";
+import { SseParser } from "./sse/parser.mjs";
 import { qualifyModel } from "./routing.mjs";
 
 /**
@@ -398,6 +401,44 @@ export async function probeModel(node, model, connection = null, { timeoutMs, lo
     clearTimeout(timer);
     inFlight.delete(probeId);
   }
+}
+
+/** An explicit, quota-consuming Codex chat probe, using the chat executor's wire. */
+export async function probeCodexOAuth(repos, node, connection, log = null, { timeoutMs = MODEL_PROBE_TIMEOUT_MS, proxy = null, model = null } = {}) {
+  const t0 = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const fail = (error) => ({ ok: false, ttftMs: null, latencyMs: Date.now() - t0, error });
+  try {
+    const { resolveOAuthCredentials } = await import("./oauth/credentials.mjs");
+    const resolved = await resolveOAuthCredentials(repos, node, connection, { log });
+    if (!resolved.ok) return fail(resolved.error?.message || "OAuth credential unavailable");
+    const targetModel = model || node?.data?.probeModel || "gpt-6.1-sol";
+    const body = openaiToOpenAIResponsesRequest(targetModel, { messages: [{ role: "user", content: "ping" }] }, true);
+    const result = await new CodexExecutor(node, resolved.connection, { proxy }).execute({ model: targetModel, body, stream: true, signal: controller.signal, log });
+    if (!result.ok) return fail(result.message || `HTTP ${result.status}`);
+    const reader = result.response.body.getReader();
+    const parser = new SseParser();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        const frames = done ? parser.end() : parser.push(value);
+        for (const frame of frames) {
+          let obj;
+          try { obj = JSON.parse(frame.data); } catch { continue; }
+          if (obj.error || obj.type === "response.failed") return fail("Codex response failed");
+          if ((obj.type === "response.output_text.delta" && obj.delta) || obj.type === "response.completed") {
+            const ttftMs = Date.now() - t0;
+            return { ok: true, ttftMs, latencyMs: ttftMs, error: null };
+          }
+        }
+        if (done) break;
+      }
+    } finally { try { await reader.cancel(); } catch { /* already closed */ } }
+    return fail("stream ended with no token");
+  } catch (err) {
+    return fail(controller.signal.aborted ? `no token within ${timeoutMs}ms` : shapeError(err));
+  } finally { clearTimeout(timer); }
 }
 
 /**

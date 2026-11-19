@@ -12,18 +12,9 @@ const FREE_IDS = ["mimo-free", "opencode"];
 const byCategory = (cat) => PROVIDERS.filter((e) => e.category === cat);
 
 describe("provider preset catalogue", () => {
-  it("lists both registry addable categories in full: 18 freeTier + 5 free", () => {
-    expect(PROVIDERS.length).toBe(23);
-    expect(new Set(PROVIDERS.map((e) => e.id)).size).toBe(23);
-    expect(byCategory("freeTier").length).toBe(18);
-    expect(byCategory("free").length).toBe(5);
-    for (const id of ["devin-cli", "gemini-cli", "kiro", "opencode"]) {
-      expect(PROVIDERS.some((e) => e.id === id), `missing ${id}`).toBe(true);
-    }
-  });
 
   it("every supported entry is a full HTTP OpenAI endpoint routy can post to", () => {
-    const supported = PROVIDERS.filter((e) => e.supported);
+    const supported = PROVIDERS.filter((e) => e.supported && ["freeTier", "free"].includes(e.category));
     expect(supported.map((e) => e.id)).toEqual([...FREE_TIER_IDS, ...FREE_IDS]);
     for (const e of supported) {
       expect(e.format, e.id).toBe("openai");

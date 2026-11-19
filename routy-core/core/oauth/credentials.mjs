@@ -21,11 +21,13 @@
 import crypto from "node:crypto";
 import * as codebuddyIntl from "./codebuddyIntl.mjs";
 import * as antigravity from "./antigravity.mjs";
+import * as codex from "./codex.mjs";
 import { OAuthError } from "./codebuddyIntl.mjs";
 
 export { OAuthError };
 
 export function oauthProviderForNode(node) {
+  if (node?.data?.authProvider === "codex-oauth") return "codex";
   if (
     node?.data?.authProvider === "antigravity-oauth" ||
     node?.data?.provider === "antigravity" ||
@@ -37,6 +39,7 @@ export function oauthProviderForNode(node) {
 }
 
 export function getOAuthHelper(provider) {
+  if (provider === "codex") return codex;
   if (provider === "antigravity") return antigravity;
   return codebuddyIntl;
 }
@@ -84,9 +87,13 @@ function singleFlight(provider, refreshToken, fn) {
 }
 
 /** True when the access token is missing or within the refresh lead window. */
-function needsRefresh(credentials, now) {
+function needsRefresh(credentials, now, provider) {
+  if (provider === "codex") {
+    const lastRefresh = Date.parse(credentials?.lastRefreshAt || "");
+    if (!Number.isFinite(lastRefresh) || now - lastRefresh >= 8 * 24 * 60 * 60_000) return true;
+  }
   const at = credentials?.expiresAt ? Date.parse(credentials.expiresAt) : NaN;
-  if (!Number.isFinite(at)) return false; // legacy row with no expiry: never refresh forever
+  if (!Number.isFinite(at)) return false;
   return at - now <= REFRESH_LEAD_MS;
 }
 
@@ -104,7 +111,8 @@ export async function resolveOAuthCredentials(repos, node, connection, { now = D
   }
 
   const credentials = connection.credentials;
-  if (!needsRefresh(credentials, now)) return { ok: true, connection, refreshed: false };
+  const provider = oauthProviderForNode(node);
+  if (!needsRefresh(credentials, now, provider)) return { ok: true, connection, refreshed: false };
 
   // Expired and no refresh token: this account can only be reconnected. Mark it so, but
   // never claim a provider-side revocation we did not observe.
@@ -116,7 +124,6 @@ export async function resolveOAuthCredentials(repos, node, connection, { now = D
   const observedRevision = Number.isFinite(credentials.oauthRevision) ? credentials.oauthRevision : 0;
   const observedRefresh = credentials.refreshToken;
 
-  const provider = oauthProviderForNode(node);
   const helper = getOAuthHelper(provider);
   let tokens;
   try {
@@ -142,6 +149,8 @@ export async function resolveOAuthCredentials(repos, node, connection, { now = D
     quotaIdentity: credentials.providerSpecificData?.quotaIdentity,
     projectId: credentials.projectId,
     tierId: credentials.tierId,
+    chatgptAccountId: credentials.providerSpecificData?.chatgptAccountId,
+    previousCredentials: credentials,
   });
   const updated = repos.oauth.casCredentials(connection.id, {
     expectedRevision: observedRevision,
@@ -165,6 +174,8 @@ export function markReauthRequired(repos, connection) {
   const credentials = connection.credentials || {};
   const revision = Number.isFinite(credentials.oauthRevision) ? credentials.oauthRevision : 0;
   repos.oauth.casCredentials(connection.id, {
+    expectedRevision: revision,
+    expectedRefreshToken: credentials.refreshToken,
     credentials: { ...credentials, authState: "reauth-required", oauthRevision: revision + 1 },
   });
 }
@@ -197,6 +208,8 @@ export async function refreshAfterAuthRejection(repos, node, connection, { log =
     quotaIdentity: credentials.providerSpecificData?.quotaIdentity,
     projectId: credentials.projectId,
     tierId: credentials.tierId,
+    chatgptAccountId: credentials.providerSpecificData?.chatgptAccountId,
+    previousCredentials: credentials,
   });
   const updated = repos.oauth.casCredentials(connection.id, {
     expectedRevision: observedRevision,

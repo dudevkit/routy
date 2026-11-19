@@ -15,6 +15,9 @@ compressor. Individual files carry a header naming the upstream file they came
 from. Adapted, not vendored: the port keeps the behaviour and the fixtures, and
 rewrites the surrounding runtime (streaming, pooling, error handling).
 
+The Codex OAuth, executor and quota integration also draws on 9Router's Codex
+provider, executor and usage implementation.
+
 ```
 MIT License
 

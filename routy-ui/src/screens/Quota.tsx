@@ -1,18 +1,28 @@
-import { useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useQuotaOverview, useRefreshQuota } from "../api/hooks";
 import type { QuotaAccount } from "../api/types";
 import { ProviderQuotaCard } from "../components/quota/ProviderQuotaCard";
+import { CodexQuotaCard } from "../components/quota/CodexQuotaCard";
 import { Button } from "../components/ui/Button";
 import { ArrowsClockwise, Spinner, Gauge } from "../components/icons";
 import { toastApiError } from "../utils/errors";
 import { useToast } from "../components/ui/Toast";
 import { cn } from "../utils/cn";
+function assertRefreshSucceeded(result: unknown) {
+  if (result && typeof result === "object" && "error" in result && result.error) {
+    const error = result.error;
+    throw new Error(typeof error === "string" ? error : typeof error === "object" && "message" in error && typeof error.message === "string" ? error.message : "Quota refresh failed");
+  }
+}
+
 
 export function Quota() {
   const { data, isLoading, refetch, isFetching } = useQuotaOverview();
   const refreshMutation = useRefreshQuota();
   const toast = useToast();
   const [selectedProvider, setSelectedProvider] = useState<string>("all");
+  const autoRefreshed = useRef(new Set<string>());
+  const { mutateAsync: refreshQuota } = refreshMutation;
 
   const providers = data?.providers || [];
 
@@ -27,6 +37,24 @@ export function Quota() {
     return list;
   }, [providers]);
 
+  // Refresh each eligible account once per visit, not on every cache poll or filter change.
+  useEffect(() => {
+    const pending = allAccounts.filter(({ account }) => !account.eligibility && !autoRefreshed.current.has(account.connectionId));
+    if (!pending.length) return;
+    for (const { account } of pending) autoRefreshed.current.add(account.connectionId);
+    void (async () => {
+      let failures = 0;
+      for (const { account, providerId } of pending) {
+        try {
+          assertRefreshSucceeded(await refreshQuota({ connectionId: account.connectionId, provider: providerId }));
+        } catch {
+          failures++;
+        }
+      }
+      if (failures) toast(`Automatic quota refresh failed for ${failures} account(s). Try Refresh All.`, "error");
+    })();
+  }, [allAccounts, refreshQuota, toast]);
+
   const filteredAccounts = useMemo(() => {
     if (selectedProvider === "all") return allAccounts;
     return allAccounts.filter((item) => item.providerId === selectedProvider);
@@ -34,7 +62,7 @@ export function Quota() {
 
   const handleRefreshSingle = async (connectionId: string, provider: string) => {
     try {
-      await refreshMutation.mutateAsync({ connectionId, provider });
+      assertRefreshSucceeded(await refreshMutation.mutateAsync({ connectionId, provider }));
       toast("Successfully updated quota snapshot.", "success");
     } catch (err) {
       toastApiError(toast, err, "Failed to refresh quota");
@@ -42,17 +70,19 @@ export function Quota() {
   };
 
   const handleRefreshAll = async () => {
-    try {
-      for (const item of filteredAccounts) {
-        await refreshMutation.mutateAsync({
-          connectionId: item.account.connectionId,
-          provider: item.providerId,
-        });
+    let failures = 0;
+    for (const item of filteredAccounts) {
+      try {
+        assertRefreshSucceeded(await refreshMutation.mutateAsync({ connectionId: item.account.connectionId, provider: item.providerId }));
+      } catch {
+        failures++;
       }
-      await refetch();
+    }
+    await refetch();
+    if (failures) {
+      toast(`Failed to refresh ${failures} of ${filteredAccounts.length} accounts. Check their quota cards and try again.`, "error");
+    } else {
       toast("Upstream quotas successfully updated.", "success");
-    } catch (err) {
-      toastApiError(toast, err, "Failed to refresh all quotas");
     }
   };
 
@@ -79,7 +109,7 @@ export function Quota() {
             variant="outline"
             size="sm"
             onClick={handleRefreshAll}
-            disabled={refreshMutation.isPending || isFetching || allAccounts.length === 0}
+            disabled={refreshMutation.isPending || isFetching || filteredAccounts.length === 0}
             className="flex items-center gap-2 font-medium"
           >
             {refreshMutation.isPending || isFetching ? <Spinner size={16} /> : <ArrowsClockwise size={16} />}
@@ -137,19 +167,17 @@ export function Quota() {
           </div>
           <h3 className="text-base font-semibold text-text-main">No Trackable Accounts Found</h3>
           <p className="mt-1 max-w-sm text-xs text-text-muted">
-            Connect an Antigravity Google account or WorkBuddy account from the Providers menu to start tracking quotas.
+            Connect an OAuth account from the Providers menu to start tracking quotas.
           </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
           {filteredAccounts.map(({ providerId, providerName, account }) => (
-            <ProviderQuotaCard
-              key={account.connectionId}
-              providerId={providerId}
-              providerName={providerName}
-              account={account}
-              onRefresh={handleRefreshSingle}
-            />
+            providerId === "codex" ? (
+              <CodexQuotaCard key={account.connectionId} account={account} onRefresh={handleRefreshSingle} />
+            ) : (
+              <ProviderQuotaCard key={account.connectionId} providerId={providerId} providerName={providerName} account={account} onRefresh={handleRefreshSingle} />
+            )
           ))}
         </div>
       )}

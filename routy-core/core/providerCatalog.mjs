@@ -14,6 +14,40 @@
 export const PROVIDERS = Object.freeze(
   [
   {
+    "id": "codex",
+    "category": "oauth",
+    "name": "OpenAI Codex",
+    "baseUrl": "https://chatgpt.com/backend-api/codex",
+    "format": "openai",
+    "models": [
+      { "id": "gpt-6.1-sol", "name": "GPT 6.1 Sol" },
+      { "id": "gpt-6.1-terra", "name": "GPT 6.1 Terra" },
+      { "id": "gpt-6-astra", "name": "GPT 6.0 Astra" },
+      { "id": "gpt-6-astra[1m]", "name": "GPT 6.0 Astra (extended context)" },
+      { "id": "gpt-6-sol", "name": "GPT 6.0 Sol" },
+      { "id": "gpt-6-sol[1m]", "name": "GPT 6.0 Sol (extended context)" },
+      { "id": "gpt-6-luna", "name": "GPT 6.0 Luna" },
+      { "id": "gpt-6-luna[1m]", "name": "GPT 6.0 Luna (extended context)" },
+      { "id": "gpt-5.6-sol", "name": "GPT 5.6 Sol" },
+      { "id": "gpt-5.6-sol[1m]", "name": "GPT 5.6 Sol (extended context)" },
+      { "id": "gpt-5.6-sol-review", "name": "GPT 5.6 Sol Review" },
+      { "id": "gpt-5.6-terra", "name": "GPT 5.6 Terra" },
+      { "id": "gpt-5.6-terra[1m]", "name": "GPT 5.6 Terra (extended context)" },
+      { "id": "gpt-5.6-terra-review", "name": "GPT 5.6 Terra Review" },
+      { "id": "gpt-5.6-luna", "name": "GPT 5.6 Luna" },
+      { "id": "gpt-5.6-luna[1m]", "name": "GPT 5.6 Luna (extended context)" },
+      { "id": "gpt-5.6-luna-review", "name": "GPT 5.6 Luna Review" },
+      { "id": "gpt-daybreak-blue-latest", "name": "GPT Daybreak Blue" },
+      { "id": "gpt-reserve", "name": "GPT Reserve" },
+      { "id": "codex-auto-review", "name": "Codex Auto Review" }
+    ],
+    "keyUrl": null,
+    "requires": [],
+    "data": { "provider": "codex", "authProvider": "codex-oauth" },
+    "supported": true,
+    "why": null
+  },
+  {
     "id": "api-airforce",
     "category": "freeTier",
     "name": "API.airforce",

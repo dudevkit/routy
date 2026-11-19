@@ -114,7 +114,7 @@ export function ProviderQuotaCard({
 
       {account.error && (
         <div className="rounded-md border border-rose-500/20 bg-rose-500/5 px-3 py-2 text-xs text-rose-500 font-mono">
-          {account.error}
+          {typeof account.error === "string" ? account.error : account.error.message}
         </div>
       )}
     </div>
