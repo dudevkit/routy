@@ -166,6 +166,8 @@ export interface LogStreamHandlers {
   onLine: (text: string) => void;
   /** server-side ring was cleared (POST /api/logs/clear) — drop local buffer */
   onClear?: () => void;
+  /** Some events are no longer available in the server's ring. */
+  onGap?: () => void;
   onOpen?: () => void;
   onClose?: () => void;
 }
@@ -187,8 +189,14 @@ export function streamLogs(handlers: LogStreamHandlers, level?: StreamLevel): ()
   const controller = new AbortController();
   let closed = false;
   let reconnectTimer: number | undefined;
+  let cursor: string | undefined;
 
-  const emit = (event: string, data: string) => {
+  const emit = (event: string, data: string, id?: string) => {
+    if (id && cursor) {
+      const [epoch, sequence] = id.split(":");
+      const [previousEpoch, previousSequence] = cursor.split(":");
+      if (epoch === previousEpoch && Number(sequence) <= Number(previousSequence)) return;
+    }
     if (event === "init") {
       try {
         handlers.onInit(stringArrayField(JSON.parse(data), "lines"));
@@ -204,33 +212,32 @@ export function streamLogs(handlers: LogStreamHandlers, level?: StreamLevel): ()
       }
     } else if (event === "clear") {
       handlers.onClear?.();
+    } else if (event === "gap") {
+      cursor = undefined;
+      handlers.onGap?.();
     }
+    if (id) cursor = id;
   };
 
   /**
    * One connection. The server ends each stream on a timer (a never-ending response is
    * not delivered through a proxying edge — see the route note), so the end of a stream
-   * is a normal seam, not a failure: reconnect and take a fresh snapshot. Without this
-   * the console went silent the first time the stream ended.
+   * is a normal seam, not a failure: reconnect from the last received event id.
    */
   const connect = async () => {
     try {
-      const res = await fetch(LOG_STREAM_URL + qs({ level }), {
+      const res = await fetch(LOG_STREAM_URL + qs({ level, cursor }), {
         headers: { accept: "text/event-stream" },
         signal: controller.signal,
       });
       if (!res.ok) {
         if (res.status === 401) signalUnauthorized();
-        if (!closed) handlers.onClose?.();
-        return;
+        throw new Error(`Log stream returned ${res.status}`);
       }
       handlers.onOpen?.();
 
       const reader = res.body?.getReader();
-      if (!reader) {
-        if (!closed) handlers.onClose?.();
-        return;
-      }
+      if (!reader) throw new Error("Log stream has no response body");
       const decoder = new TextDecoder();
       let buffer = "";
       for (;;) {
@@ -242,18 +249,21 @@ export function streamLogs(handlers: LogStreamHandlers, level?: StreamLevel): ()
           const frame = buffer.slice(0, split);
           buffer = buffer.slice(split + 2);
           let event = "message";
+          let id: string | undefined;
           const data: string[] = [];
           for (const line of frame.split("\n")) {
             if (line.startsWith("event:")) event = line.slice(6).trim();
+            else if (line.startsWith("id:")) id = line.slice(3).trim();
             else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
           }
-          if (data.length) emit(event, data.join("\n"));
+          if (data.length) emit(event, data.join("\n"), id);
         }
       }
     } catch {
       /* aborted on unsubscribe, or the connection dropped */
     }
     if (closed) return;
+    handlers.onClose?.();
     // Reconnect for the next window. A short delay keeps a failing gateway from being
     // hammered, and a successful window is 20s long, so this is not chatter.
     reconnectTimer = window.setTimeout(() => { void connect(); }, 1000);

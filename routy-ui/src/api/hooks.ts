@@ -354,6 +354,7 @@ export interface UseLogStream {
   /** frames that arrived as non-JSON — surfaced, never dropped */
   raw: string[];
   connected: boolean;
+  gap: boolean;
   usingMock: boolean;
   clear: () => void;
 }
@@ -393,6 +394,7 @@ export function useLogStream(level?: StreamLevel): UseLogStream {
   const [lines, setLines] = useState<LogRecord[]>([]);
   const [raw, setRaw] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
+  const [gap, setGap] = useState(false);
   const usingMock = import.meta.env.VITE_API_MODE === "mock";
   const pending = useRef<LogRecord[]>([]);
   const flushTimer = useRef<number | undefined>(undefined);
@@ -415,14 +417,15 @@ export function useLogStream(level?: StreamLevel): UseLogStream {
     pending.current = [];
     setLines([]);
     setRaw([]);
+    setGap(false);
   };
 
   useEffect(() => {
-    setLines([]);
-    setRaw([]);
+    emptyBuffers();
     const unsubscribe = streamLogs(
       {
         onInit: (snapshot) => {
+          pending.current = [];
           const parsed = snapshot.map(parseLine);
           setLines(parsed.filter((record): record is LogRecord => record !== null));
           setRaw(parsed.map((record, i) => (record === null ? snapshot[i] : null)).filter((s): s is string => s !== null));
@@ -438,6 +441,7 @@ export function useLogStream(level?: StreamLevel): UseLogStream {
           scheduleFlush();
         },
         onClear: emptyBuffers,
+        onGap: () => setGap(true),
         onOpen: () => setConnected(true),
         onClose: () => setConnected(false),
       },
@@ -446,6 +450,8 @@ export function useLogStream(level?: StreamLevel): UseLogStream {
     return () => {
       unsubscribe();
       clearTimeout(flushTimer.current);
+      flushTimer.current = undefined;
+      pending.current = [];
     };
   }, [level]);
 
@@ -458,5 +464,5 @@ export function useLogStream(level?: StreamLevel): UseLogStream {
   /** Empties the local view; call `useClearLogs` to clear the server ring too. */
   const clear = emptyBuffers;
 
-  return { lines, tags, raw, connected, usingMock, clear };
+  return { lines, tags, raw, connected, gap, usingMock, clear };
 }

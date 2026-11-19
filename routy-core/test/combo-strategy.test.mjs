@@ -216,7 +216,6 @@ describe("combo logging", () => {
       expect(r.data.strategy).toBe("round-robin");
       expect(r.data.of).toBe(2);
       expect(r.data.member).toMatch(/^n[ab]\/m1$/);
-      expect(r.msg).toContain("combo1");
     }
     // The member alternates, which is the evidence rotation worked...
     expect(reqs[0].data.member).not.toBe(reqs[1].data.member);

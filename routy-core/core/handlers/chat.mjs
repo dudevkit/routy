@@ -93,6 +93,20 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
     const t0 = Date.now();
     const reqId = nextSeqId();
     const color = colorForRequestId(reqId);
+    const lifecycle = { requestId: reqId, color: color.id, client: detectClient(req), apiKeyId: null, apiKeyName: null, model: null, node: null, account: null, attempts: 0 };
+    let terminal = false;
+    const emit = (phase, message, fields = {}) => {
+      Object.assign(lifecycle, fields);
+      log.info("REQ", message, { ...lifecycle, phase, durationMs: Date.now() - t0 });
+    };
+    const finish = (status, statusCode, errorCode = null, detail = null, fields = {}) => {
+      if (terminal) return;
+      terminal = true;
+      emit(status === "ok" ? "done" : "fail", status === "ok" ? "Request completed" : `Request ${status}: ${errorCode || status}`, { ...fields, status, statusCode, errorCode, detail });
+    };
+    let clientAbort = null;
+    emit("req", "Request received", { status: "pending" });
+    try {
 
     // auth (router client key)
     const settings = repos.settings.all();
@@ -102,19 +116,27 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       const token = extractBearer(req);
       const key = token ? repos.apiKeys.verify(token) : null;
       if (!key) {
+        finish("error", 401, "auth_error", "valid API key required");
         return json(res, 401, { error: { message: "auth_error", detail: "valid API key required" } });
       }
       apiKeyId = key.id;
       clientName = key.name || null;
+      Object.assign(lifecycle, { apiKeyId, apiKeyName: clientName });
     }
-    const clientIdentity = detectClient(req, clientName);
+    const clientIdentity = lifecycle.client;
 
     let body;
     try {
       body = JSON.parse((await readBody(req)).toString("utf8"));
     } catch (err) {
+      finish("error", err?.statusCode === 413 ? 413 : 400, "bad_request", "invalid JSON body");
       return json(res, err?.statusCode === 413 ? 413 : 400, { error: { message: "bad_request", detail: "invalid JSON body" } });
     }
+    Object.assign(lifecycle, {
+      model: body?.model ?? null,
+      toolsCount: Array.isArray(body?.tools) ? body.tools.length : 0,
+      toolNames: Array.isArray(body?.tools) ? body.tools.map((tool) => tool?.function?.name ?? tool?.name).filter(Boolean) : [],
+    });
 
     // Source format: endpoint override first, then body heuristic (upstream parity,
     // services/provider.js detectFormat) — e.g. claude-shaped body with a slash-model
@@ -124,6 +146,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
 
     const route = resolveRoute(repos, body.model);
     if (!route) {
+      finish("error", 404, "invalid_model", `unresolvable model: ${body.model}`);
       return json(res, 404, { error: { message: "invalid_model", detail: `unresolvable model: ${body.model}` } });
     }
 
@@ -133,7 +156,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
     // instead of streaming for everyone. Explicit values keep their historical meaning.
     const acceptsSSE = String(req.headers?.accept || "").includes("text/event-stream");
     const stream = body.stream === undefined ? acceptsSSE : body.stream !== false;
-    const clientAbort = new AbortController();
+    clientAbort = new AbortController();
 
     // Combo order follows its strategy (fallback/fastest/cheapest/round-robin/sticky);
     // then the daily budget drops metered routes once the ceiling is reached, so an
@@ -150,10 +173,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
     let lastError = null;
 
     if (routes.length === 0 && budget.over) {
-      log.warn("REQ", `402 budget_exceeded (${clientIdentity})`, {
-        phase: "fail", requestId: reqId, color: color.id, client: clientIdentity,
-        status: "error", errorCode: "budget_exceeded", durationMs: 0,
-      });
+      finish("error", 402, "budget_exceeded", "daily budget exceeded");
       return json(res, 402, {
         error: {
           message: "budget_exceeded",
@@ -173,6 +193,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
     // combo correctly stored as `fallback` is then indistinguishable from broken rotation,
     // which is exactly how it reads when the first member always wins.
     const combo = route.kind === "combo" ? describeCombo(repos, route, ordered, routes, candidates) : null;
+    lifecycle.combo = combo?.name ?? null;
 
     if (candidates.length === 0) {
       const expiries = routes
@@ -188,10 +209,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         ? `every member of combo "${combo.name}" is unavailable${combo.skipped.length ? ` (${combo.skipped.map((s) => `${s.model}: ${s.why}`).join("; ")})` : ""}`
         : "all routes have open breakers";
       if (combo) log.warn("COMBO", `${combo.name} ← all ${combo.of ?? combo.order.length} member(s) unavailable`, { ...combo, retryAfterMs });
-      log.warn("REQ", `503 all_unavailable (${clientIdentity})`, {
-        phase: "fail", requestId: reqId, color: color.id, client: clientIdentity,
-        status: "error", errorCode: "all_unavailable", durationMs: 0,
-      });
+      finish("error", 503, "all_unavailable", detail);
       return json(res, 503, { error: { message: "all_unavailable", detail, retryAfterMs } });
     }
     // Announce the plan before dispatch — the members in the order the strategy produced, and
@@ -226,6 +244,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
     // node problem advances to the next node — the two failure domains must not blur.
     const recent429 = new Map(); // nodeId -> Set of connectionIds that 429'd on this model
     for (const r of candidates) {
+      if (dispatchIndex > 0) emit("progress", `Falling back to ${r.node.prefix}`, { event: "fallback", node: r.node.prefix, providerName: r.node.name, account: null });
       dispatchIndex++;
       // A node+model we have already proven saturated stays saturated for the window the
       // provider asked for. Without this, every client request would re-probe the same
@@ -391,25 +410,10 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         // Per-node stall budget; 0 disables the watchdog.
         const idleTimeoutMs = r.node.data?.streamIdleTimeoutMs ?? globalIdleTimeoutMs;
         attempts++;
-        // Emit REQ log at front door of dispatch with full spec:
-        // [color] REQ · model · provider · X msgs · Y tools · key (client)
-        const msgsCount = Array.isArray(body?.messages) ? body.messages.length : (body?.prompt ? 1 : 0);
-        const toolsCount = Array.isArray(body?.tools) ? body.tools.length : 0;
-        const keyLabel = connection?.name || connectionLabel(connection);
-        const clientLabel = clientIdentity ? `(${clientIdentity})` : "";
-        const reqLine = `${body.model} · ${r.node.prefix} · ${msgsCount} msgs · ${toolsCount} tools · ${keyLabel} ${clientLabel}`.trim();
-        log.info("REQ", reqLine, {
-          phase: "req",
-          requestId: reqId,
-          color: color.id,
-          client: clientIdentity,
-          model: body.model,
-          provider: r.node.prefix,
-          nodeId: r.node.id,
-          connectionId: connection.id ?? null,
-          key: connectionLabel(connection),
-          messagesCount: msgsCount,
-          toolsCount,
+        emit("progress", `Attempt ${attempts} on ${r.node.prefix}`, {
+          event: qi > 0 ? "retry" : "attempt",
+          node: r.node.prefix, providerName: r.node.name, nodeId: r.node.id, account: connection.name ?? null,
+          connectionId: connection.id ?? null, attempts, errorCode: null, detail: null, upstreamStatus: null,
         });
         const result = await executor.execute({
           model: r.model, body: outbound, stream, signal: clientAbort.signal, log,
@@ -419,11 +423,16 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         });
 
         if (!result.ok) {
+          emit("progress", `Upstream attempt failed: ${result.errorCode || result.status}`, {
+            event: "attempt_failed", upstreamStatus: result.status ?? null,
+            errorCode: result.errorCode ?? null, detail: result.message ?? null,
+          });
           // A client walking away (or a client-side timeout) says nothing about the
           // provider's health. Counting it degrades a perfectly good node and, after
           // three, opens its breaker — so aborts never touch the breaker.
           if (result.errorCode === "client_aborted") {
             log.info("CHAT", `client aborted ${r.node.prefix}`, { afterMs: Date.now() - t0 });
+            finish("aborted", 499, "client_aborted", "client aborted the request");
             lastError = result;
             return json(res, 499, { error: { message: "client_aborted", detail: "client aborted the request" } });
           }
@@ -530,6 +539,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
               nodeDied = true;
               break;
             }
+            finish("error", 429, lastError.errorCode, lastError.message);
             return json(res, 429, {
               error: {
                 message: "upstream_rate_limited",
@@ -620,6 +630,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           const { clientGone, completed, stalled, errored, errorDetail, headersCommitted, frames, bytes, durationMs } = await pumpSse({
             upstream: result.response, res, signal: clientAbort.signal, t0, usage, logBuffer,
             transform, flushFrames, trailingDone, idleTimeoutMs,
+            onProgress: (progress) => emit("progress", "First response token", { event: "stream", ...progress }),
           });
           const genuineAbort = clientGone && !completed;
           log.debug("UPSTREAM", `← stream end ${r.node.prefix}`, {
@@ -678,14 +689,14 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           }
           const usageEventId = recordUsage(repos, log, r, connection, body.model, {
             status: errored ? "error" : genuineAbort ? "aborted" : "ok",
-            usage: { promptTokens, completionTokens, ttftMs: usage.ttftMs },
+            usage: { promptTokens, completionTokens, ttftMs: usage.ttftMs, exact: usage.exact || Boolean(translator?.state?.usage && !translator.state.usage.estimated) },
             durationMs: Date.now() - t0,
             apiKeyId,
             attempts,
             pool: proxy?.poolName ?? null,
             combo: comboFor(r),
             errorCode: streamErrorCode,
-            reqMeta: { reqId, color, client: clientIdentity },
+            reqMeta: { finish, statusCode: result.response.status, detail: errorDetail },
           });
           saveDetail(repos, { usageEventId, request: body, responseText: logBuffer, truncated: logBuffer.truncated });
           return;
@@ -701,6 +712,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           // not the provider's fault and must not degrade it.
           if (clientAbort.signal.aborted) {
             log.info("CHAT", `client aborted ${r.node.prefix} while reading the body`, { afterMs: Date.now() - t0 });
+            finish("aborted", 499, "client_aborted", "client aborted while reading the body");
             return;
           }
           // Same watchdog as the stream path: a body that never arrives must not hang.
@@ -742,10 +754,12 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           }
           if (parsed?.error) {
             recordFailure(repos, r.node, { errorCode: "upstream_error", status: 502, message: JSON.stringify(parsed.error).slice(0, 200) });
+            finish("error", 502, "upstream_error", JSON.stringify(parsed.error).slice(0, 300));
             return json(res, 502, { error: { message: "upstream_error", detail: JSON.stringify(parsed.error).slice(0, 300) } });
           }
           if (!parsed) {
             recordFailure(repos, r.node, { errorCode: "upstream_error", status: 502, message: "empty stream for a non-streaming request" });
+            finish("error", 502, "upstream_error", "upstream sent an empty stream for a non-streaming request");
             return json(res, 502, { error: { message: "upstream_error", detail: "upstream sent an empty stream for a non-streaming request" } });
           }
         } else {
@@ -756,13 +770,13 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           usage.completionTokens = parsed.usage.completion_tokens ?? usage.completionTokens;
           usage.exact = true;
         }
-        if (clientAbort.signal.aborted) return; // client gone
+        if (clientAbort.signal.aborted) { finish("aborted", 499, "client_aborted", "client gone"); return; }
         res.writeHead(result.response.status, { "content-type": "application/json" });
         res.end(JSON.stringify(parsed ?? text));
         recordSuccess(repos, r.node);
         const usageEventId = recordUsage(repos, log, r, connection, body.model, {
           status: "ok", usage, durationMs: Date.now() - t0, apiKeyId, attempts,
-          pool: proxy?.poolName ?? null, combo: comboFor(r), reqMeta: { reqId, color, client: clientIdentity },
+          pool: proxy?.poolName ?? null, combo: comboFor(r), reqMeta: { finish, statusCode: result.response.status },
         });
         saveDetail(repos, { usageEventId, request: body, responseText: new LogBuffer(), truncated: false });
         return;
@@ -804,11 +818,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       : err.status === 501 ? 501
       : err.status === 400 ? 400
       : 503;
-    log.warn("REQ", `${Date.now() - t0}ms · ${status} ${err.errorCode || "all_unavailable"} (${clientIdentity})`, {
-      phase: "fail", requestId: reqId, color: color.id, client: clientIdentity,
-      status: "error", errorCode: err.errorCode || "all_unavailable", durationMs: Date.now() - t0,
-      detail: err.message || "",
-    });
+    finish("error", status, err.errorCode || "all_unavailable", err.message || "");
     return json(res, status, {
       error: {
         message: err.errorCode || "all_unavailable",
@@ -816,6 +826,9 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         retryAfterMs: err.retryAfterMs ?? null,
       },
     });
+    } finally {
+      if (!terminal) finish(clientAbort?.signal.aborted ? "aborted" : "error", clientAbort?.signal.aborted ? 499 : 500, clientAbort?.signal.aborted ? "client_aborted" : "internal_error");
+    }
   }
 
   return handleChatCompletions;
@@ -871,41 +884,12 @@ function recordUsage(repos, log, route, connection, clientModel, { status, usage
     ? Number((usage.completionTokens / (genMs / 1000)).toFixed(1))
     : null;
 
-  const reqId = reqMeta?.reqId ?? event.id;
-  const color = reqMeta?.color ?? colorForRequestId(reqId);
-  const clientTag = reqMeta?.client ? `(${reqMeta.client})` : "";
-  const keyName = connection?.name || connectionLabel(connection);
-  const durSec = (durationMs / 1000).toFixed(1);
-  const ttftStr = usage.ttftMs != null ? `${(usage.ttftMs / 1000).toFixed(1)}s` : "-";
-  const inTokens = usage.promptTokens ?? 0;
-  const outTokens = usage.completionTokens ?? 0;
-
-  let doneMsg = `ok · ${durSec}s · TTFT ${ttftStr} · In ${inTokens} · Out ${outTokens} · ${clientModel} · ${keyName} ${clientTag}`.trim();
-  if (status !== "ok") {
-    const errTag = errorCode || status;
-    doneMsg = `${durSec}s · TTFT ${ttftStr} · In ${inTokens} · Out ${outTokens} · ${errTag} ${clientTag}`.trim();
-  }
-  log.info("REQ", doneMsg, {
-    phase: status === "ok" ? "done" : "fail",
-    requestId: reqId,
-    client: reqMeta?.client ?? null,
-    model: clientModel,
-    nodeId: route.node.id,
-    connectionId: connection.id ?? null,
-    key: connectionLabel(connection),
-    ...(combo
-      ? { combo: combo.name, strategy: combo.strategy, member: combo.member, attempt: combo.attempt, of: combo.of, order: combo.order, skipped: combo.skipped }
-      : {}),
-    pool,
-    status,
-    attempts,
-    ttftMs: usage.ttftMs ?? null,
-    durationMs,
-    promptTokens: usage.promptTokens ?? null,
-    completionTokens: usage.completionTokens ?? null,
-    tokensPerSec,
-    costUsd: Number.isFinite(costUsd) ? Number(costUsd.toFixed(6)) : null,
-    errorCode: errorCode ?? null,
+  reqMeta?.finish(status, status === "aborted" ? 499 : reqMeta.statusCode, errorCode, reqMeta.detail ?? null, {
+    pool, attempts, ttftMs: usage.ttftMs ?? null,
+    promptTokens: usage.promptTokens ?? null, completionTokens: usage.completionTokens ?? null,
+    usageEstimated: !usage.exact,
+    tokensPerSec, costUsd: Number.isFinite(costUsd) ? Number(costUsd.toFixed(6)) : null,
+    ...(combo ? { strategy: combo.strategy, member: combo.member, attempt: combo.attempt, of: combo.of, order: combo.order, skipped: combo.skipped } : {}),
   });
   return event.id;
 }

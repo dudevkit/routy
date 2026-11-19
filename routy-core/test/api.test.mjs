@@ -9,6 +9,7 @@ import { createRepos } from "../db/repos.mjs";
 import { buildApiRoutes, dashboardAuthorized } from "../http/api.mjs";
 import { createSessionToken, hashPassword, loadOrCreateSessionKey, verifyPassword, verifySessionToken } from "../lib/auth.mjs";
 import { createRouter } from "../lib/router.mjs";
+import { clearLogs, log, logStreamSnapshot } from "../lib/log.mjs";
 
 let tmp, db, repos, server, handlerPort, stubServer, stubPort, stubState, cfg;
 
@@ -261,6 +262,47 @@ describe("management API", () => {
     expect(captured).toContain("event: init");
     expect(captured).toContain("event: line");
     expect(captured).toContain("live line arrives");
+  });
+
+  it("resumes after a cursor without duplicates and preserves redaction and filtering", async () => {
+    clearLogs();
+    log.info("CURSOR", "before");
+    const first = logStreamSnapshot();
+    log.info("CURSOR", "hidden by level");
+    log.warn("CURSOR", "after", { apiKey: "never-stream-this" });
+    const response = await get(`/api/logs/stream?maxMs=5&level=warn&cursor=${first.epoch}:${first.sequence}`);
+    expect(response.body).not.toContain("before");
+    expect(response.body).not.toContain("hidden by level");
+    expect(response.body).toContain("after");
+    expect(response.body).not.toContain("never-stream-this");
+    expect(response.body).toContain("[REDACTED]");
+    expect(response.body).toContain(`id: ${first.epoch}:${first.sequence + 2}`);
+    expect(response.body).toContain("event: checkpoint");
+  });
+
+  it("signals gaps after ring overflow or server epoch changes", async () => {
+    clearLogs();
+    const start = logStreamSnapshot();
+    for (let i = 0; i < 501; i++) log.info("CURSOR", `overflow-${i}`);
+    const overflow = await get(`/api/logs/stream?maxMs=5&cursor=${start.epoch}:${start.sequence}`);
+    expect(overflow.body).toContain("event: gap");
+    expect(overflow.body).toContain("event: init");
+    const restart = await get("/api/logs/stream?maxMs=5&cursor=old-epoch:1");
+    expect(restart.body).toContain("event: gap");
+    expect(restart.body).toContain("event: init");
+  });
+
+  it("replays clear across a disconnected window without reporting a gap", async () => {
+    clearLogs();
+    log.info("CURSOR", "old line");
+    const start = logStreamSnapshot();
+    clearLogs();
+    log.info("CURSOR", "new line");
+    const response = await get(`/api/logs/stream?maxMs=5&cursor=${start.epoch}:${start.sequence}`);
+    expect(response.body).toContain("event: clear");
+    expect(response.body).toContain("new line");
+    expect(response.body).not.toContain("old line");
+    expect(response.body).not.toContain("event: gap");
   });
 
   it("trusts loopback and a valid session, and nothing else", () => {

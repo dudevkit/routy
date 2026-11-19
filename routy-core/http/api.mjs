@@ -9,7 +9,7 @@ import { PROVIDERS } from "../core/providerCatalog.mjs";
 import { isKeyless } from "../core/keyless.mjs";
 import { budgetSpent } from "../core/budget.mjs";
 import { probeNode, probeKey, probeModel, probeSystemone, probeCodeBuddyOAuth, mapLimit } from "../core/probe.mjs";
-import { clearLogs, log, recentLogs, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
+import { clearLogs, log, logStreamSnapshot, setLogLevel, subscribeLog, subscribeLogClear } from "../lib/log.mjs";
 import {
   DEFAULT_PASSWORD,
   clearSessionCookieHeader,
@@ -1420,23 +1420,47 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       "cache-control": "no-cache",
       connection: "keep-alive",
     });
-    const send = (event, payload) => {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+    const snapshot = logStreamSnapshot();
+    const cursorValue = url.searchParams.get("cursor") ?? req.headers["last-event-id"];
+    const cursorMatch = typeof cursorValue === "string" && /^([^:]+):(\d+)$/.exec(cursorValue);
+    const cursor = cursorMatch ? Number(cursorMatch[2]) : undefined;
+    const validCursor = cursorMatch && cursorMatch[1] === snapshot.epoch && Number.isSafeInteger(cursor) && cursor <= snapshot.sequence;
+    const send = (event, payload, id) => {
+      res.write(`${id === undefined ? "" : `id: ${snapshot.epoch}:${id}\n`}event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
     };
-    send("init", { lines: recentLogs(200).filter(lineOk), maxMs });
-    const unsub = subscribeLog((text) => {
+    const init = () => send("init", { lines: snapshot.entries.slice(-200).map((entry) => entry.text).filter(lineOk), maxMs }, snapshot.sequence);
+    if (!cursorValue) {
+      init();
+    } else if (!validCursor) {
+      send("gap", {});
+      init();
+    } else {
+      const afterClear = snapshot.lastClear > cursor;
+      if (afterClear) send("clear", {}, snapshot.lastClear);
+      const start = afterClear ? snapshot.lastClear : cursor;
+      const oldest = snapshot.entries[0]?.id ?? snapshot.sequence + 1;
+      if (oldest > start + 1) {
+        send("gap", {});
+        init();
+      } else {
+        for (const entry of snapshot.entries) {
+          if (entry.id > start && lineOk(entry.text)) send("line", { text: entry.text }, entry.id);
+        }
+        send("checkpoint", {}, snapshot.sequence);
+      }
+    }
+    const unsub = subscribeLog((text, id) => {
       if (res.writableEnded || !lineOk(text)) return;
-      try { send("line", { text }); } catch { /* client gone */ }
+      try { send("line", { text }, id); } catch { /* client gone */ }
     });
-    const unsubClear = subscribeLogClear(() => {
-      if (!res.writableEnded) send("clear", {});
+    const unsubClear = subscribeLogClear((id) => {
+      if (!res.writableEnded) send("clear", {}, id);
     });
     const ping = setInterval(() => {
       if (!res.writableEnded) res.write(": ping\n\n");
     }, 15000);
     ping.unref?.();
-    // End the window on time: the client reconnects and gets a fresh snapshot, so no
-    // line is lost across the seam (the snapshot is the ring, not a cursor).
+    // End the window on time; the next connection resumes from its last event id.
     const close = setTimeout(() => {
       if (!res.writableEnded) res.end();
     }, maxMs);

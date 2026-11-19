@@ -18,17 +18,9 @@ export function colorForRequestId(id) {
 }
 
 /**
- * Identify client agent (hermes, omp, playground, api-client).
- * Priority:
- * 1. Verified API Key name (e.g. "hermes", "omp-laptop")
- * 2. Explicit headers (x-client, x-agent)
- * 3. SDK Fingerprints (x-stainless-lang: python -> hermes, node/js -> omp; User-Agent)
- * 4. Internal dashboard action header -> playground
+ * Identify the calling agent independently of the router API key or upstream account.
  */
-export function detectClient(req, keyName = null) {
-  if (keyName && typeof keyName === "string" && keyName.trim().length > 0) {
-    return keyName.trim();
-  }
+export function detectClient(req) {
   const headers = req?.headers || {};
   if (headers["x-client"]) return String(headers["x-client"]).trim();
   if (headers["x-agent"]) return String(headers["x-agent"]).trim();

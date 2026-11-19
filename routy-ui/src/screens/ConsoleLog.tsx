@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useClearLogs, useLogStream, usePutSettings, useSettings } from "../api/hooks";
 import type { LogRecord } from "../api/types";
-import type { StreamLevel } from "../api/transport";
 import { toastApiError } from "../utils/errors";
 import { fmtClockMs } from "../utils/format";
 import { Badge } from "../components/ui/Badge";
@@ -107,12 +106,88 @@ function LogRow({ line }: { line: LogRecord }) {
   );
 }
 
+type RequestRowData = {
+  id: string;
+  first: LogRecord;
+  latest: LogRecord;
+  data: Record<string, unknown>;
+  events: LogRecord[];
+};
+
+type ConsoleEntry = { kind: "request"; request: RequestRowData } | { kind: "log"; line: LogRecord; key: string };
+
+function requestData(line: LogRecord): Record<string, unknown> | null {
+  if (line.tag !== "REQ" || !line.data || typeof line.data !== "object" || Array.isArray(line.data)) return null;
+  const data = line.data as Record<string, unknown>;
+  return data.requestId != null && ["req", "progress", "done", "fail"].includes(String(data.phase)) ? data : null;
+}
+
+function displayValue(value: unknown): string {
+  if (value == null || value === "") return "—";
+  if (Array.isArray(value)) return value.length ? value.map(displayValue).join(", ") : "0";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function duration(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) ? `${value.toLocaleString()} ms` : "—";
+}
+
+function RequestRow({ request }: { request: RequestRowData }) {
+  const d = request.data;
+  const phase = String(d.phase ?? "req");
+  const status = String(d.status ?? (phase === "fail" ? "error" : phase === "done" ? "ok" : "pending"));
+  const total = typeof d.promptTokens === "number" && typeof d.completionTokens === "number"
+    ? d.promptTokens + d.completionTokens : null;
+  const notices = request.events.flatMap((line) => {
+    const event = requestData(line);
+    if (!event) return [];
+    if (event.event === "retry" || event.event === "fallback" || event.event === "attempt_failed") {
+      const label = event.event === "retry" ? "Retry" : event.event === "fallback" ? "Fallback" : "Attempt failed";
+      const detail = [event.upstreamStatus, event.errorCode, event.detail].filter(Boolean).map(displayValue).join(": ");
+      return [`${label}${detail ? `: ${detail}` : ""}`];
+    }
+    return [];
+  });
+  if (phase === "fail" || status === "error" || status === "aborted") {
+    notices.push([d.errorCode, d.detail].filter(Boolean).map(displayValue).join(": ") || status);
+  }
+  return (
+    <div className="border-b border-border-subtle px-3 py-2 font-mono text-xs leading-relaxed last:border-b-0">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-text-main">
+        <span className="tabular text-text-subtle">{fmtClockMs(request.first.t)}</span>
+        <span className="tabular text-text-subtle">#{request.id}</span>
+        <span className={cn("font-semibold uppercase", status === "ok" ? "text-success" : status === "error" ? "text-danger" : status === "aborted" ? "text-text-muted" : "text-primary")}>
+          {status === "ok" ? "Completed" : status === "error" ? "Failed" : status === "aborted" ? "Cancelled" : "Running"}{d.statusCode != null ? ` ${displayValue(d.statusCode)}` : ""}
+        </span>
+        <span><span className="text-text-muted">Model </span><strong className="font-semibold text-text-main">{displayValue(d.member ?? d.model)}</strong></span>
+        {d.combo != null && <span><span className="text-text-muted">Combo </span><strong className="font-semibold text-text-main">{displayValue(d.combo)}</strong></span>}
+        <span><span className="text-text-muted">Provider </span>{displayValue(d.providerName ?? d.node)}</span>
+        <span><span className="text-text-muted">Account </span>{displayValue(d.account)}</span>
+        <span><span className="text-text-muted">Routy key </span>{displayValue(d.apiKeyName ?? (typeof d.apiKeyId === "string" ? d.apiKeyId.slice(0, 8) : null))}</span>
+        <span><span className="text-text-muted">Client </span>{displayValue(d.client)}</span>
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-text-muted">
+        <span>TTFT {duration(d.ttftMs)}</span>
+        <span>Duration {duration(d.durationMs)}</span>
+        <span>Input {d.usageEstimated ? "~" : ""}{displayValue(d.promptTokens)}</span>
+        <span>Output {d.usageEstimated ? "~" : ""}{displayValue(d.completionTokens)}</span>
+        <span>Total {d.usageEstimated ? "~" : ""}{displayValue(total)}</span>
+        <span title={Array.isArray(d.toolNames) ? d.toolNames.join(", ") : undefined}>Tools {displayValue(d.toolsCount)}</span>
+        {d.attempts != null && <span>Attempts {displayValue(d.attempts)}</span>}
+        {notices.map((notice, index) => <span key={index} className={cn("break-all font-semibold", status === "error" ? "text-danger" : "text-warning")}>{notice}</span>)}
+      </div>
+    </div>
+  );
+}
+
 export function ConsoleLog() {
   const [searchParams] = useSearchParams();
   const [levels, setLevels] = useState<Record<Level, boolean>>({ debug: true, info: true, warn: true, error: true });
   const [tag, setTag] = useState(() => searchParams.get("tag") || "all");
   const [search, setSearch] = useState(() => searchParams.get("q") || searchParams.get("search") || "");
   const [follow, setFollow] = useState(true);
+  const [rawView, setRawView] = useState(false);
   const scroller = useRef<HTMLDivElement | null>(null);
   const toast = useToast();
   const clearLogs = useClearLogs();
@@ -135,36 +210,59 @@ export function ConsoleLog() {
       },
     );
 
-  /**
-   * When the enabled chips form a suffix of the level order, ask the server to stop
-   * streaming the rest (`?level=`) so a warn-only view pays no debug traffic.
-   * Non-contiguous sets stay fully streamed and are filtered in-view.
-   */
-  const streamLevel = useMemo<StreamLevel | undefined>(() => {
-    const enabled = LEVELS.filter((l) => levels[l]);
-    if (enabled.length === 0 || enabled.length === LEVELS.length) return undefined;
-    const floor = LEVELS.indexOf(enabled[0]);
-    return enabled.every((l, i) => LEVELS.indexOf(l) === floor + i) ? enabled[0] : undefined;
-  }, [levels]);
+  // Lifecycle events must stay together even when display levels are filtered.
+  const { lines, tags, raw, connected, usingMock, clear, gap } = useLogStream();
 
-  const { lines, tags, raw, connected, usingMock, clear } = useLogStream(streamLevel);
+  const entries = useMemo(() => {
+    const result: ConsoleEntry[] = [];
+    const requests = new Map<string, RequestRowData>();
+    lines.forEach((line, index) => {
+      const data = requestData(line);
+      if (!data) {
+        result.push({ kind: "log", line, key: `${line.t}-${index}` });
+        return;
+      }
+      const id = String(data.requestId);
+      const existing = requests.get(id);
+      if (existing) {
+        existing.latest = line;
+        existing.data = { ...existing.data, ...Object.fromEntries(Object.entries(data).filter(([, value]) => value != null)) };
+        existing.events.push(line);
+      } else {
+        const request = { id, first: line, latest: line, data: { ...data }, events: [line] };
+        requests.set(id, request);
+        result.push({ kind: "request", request });
+      }
+    });
+    return result;
+  }, [lines]);
 
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    return lines.filter((l) => {
-      if (!levels[asLevel(l.level)]) return false;
-      if (tag !== "all" && l.tag !== tag) return false;
+    return entries.filter((entry) => {
+      const line = entry.kind === "request" ? entry.request.latest : entry.line;
+      if (!levels[asLevel(line.level)]) return false;
+      if (tag !== "all" && line.tag !== tag) return false;
       if (!needle) return true;
-      return `${l.tag} ${l.msg}`.toLowerCase().includes(needle);
+      const text = entry.kind === "request"
+        ? `${line.tag} ${entry.request.events.map((event) => `${event.msg} ${JSON.stringify(event.data)}`).join(" ")}`
+        : `${line.tag} ${line.msg} ${JSON.stringify(line.data)}`;
+      return text.toLowerCase().includes(needle);
     });
-  }, [levels, tag, search, lines]);
+  }, [levels, tag, search, entries]);
 
   const shown = visible.length > RENDER_CAP ? visible.slice(visible.length - RENDER_CAP) : visible;
+  const rawShown = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    const matching = lines.filter((line) => levels[asLevel(line.level)] && (tag === "all" || line.tag === tag)
+      && (!needle || JSON.stringify(line).toLowerCase().includes(needle)));
+    return matching.slice(-RENDER_CAP);
+  }, [lines, levels, tag, search]);
 
   useEffect(() => {
     if (!follow || !scroller.current) return;
     scroller.current.scrollTop = scroller.current.scrollHeight;
-  }, [shown, follow]);
+  }, [shown, rawShown, raw, follow, rawView]);
 
   const toggleLevel = (level: Level) => setLevels((prev) => ({ ...prev, [level]: !prev[level] }));
 
@@ -239,8 +337,11 @@ export function ConsoleLog() {
             className="min-w-0 basis-48"
             inputClassName="h-8 py-0 text-xs"
           />
+          <Button size="sm" variant={rawView ? "secondary" : "outline"} onClick={() => setRawView((v) => !v)} aria-pressed={rawView}>
+            {rawView ? "Raw view" : "Request view"}
+          </Button>
           <Button size="sm" variant={follow ? "secondary" : "outline"} onClick={() => setFollow((v) => !v)}>
-            {follow ? "Following" : "Paused"}
+            {follow ? "Auto-scroll on" : "Auto-scroll off"}
           </Button>
           <Button
             size="sm"
@@ -260,7 +361,7 @@ export function ConsoleLog() {
             <StatusDot tone={connected ? "green" : "red"} pulse={connected} />
             <span>{connected ? "streaming" : "disconnected"}</span>
             <span className="font-mono tabular">
-              {visible.length.toLocaleString()} {visible.length === 1 ? "line" : "lines"}{visible.length > RENDER_CAP ? ` (showing last ${RENDER_CAP})` : ""}
+              {visible.length.toLocaleString()} {visible.length === 1 ? "entry" : "entries"}{visible.length > RENDER_CAP ? ` (showing last ${RENDER_CAP})` : ""}
             </span>
           </div>
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
@@ -270,10 +371,11 @@ export function ConsoleLog() {
               </Badge>
             )}
             <Badge variant="default" size="sm">
-              {streamLevel ? `/api/logs/stream?level=${streamLevel}` : "/api/logs/stream"}
+              /api/logs/stream
             </Badge>
           </div>
         </div>
+        {gap && <div role="alert" className="border-b border-border-subtle bg-warning/10 px-3 py-2 text-xs text-warning">Some logs were missed while reconnecting. Clear the console to start a new view.</div>}
 
         <div ref={scroller} className="h-[calc(100vh-300px)] min-h-[380px] overflow-y-auto custom-scrollbar bg-bg py-1">
           {usingMock && (
@@ -297,9 +399,11 @@ export function ConsoleLog() {
               <p className="text-xs text-text-subtle">Widen the level or tag filter to see them.</p>
             </div>
           )}
-          {shown.map((l, i) => (
-            <LogRow key={`${l.t}-${i}`} line={l} />
-          ))}
+          {rawView ? rawShown.map((line, index) => (
+            <pre key={`${line.t}-${index}`} className="whitespace-pre-wrap break-all px-3 py-[3px] font-mono text-xs text-text-muted">{JSON.stringify(line)}</pre>
+          )) : shown.map((entry) => entry.kind === "request"
+            ? <RequestRow key={`request-${entry.request.id}`} request={entry.request} />
+            : <LogRow key={entry.key} line={entry.line} />)}
           {raw.map((r, i) => (
             <div key={`raw-${i}`} className="min-w-0 break-all px-3 py-[3px] font-mono text-xs text-text-subtle sm:text-[11.5px]">
               {r}

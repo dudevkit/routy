@@ -1,4 +1,6 @@
 // routy logging — level-gated, redaction-aware, never blocks the loop on writes.
+import { randomUUID } from "node:crypto";
+
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
 let currentLevel = LEVELS.info;
 
@@ -28,17 +30,24 @@ export function redact(obj, depth = 0) {
 const RING_MAX = 500;
 const ring = [];
 const subscribers = new Set();
+const streamEpoch = randomUUID();
+let sequence = 0;
+let lastClear = 0;
+export function logStreamSnapshot() {
+  return { epoch: streamEpoch, sequence, lastClear, entries: ring.slice() };
+}
 export function subscribeLog(fn) {
   subscribers.add(fn);
   return () => subscribers.delete(fn);
 }
 export function recentLogs(count = RING_MAX) {
-  return ring.slice(-count);
+  return ring.slice(-count).map((entry) => entry.text);
 }
 export function clearLogs() {
   ring.length = 0;
+  lastClear = ++sequence;
   for (const fn of clearSubscribers) {
-    try { fn(); } catch { /* subscriber errors never break clearing */ }
+    try { fn(sequence); } catch { /* subscriber errors never break clearing */ }
   }
 }
 const clearSubscribers = new Set();
@@ -59,10 +68,11 @@ function emit(level, tag, msg, extra) {
   const text = JSON.stringify(line);
   if (level === "error") console.error(text);
   else console.log(text);
-  ring.push(text);
+  const id = ++sequence;
+  ring.push({ id, text });
   if (ring.length > RING_MAX) ring.shift();
   for (const fn of subscribers) {
-    try { fn(text); } catch { /* subscriber errors never break logging */ }
+    try { fn(text, id); } catch { /* subscriber errors never break logging */ }
   }
 }
 

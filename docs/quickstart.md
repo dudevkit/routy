@@ -120,6 +120,12 @@ console's **capture** selector to `debug` and you also get every upstream dispat
 response, retry and stream end — `UPSTREAM` lines with URL, model, byte count, TTFB
 and duration. That setting is live and survives restarts.
 
+The default request view keeps one entry per request and updates it as the request
+progresses. It shows status, model and route, provider account, client and router key,
+TTFT, duration, token usage and tools without opening details. Switch to raw events for
+probes and system diagnostics. Log history is held in memory; reconnect resumes from a
+cursor when possible and indicates when older events have been lost.
+
 ---
 
 ## Point a CLI tool at it

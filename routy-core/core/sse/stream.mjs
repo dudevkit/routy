@@ -41,8 +41,24 @@ export class UsageTracker {
   observeFirstByte(t0) {
     if (this.firstByteAt === null) {
       this.firstByteAt = Date.now();
-      this.ttftMs = this.firstByteAt - t0;
+      // First byte is transport latency, not time to the first generated token.
     }
+  }
+  observeOutput(text, t0) {
+    if (this.ttftMs !== null) return false;
+    const match = /^data:[ \t]*(.*)$/m.exec(text);
+    if (!match) return false;
+    try {
+      const event = JSON.parse(match[1]);
+      const delta = event.choices?.[0]?.delta;
+      const valuable = delta?.content || delta?.reasoning_content || delta?.tool_calls?.length ||
+        event.type === "content_block_delta" && (event.delta?.text || event.delta?.thinking || event.delta?.partial_json) ||
+        event.type === "response.output_text.delta" && event.delta ||
+        event.type === "response.function_call_arguments.delta" && event.delta;
+      if (!valuable) return false;
+      this.ttftMs = Date.now() - t0;
+      return true;
+    } catch { return false; }
   }
   observeChunk(data) {
     if (data === "[DONE]") return;
@@ -113,7 +129,7 @@ export function isTerminalFrame(text) {
   }
 }
 
-export async function pumpSse({ upstream, res, signal, t0, transform = null, flushFrames = null, usage = null, logBuffer = null, maxEmptyReads = 4, trailingDone = false, idleTimeoutMs = 0 }) {
+export async function pumpSse({ upstream, res, signal, t0, transform = null, flushFrames = null, usage = null, logBuffer = null, maxEmptyReads = 4, trailingDone = false, idleTimeoutMs = 0, onProgress = null }) {
   // Headers are DEFERRED until the first frame is ready to write.
   // If the upstream socket resets or disconnects before the first token,
   // pumpSse returns without committing headers, allowing the handler
@@ -132,6 +148,7 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
   const onClose = () => { clientGone = true; };
   res.on("close", onClose);
   const write = (out) => {
+    if (usage?.observeOutput(out, t0)) onProgress?.({ ttftMs: usage.ttftMs, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens });
     ensureHeaders();
     const more = res.write(out);
     if (!completed && isTerminalFrame(out)) completed = true;

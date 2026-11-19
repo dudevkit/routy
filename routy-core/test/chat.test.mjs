@@ -9,6 +9,7 @@ import path from "node:path";
 import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
 import { createChatHandler } from "../core/handlers/chat.mjs";
+import { subscribeLog } from "../lib/log.mjs";
 
 let tmp, db, repos, handlerServer, handlerPort, stubServer, stubPort, stubState;
 
@@ -77,6 +78,30 @@ function post(body, headers = {}) {
 }
 
 describe("chat handler (end-to-end)", () => {
+  it("publishes a correlated lifecycle with separate client, router key and account", async () => {
+    const entries = [];
+    const unsubscribe = subscribeLog((text) => { const entry = JSON.parse(text); if (entry.tag === "REQ") entries.push(entry.data); });
+    try {
+      const { key } = repos.apiKeys.create("router-key");
+      const response = await post({ model: "a/m1", stream: true, messages: [{ role: "user", content: "hi" }] }, { authorization: `Bearer ${key}`, "x-client": "agent" });
+      expect(response.status).toBe(200);
+      expect(entries.map((entry) => entry.phase)).toEqual(["req", "progress", "progress", "done"]);
+      expect(new Set(entries.map((entry) => entry.requestId)).size).toBe(1);
+      expect(entries[2]).toMatchObject({ event: "stream", ttftMs: expect.any(Number) });
+      expect(entries[3]).toMatchObject({ client: "agent", apiKeyName: "router-key", account: "k", node: "a", status: "ok", statusCode: 200, promptTokens: 7, completionTokens: 1 });
+    } finally { unsubscribe(); }
+  });
+
+  it("publishes one terminal failure when authentication fails", async () => {
+    const entries = [];
+    const unsubscribe = subscribeLog((text) => { const entry = JSON.parse(text); if (entry.tag === "REQ") entries.push(entry.data); });
+    try {
+      expect((await post({ model: "a/m1", messages: [] })).status).toBe(401);
+      expect(entries.map((entry) => entry.phase)).toEqual(["req", "fail"]);
+      expect(entries[1]).toMatchObject({ requestId: entries[0].requestId, statusCode: 401, errorCode: "auth_error" });
+    } finally { unsubscribe(); }
+  });
+
   it("streams openai passthrough with exact usage recorded", async () => {
     repos.settings.update({ requireApiKey: false });
     const r = await post({ model: "a/m1", stream: true, messages: [{ role: "user", content: "hi" }] });
