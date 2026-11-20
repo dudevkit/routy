@@ -100,7 +100,7 @@ export function ChatPlaygroundCard({ node }: { node: UpstreamNode }) {
 
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json", "X-Routy-Action": "1" };
-      // Dashboard authentication is carried by the same-origin session.
+      if (clientKey) headers.Authorization = `Bearer ${clientKey}`;
 
       const res = await fetch(executeEndpoint, {
         method: "POST",

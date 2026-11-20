@@ -112,7 +112,10 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
     const settings = repos.settings.all();
     let apiKeyId = null;
     let clientName = null;
-    if (settings.requireApiKey !== false) {
+    // The dashboard Playground is already authenticated by the dashboard session (loopback or
+    // login cookie) and its endpoint enforces same-origin, so a router client key is optional
+    // there. Ordinary /v1 traffic still requires one.
+    if (settings.requireApiKey !== false && !trustedPlayground) {
       const token = extractBearer(req);
       const key = token ? repos.apiKeys.verify(token) : null;
       if (!key) {
@@ -122,6 +125,20 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       apiKeyId = key.id;
       clientName = key.name || null;
       Object.assign(lifecycle, { apiKeyId, apiKeyName: clientName });
+    } else if (trustedPlayground) {
+      // The dashboard may still send the key it shows, for attribution. A key that is
+      // supplied but invalid is a real error, not something to ignore silently.
+      const token = extractBearer(req);
+      if (token) {
+        const key = repos.apiKeys.verify(token);
+        if (!key) {
+          finish("error", 401, "auth_error", "the supplied API key is not valid");
+          return json(res, 401, { error: { message: "auth_error", detail: "the supplied API key is not valid" } });
+        }
+        apiKeyId = key.id;
+        clientName = key.name || null;
+        Object.assign(lifecycle, { apiKeyId, apiKeyName: clientName });
+      }
     }
     const clientIdentity = lifecycle.client;
 
