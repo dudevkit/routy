@@ -9,13 +9,8 @@
 //   402 / credit body the credential has no balance
 //   key-scoped 429    this credential's own rate limit
 //
-// A provider-wide 429 ("the model is saturated for everyone") must NOT cool keys down —
-// disabling every key against a problem no key can fix is how you wake up to a bricked
-// provider. Detection is behavioral first, textual second: the same model returning 429
-// on two different connections within one cooldown window is not a per-key event, no
-// matter how the provider words the body. In that case the request must reach the client
-// as upstream_rate_limited so a human can pick another model instead of the gateway
-// silently churning its whole key list.
+// Only explicit provider-wide evidence justifies a global verdict. Multiple distinct
+// credentials can independently exhaust their quotas; opaque 429s do not prove otherwise.
 //
 // State lives in the existing breaker RAM store under `conn:<id>` scopes — same
 // persistence (dirty-flush), same shape, zero new tables. Disabled is always a manual
@@ -39,15 +34,13 @@ const CREDIT_BODY = /insufficient|quota|credit|balance|billing|exceeded your|pla
 // noun. Measured against ten bodies, the loose list scores 6 and this scores 10.
 const CREDIT_400_BODY = /(insufficient|exceeds?|exceeded|not enough|out of|no|low)\s+(credit|credits|balance|quota|funds|budget)/;
 
-// 429 bodies that point at the caller's credential rather than the provider. Matched
-// against the lowercased body; absence of a match is not evidence either way, which is
-// what the two-connections heuristic is for.
+// 429 bodies that point at the caller's credential rather than the provider. Absence
+// of a match is not evidence of a provider-wide limit.
 const KEY_SCOPED_429 = /your (api )?key|per[- ]key|this key|key.+limit|quota.+key|key.+quota/;
 
-// 429 bodies that name the provider rather than the caller: the model is saturated for
-// everyone, so no key can fix it and none should be punished for it. These providers
-// phrase it as "global"/"upstream"; "try again later" and "capacity" stand alone.
-const GLOBAL_429 = /global|upstream|all (keys|clients|users)|try again later|capacity|overloaded|server is busy/;
+// Only wording that identifies shared saturation is provider-wide. Generic advice to
+// retry, or saying that the upstream rate-limited us, does not establish scope.
+const GLOBAL_429 = /\bglobal\b|all (keys|clients|users)|\bcapacity\b|\boverloaded\b|server is busy/;
 
 // A cooldown doubles each time the same key 429s again after its cooldown expired, up to
 // the cap — the same idea as the node breaker's exponential backoff.
@@ -106,26 +99,11 @@ export function classifyConnectionError(err, { connection, recent429 } = {}) {
     if (GLOBAL_429.test(body)) {
       return { verdict: "global", reason: "provider-wide limit in body", others: recent429?.size ?? 0 };
     }
-    // Bodies are worded inconsistently, so behavior is the fallback: two different
-    // connections 429ing on the same model inside one window is a provider-wide event.
-    if (recent429 && [...recent429].some((id) => id !== connection?.id)) {
-      return { verdict: "global", reason: "429 on multiple keys", others: recent429.size };
-    }
-    // An OAuth account is a subscription, not a rotatable API key, and two things make the
-    // cooldown default wrong for it:
-    //   · there is no sibling credential to corroborate with, so the multi-key heuristic
-    //     above can never fire — a lone OAuth account always lands here; and
-    //   · its executor redacts the provider body by design (CodeBuddy error text can echo
-    //     tokens), so no keyword can ever match, no matter what the provider actually said.
-    // Persisting a 5-10 minute cooldown would then sideline the user's only account over a
-    // limit no account can fix — a self-inflicted outage. Mark it `soft`: the caller still
-    // rotates to the next account and falls through to the next route exactly as before, but
-    // no health state is written, so the account is never taken out of rotation.
+    // Redacted OAuth responses cannot identify the scope of the limit. Rotate without
+    // sidelining the account or claiming the provider is globally saturated.
     if (connection?.credentials?.authType === "oauth") {
-      return { verdict: "cooldown", reason: "provider rate limit on an OAuth account — account not sidelined", soft: true };
+      return { verdict: "cooldown", reason: "unclassified rate limit on an OAuth account", soft: true };
     }
-    // Unrecognized body: still treated as this key's problem, but the next distinct
-    // key to 429 flips the verdict to global via recent429.
     return { verdict: "cooldown", reason: "rate limit (unclassified body)" };
   }
   // A request-shaped 4xx is the caller's mistake, not the provider's condition: the same body
@@ -189,8 +167,6 @@ export function recordConnectionFailure(repos, connection, err, settings = {}, n
     return { verdict: verdict.verdict, reason: verdict.reason, others: verdict.others, state };
   }
 
-  // This key's own 429 is now on record: a second distinct key 429ing on the same
-  // model within the window is what flips the verdict to provider-wide.
   if (err?.status === 429 && recent429) recent429.add(connection.id);
 
   if (verdict.verdict === "cooldown") {
@@ -199,9 +175,9 @@ export function recordConnectionFailure(repos, connection, err, settings = {}, n
       state: "cooldown",
       openUntil: new Date(now + ms).toISOString(),
       cooldownStreak: (state.cooldownStreak ?? 0) + 1,
-      lastError: `${verdict.reason}: ${String(err?.message || "").slice(0, 160)}`,
+      lastError: verdict.reason,
     });
-    return { verdict: "cooldown", reason: verdict.reason, cooldownMs: ms, state: next };
+    return { verdict: "cooldown", reason: verdict.reason, cooldownMs: ms, state: next, priorState: state };
   }
 
   // strike: count failures within the strike window; the second one inside the window
@@ -211,7 +187,7 @@ export function recordConnectionFailure(repos, connection, err, settings = {}, n
   const priorAt = state.updatedAt ? Date.parse(state.updatedAt) : NaN;
   const withinWindow = Number.isFinite(priorAt) && now - priorAt <= CONNECTION_STRIKE_WINDOW_MS;
   const count = strikes && withinWindow ? 2 : 1;
-  const lastError = `${verdict.reason}: ${String(err?.message || "").slice(0, 160)}`;
+  const lastError = verdict.reason;
 
   if (count >= CONNECTION_STRIKES_TO_DISABLE) {
     const next = repos.breakers.record(scope, { state: "disabled", failures: count, lastError });
@@ -231,28 +207,29 @@ export function recordConnectionSuccess(repos, connectionId) {
   return repos.breakers.record(scope, { state: "closed", failures: 0, openUntil: null, lastError: null, cooldownStreak: 0 });
 }
 
-/**
- * Clear every piece of per-key health for a connection, and re-enable it.
- *
- * `disabled` is terminal by design: `isConnectionAvailable` returns false for it with no
- * `openUntil` to wait on, and `earliestRecovery` only scans `cooldown` — so nothing in the
- * request path ever brings a disabled key back. Recovery is therefore an explicit operator
- * action, and this is that action: it must clear the breaker (RAM + row) *and* flip the
- * `connections.status` mirror, because routing filters on `status === "active"` before it
- * ever consults the breaker. Clearing one and not the other is a key that looks healthy and
- * is never picked.
- *
- * The stale `lastError` goes too: it is the 403/auth text that caused the disable, and
- * leaving it on a freshly enabled key reads as a failure that is still current.
- */
+/** Undo a speculative cooldown only while it is still the latest health update. */
+export function rollbackConnectionCooldown(repos, entry) {
+  if (!entry || repos.breakers.get(connectionScope(entry.id)) !== entry.state) return;
+  const prior = entry.priorState;
+  repos.breakers.record(connectionScope(entry.id), {
+    state: prior.state, failures: prior.failures, openUntil: prior.openUntil,
+    lastError: prior.lastError, cooldownStreak: prior.cooldownStreak ?? 0,
+  });
+}
+
+/** Clear a connection's health. Only an automatic breaker disable is re-enabled;
+ * a manually disabled connection remains disabled until explicitly enabled. */
 export function resetConnection(repos, connectionId) {
   if (connectionId == null) return null;
-  const scope = connectionScope(connectionId);
   const conn = repos.connections.get(connectionId);
+  if (!conn) return null;
+  const scope = connectionScope(connectionId);
+  const autoDisabled = connectionState(repos, connectionId).state === "disabled";
   const state = repos.breakers.record(scope, {
     state: "closed", failures: 0, openUntil: null, lastError: null, cooldownStreak: 0,
   });
-  if (conn && conn.status !== "active") repos.connections.update(connectionId, { status: "active", lastError: null });
+  if (autoDisabled && conn.status !== "active") repos.connections.update(connectionId, { status: "active", lastError: null });
+  else if (conn.status === "active" && conn.lastError) repos.connections.update(connectionId, { lastError: null });
   return state;
 }
 

@@ -181,7 +181,7 @@ const retentionTimer = setInterval(runRetention, RETENTION_INTERVAL_MS);
 retentionTimer.unref?.();
 
 const routes = [
-  ...buildApiRoutes(repos, cfg, VERSION, { shutdown }),
+  ...buildApiRoutes(repos, cfg, VERSION, { shutdown, chatHandler }),
   createMetricsRoute(repos, VERSION, () => ({ inflight, startedAt: globalThis.__bootedAt })),
   // ── proxy surface (/v1) — source format detected per request (endpoint + body) ──
   ...buildProxyRoutes(repos, { chatHandler, handlers: { embeddings: embeddingsHandler, images: imagesHandler, tts: ttsHandler, search: searchHandler, fetch: fetchHandler, systemone: systemoneHandler } }),

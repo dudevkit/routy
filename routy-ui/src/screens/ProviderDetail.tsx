@@ -757,7 +757,8 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
             <tr className="border-b border-border-subtle">
               <th className={TH}>Label</th>
               <th className={cn(TH, "hidden md:table-cell")}>Key</th>
-              <th className={TH}>Status</th>
+              <th className={TH}>Routing</th>
+              <th className={TH}>Last hit</th>
               <th className={cn(TH, "hidden md:table-cell")}>Proxy</th>
               <th className={cn(TH, "hidden md:table-cell")}>Last test</th>
               <th className={`${TH} text-right`}>Actions</th>
@@ -765,9 +766,9 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
           </thead>
           <tbody>
             {connections.isLoading ? (
-              <EmptyRow colSpan={6}><Skeleton rows={2} /></EmptyRow>
+              <EmptyRow colSpan={7}><Skeleton rows={2} /></EmptyRow>
             ) : conns.length === 0 ? (
-              <EmptyRow colSpan={6}>
+              <EmptyRow colSpan={7}>
                 {isOAuthNode
                   ? "No accounts yet. Use “Connect another account” to sign in with a browser."
                   : <>No API keys yet. Add one, or paste a list with “Add bulk” (one per line, <span className="font-mono">label,key</span>).</>}
@@ -784,6 +785,14 @@ export function KeysTab({ node }: { node: UpstreamNode }) {
                   <td className={cn(TD, "hidden md:table-cell font-mono text-xs text-text-muted")}>{c.keyMasked}</td>
                   <td className={TD}>
                     <KeyStatusBadge conn={c} />
+                  </td>
+                  <td className={TD}>
+                    {c.lastHit && <div className="mt-1 max-w-[24ch] text-xs text-text-muted" title={[c.lastHit.message, new Date(c.lastHit.at).toLocaleString()].filter(Boolean).join(" · ")}>
+                      <span className={c.lastHit.status === "success" ? "text-success" : "text-danger"}>{c.lastHit.status === "success" ? "Success" : c.lastHit.httpStatus === 429 ? "Rate limited" : c.lastHit.httpStatus === 401 || c.lastHit.httpStatus === 403 ? "Unauthorized" : c.lastHit.errorCode || "Error"}{c.lastHit.httpStatus ? ` · ${c.lastHit.httpStatus}` : ""}</span>
+                      {c.lastHit.message && <span className="block truncate">{c.lastHit.message}</span>}
+                      <span className="block text-text-subtle">{new Date(c.lastHit.at).toLocaleString()}</span>
+                    </div>}
+                    {!c.lastHit && <span className="block text-xs text-text-subtle">No traffic yet</span>}
                   </td>
                   <td className={cn(TD, "hidden md:table-cell")}>
                     {/* The provider setting is the default; this is the exception, for one

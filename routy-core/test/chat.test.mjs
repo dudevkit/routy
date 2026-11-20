@@ -78,6 +78,22 @@ function post(body, headers = {}) {
 }
 
 describe("chat handler (end-to-end)", () => {
+  it.each([true, false])("marks provider-reported zero output as failed (stream=%s)", async (stream) => {
+    repos.settings.update({ requireApiKey: false });
+    stubState.handler = (_req, res) => {
+      if (stream) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.end('data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":0}}\n\ndata: [DONE]\n\n');
+      } else {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "" }, finish_reason: "stop" }], usage: { prompt_tokens: 5, completion_tokens: 0 } }));
+      }
+    };
+    const response = await post({ model: "a/m1", stream, messages: [{ role: "user", content: "hi" }] });
+    expect(response.status).toBe(stream ? 200 : 502);
+    const node = repos.nodes.byPrefix("a");
+    expect(repos.connections.list(node.id)[0].lastHit).toMatchObject({ status: "error", errorCode: "empty_output" });
+  });
   it("publishes a correlated lifecycle with separate client, router key and account", async () => {
     const entries = [];
     const unsubscribe = subscribeLog((text) => { const entry = JSON.parse(text); if (entry.tag === "REQ") entries.push(entry.data); });

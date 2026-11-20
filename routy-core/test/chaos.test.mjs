@@ -100,6 +100,8 @@ describe("chaos: upstream dies mid-stream", () => {
     const node = repos.nodes.list()[0];
     const b = repos.breakers.get(`node:${node.id}`);
     expect(b.failures).toBe(1);
+    const connection = repos.connections.list(node.id)[0];
+    expect(repos.connections.get(connection.id).lastHit).toMatchObject({ status: "error", httpStatus: 200, errorCode: "upstream_stream_failed" });
     repos.usage.flush();
     const events = repos.usage.query({ limit: 10 });
     expect(events).toHaveLength(1);
@@ -109,6 +111,17 @@ describe("chaos: upstream dies mid-stream", () => {
     expect(events[0].status).toBe("error");
     expect(events[0].errorCode ?? events[0].error_code).toBe("upstream_stream_failed");
   }, 10_000);
+
+  it("records a provider error frame as a failed hit", async () => {
+    stubState.handler = (req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.end('event: error\ndata: {"error":{"message":"provider failure"}}\n\n');
+    };
+    await post({ model: "a/m1", stream: true, messages: [{ role: "user", content: "x" }] });
+    const node = repos.nodes.list()[0];
+    const connection = repos.connections.list(node.id)[0];
+    expect(repos.connections.get(connection.id).lastHit).toMatchObject({ status: "error", httpStatus: 200, errorCode: "upstream_error" });
+  });
 
   it("names the socket-level cause of a mid-stream death in the log", async () => {
     stubState.handler = (req, res) => {

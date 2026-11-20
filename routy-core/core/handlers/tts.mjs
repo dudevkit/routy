@@ -146,6 +146,7 @@ export function createTtsHandler(repos, { timeoutMs = TTS_TIMEOUT_MS } = {}) {
       auth.secret = connection.credentials?.apiKey || connection.credentials?.accessToken || null;
 
       const executor = new DefaultExecutor(node, connection, { proxy });
+      const hitAt = repos.connections.lastHitStartedAt();
       const result = await executor.execute({
         model: route.model,
         body: outbound,
@@ -157,6 +158,9 @@ export function createTtsHandler(repos, { timeoutMs = TTS_TIMEOUT_MS } = {}) {
       });
 
       if (!result.ok) {
+        if (!["client_aborted", "proxy_failed", "proxy_exhausted"].includes(result.errorCode)) {
+          repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.status, errorCode: result.errorCode, message: result.message });
+        }
         lastError = result;
         const settled = settleFailure(repos, {
           node, connection, result, settings,
@@ -193,12 +197,22 @@ export function createTtsHandler(repos, { timeoutMs = TTS_TIMEOUT_MS } = {}) {
       }
 
       const contentType = result.response.headers.get("content-type") || "";
-      const bytes = Buffer.from(await result.response.arrayBuffer().catch(() => new ArrayBuffer(0)));
+      let bytes;
+      try {
+        bytes = Buffer.from(await result.response.arrayBuffer());
+      } catch (err) {
+        if (clientGone.signal.aborted) return;
+        lastError = { ok: false, status: 502, errorCode: signal.aborted ? "upstream_stalled" : "upstream_error", message: String(err?.message || err) };
+        repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.response.status, errorCode: lastError.errorCode, message: lastError.message });
+        recordFailure(repos, node, lastError);
+        continue;
+      }
 
       // A 200 that is actually an error, or nothing at all: treat it as the provider's
       // failure rather than serving silence dressed as speech.
       if (bytes.length === 0) {
         lastError = { ok: false, status: 502, errorCode: "upstream_error", message: "provider returned an empty body" };
+        repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.response.status, errorCode: lastError.errorCode, message: lastError.message });
         recordFailure(repos, node, lastError);
         log.warn("TTS", `node ${node.prefix}: empty audio response`);
         continue;
@@ -210,11 +224,13 @@ export function createTtsHandler(repos, { timeoutMs = TTS_TIMEOUT_MS } = {}) {
         // belongs in the message the CLIENT sees, not only in the log: "voice is busy" alone
         // would read like a successful transcript that happens to be empty.
         lastError = { ok: false, status: 502, errorCode: "upstream_error", message: `provider answered with ${contentType} instead of audio: ${providerMessage}` };
+        repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.response.status, errorCode: lastError.errorCode, message: lastError.message });
         recordFailure(repos, node, lastError);
         log.warn("TTS", `node ${node.prefix}: provider answered with ${contentType} instead of audio — ${String(providerMessage).slice(0, 160)}`);
         continue;
       }
 
+      repos.connections.recordLastHit(connection.id, { at: hitAt, status: "success", httpStatus: result.response.status });
       recordConnectionSuccess(repos, connection.id);
       recordSuccess(repos, node);
 

@@ -138,6 +138,7 @@ export function createSearchHandler(repos, { timeoutMs = SEARCH_TIMEOUT_MS } = {
         const upstreamStarted = Date.now();
 
         const executor = new DefaultExecutor(node, connection, { proxy });
+        const hitAt = repos.connections.lastHitStartedAt();
         const result = await executor.execute({
           model: r.model ?? null,
           stream: undefined,
@@ -151,6 +152,9 @@ export function createSearchHandler(repos, { timeoutMs = SEARCH_TIMEOUT_MS } = {
         });
 
         if (!result.ok) {
+          if (!["client_aborted", "proxy_failed", "proxy_exhausted"].includes(result.errorCode)) {
+            repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.status, errorCode: result.errorCode, message: result.message });
+          }
           lastError = result;
           const settled = settleFailure(repos, {
             node, connection, result, settings,
@@ -188,15 +192,26 @@ export function createSearchHandler(repos, { timeoutMs = SEARCH_TIMEOUT_MS } = {
           continue;                             // this key's fault: try the next key
         }
 
-        const text = await result.response.text().catch(() => "");
+        let text;
+        try {
+          text = await result.response.text();
+        } catch (err) {
+          if (clientGone.signal.aborted) return;
+          lastError = { ok: false, status: 502, errorCode: signal.aborted ? "upstream_stalled" : "upstream_error", message: String(err?.message || err) };
+          repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.response.status, errorCode: lastError.errorCode, message: lastError.message });
+          recordFailure(repos, node, lastError);
+          continue;
+        }
         const parsed = safeJson(text);
         if (parsed === null) {
           lastError = { ok: false, status: 502, errorCode: "upstream_error", message: "provider returned a non-JSON body" };
+          repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.response.status, errorCode: lastError.errorCode, message: lastError.message });
           recordFailure(repos, node, lastError);
           log.warn("SEARCH", `node ${node.prefix}: non-JSON search response`);
           continue;
         }
 
+        repos.connections.recordLastHit(connection.id, { at: hitAt, status: "success", httpStatus: result.response.status });
         recordConnectionSuccess(repos, connection.id);
         recordSuccess(repos, node);
         const normalized = normalizeSearch(parsed, {

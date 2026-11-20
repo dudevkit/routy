@@ -25,6 +25,7 @@ export const useConnections = (nodeId: string | null) =>
     queryKey: [...CONNECTIONS, nodeId],
     queryFn: () => api.listConnections(nodeId as string),
     enabled: !!nodeId,
+    refetchInterval: 10000,
   });
 
 /** Model rows for one provider (P6). The list is discovery-only. */

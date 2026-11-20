@@ -7,7 +7,7 @@ import { log as rootLog } from "../../lib/log.mjs";
 import { resolveRoute, orderRoutes, qualifyModel } from "../routing.mjs";
 import {
   classifyConnectionError, recordConnectionFailure, recordConnectionSuccess,
-  earliestRecovery,
+  earliestRecovery, rollbackConnectionCooldown,
 } from "../key-health.mjs";
 import { pickConnections, recent429For, recordFailure, recordSuccess, comboTurn, describeCombo } from "../dispatch.mjs";
 import { stripUnsupportedParams } from "../translate/concerns/paramSupport.js";
@@ -22,7 +22,7 @@ import { CodeBuddyIntlExecutor, isCodeBuddyIntlOAuth } from "../executors/codebu
 import { AntigravityExecutor, isAntigravityOAuth } from "../executors/antigravity.mjs";
 import { CodexExecutor, isCodexOAuth } from "../executors/codex.mjs";
 import { SseParser } from "../sse/parser.mjs";
-import { resolveOAuthCredentials, refreshAfterAuthRejection, isOAuthConnection } from "../oauth/credentials.mjs";
+import { resolveOAuthCredentials, refreshAfterAuthRejection, markReauthRequired, isOAuthConnection } from "../oauth/credentials.mjs";
 import { formatSse } from "../sse/parser.mjs";
 import { pumpSse, UsageTracker, LogBuffer } from "../sse/stream.mjs";
 import { parseSSEToOpenAIResponse } from "../sse/sseToJson.mjs";
@@ -89,7 +89,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
   // a restart forgetting it merely costs one re-probe.
   const global429Memo = new Map();
 
-  async function handleChatCompletions(req, res) {
+  async function handleChatCompletions(req, res, { trustedPlayground = false, connectionId = null } = {}) {
     const t0 = Date.now();
     const reqId = nextSeqId();
     const color = colorForRequestId(reqId);
@@ -148,6 +148,13 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
     if (!route) {
       finish("error", 404, "invalid_model", `unresolvable model: ${body.model}`);
       return json(res, 404, { error: { message: "invalid_model", detail: `unresolvable model: ${body.model}` } });
+    }
+    // This argument is supplied by the authenticated dashboard endpoint, never by an
+    // HTTP header or the chat request body. A specific account must belong to the one
+    // resolved node; combo fallback would silently select a different account.
+    if (connectionId != null && (!trustedPlayground || typeof connectionId !== "string" || !connectionId || route.kind !== "node" || repos.connections.get(connectionId)?.nodeId !== route.node.id)) {
+      finish("error", 400, "invalid_connection", "selected account does not belong to this model's provider");
+      return json(res, 400, { error: { message: "invalid_connection", detail: "selected account does not belong to this model's provider" } });
     }
 
     // OpenAI and Anthropic both document `stream` as default-false: a request that omits
@@ -263,8 +270,12 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         continue;
       }
 
-      const keys = pickConnections(repos, r.node);
+      const keys = pickConnections(repos, r.node, { connectionId });
       if (keys.length === 0) {
+        if (connectionId != null) {
+          lastError = { status: 503, errorCode: "connection_unavailable", message: "the selected account is disabled, cooling down, or needs reconnecting" };
+          continue;
+        }
         // Two different situations, and saying the wrong one sends the user looking for
         // a key that is already there: no key configured at all, versus every key on the
         // node side-lined (cooling or disabled) with relief on its way.
@@ -293,7 +304,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
 
       let nodeDied = false; // a 5xx/timeout: stop rotating this node's keys, advance node
       let lastKeyError = null;
-      let oauthReplayUsed = false; // one forced refresh+replay per node attempt for OAuth rows
+      const oauthReplayed = new Set(); // each account gets its own refresh and replay
       const cooledHere = []; // cooldowns applied during this node's attempt, for rollback
 
       // One-shot optional-param retry, per route (see the client-verdict branch below):
@@ -319,7 +330,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       // Index loop over a growable queue: a requeued param-retry is appended and will be
       // reached after the current pass's remaining keys.
       for (let qi = 0; qi < keyQueue.length; qi++) {
-        const { connection: pickedConnection, body: retryBody } = keyQueue[qi];
+        const { connection: pickedConnection, body: retryBody, oauthReplay = false } = keyQueue[qi];
         // OAuth rows: resolve a live access token before dispatch, refreshing within the
         // lead window. A row that needs reauth is skipped (never struck like an API key);
         // a transient refresh failure falls through to the next account/node.
@@ -327,7 +338,9 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         if (isOAuthConnection(connection)) {
           const resolved = await resolveOAuthCredentials(repos, r.node, connection, { log });
           if (!resolved.ok) {
-            lastKeyError = { status: 401, errorCode: resolved.reason === "reauth-required" ? "reauth_required" : "oauth_refresh_failed", message: resolved.error?.message || "OAuth credential unavailable" };
+            lastKeyError = resolved.reason === "reauth-required"
+              ? { status: 401, errorCode: "reauth_required", message: `account for ${r.node.prefix} needs reconnecting` }
+              : { status: 503, errorCode: "oauth_refresh_failed", message: `account refresh for ${r.node.prefix} failed temporarily` };
             continue;
           }
           connection = resolved.connection;
@@ -415,6 +428,10 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           node: r.node.prefix, providerName: r.node.name, nodeId: r.node.id, account: connection.name ?? null,
           connectionId: connection.id ?? null, attempts, errorCode: null, detail: null, upstreamStatus: null,
         });
+        const attemptAt = repos.connections.lastHitStartedAt();
+        const recordHit = (status, httpStatus, errorCode = null, message = null) => {
+          if (connection.id != null) repos.connections.recordLastHit?.(connection.id, { at: attemptAt, status, httpStatus, errorCode, message });
+        };
         const result = await executor.execute({
           model: r.model, body: outbound, stream, signal: clientAbort.signal, log,
           // When the downstream client IS the opencode app it carries its own session,
@@ -423,6 +440,10 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         });
 
         if (!result.ok) {
+          if (!["proxy_failed", "proxy_exhausted", "client_aborted"].includes(result.errorCode)) {
+            const httpStatus = ["network_error", "connect_timeout"].includes(result.errorCode) ? null : result.status ?? null;
+            recordHit("error", httpStatus, result.errorCode, result.message);
+          }
           emit("progress", `Upstream attempt failed: ${result.errorCode || result.status}`, {
             event: "attempt_failed", upstreamStatus: result.status ?? null,
             errorCode: result.errorCode ?? null, detail: result.message ?? null,
@@ -461,22 +482,25 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           // all_unavailable. Advancing without recording also keeps the useful case: providers
           // disagree about which params they accept, so the next route may serve it.
           if (isOAuthConnection(connection) && (result.status === 401 || result.status === 403)) {
-            // OAuth auth failure is the OAuth lifecycle's business — it must never run the
-            // API-key strike/auto-disable or node-breaker paths. Try ONE forced refresh and
-            // replay this same account; if that fails, mark reauth-required and move on.
-            if (!oauthReplayUsed) {
-              oauthReplayUsed = true;
+            if (!oauthReplayed.has(connection.id)) {
+              oauthReplayed.add(connection.id);
               const refreshed = await refreshAfterAuthRejection(repos, r.node, connection, { log });
-              if (refreshed) {
-                log.warn("CHAT", `node ${r.node.prefix} rejected the OAuth token (${result.status}) — refreshed and replaying once`, {
-                  connectionId: connection.id,
-                });
-                keyQueue.push({ connection: refreshed, body: retryBody });
+              if (refreshed && refreshed.credentials?.authState !== "reauth-required") {
+                log.warn("CHAT", `node ${r.node.prefix} rejected the OAuth token (${result.status}) — refreshed and replaying once`, { connectionId: connection.id });
+                keyQueue.push({ connection: refreshed, body: retryBody, oauthReplay: true });
                 continue;
               }
+            } else if (oauthReplay) {
+              // The freshly refreshed token was also rejected. CAS prevents a concurrent
+              // reconnect from being overwritten by this stale rejection.
+              markReauthRequired(repos, connection);
             }
-            lastError = { status: 401, errorCode: "reauth_required", message: `account for ${r.node.prefix} needs reconnecting` };
-            log.warn("CHAT", `node ${r.node.prefix} OAuth token rejected (${result.status}) — marking account for reconnect`, { connectionId: connection.id });
+            const current = repos.connections.get(connection.id);
+            const needsReauth = current?.credentials?.authState === "reauth-required";
+            lastKeyError = lastError = needsReauth
+              ? { status: 401, errorCode: "reauth_required", message: `account for ${r.node.prefix} needs reconnecting` }
+              : { status: 503, errorCode: "oauth_refresh_failed", message: `account refresh for ${r.node.prefix} failed temporarily` };
+            log.warn("CHAT", `node ${r.node.prefix} OAuth token rejected (${result.status}) — ${needsReauth ? "account needs reconnecting" : "refresh unavailable"}`, { connectionId: connection.id });
             continue;
           }
 
@@ -521,7 +545,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             // whole list against a wall. Any cooldown this attempt already applied was
             // based on evidence that has just been overruled — undo it, so the keys come
             // out of a provider-wide limit exactly as they went in.
-            for (const id of cooledHere) recordConnectionSuccess(repos, id);
+            for (const entry of cooledHere) rollbackConnectionCooldown(repos, entry);
             const until = Date.now() + (result.retryAfterMs ?? UPSTREAM_429_MEMO_MS);
             global429Memo.set(`${r.node.id}|${r.model}`, until);
             log.warn("CHAT", `node ${r.node.prefix}: upstream-wide rate limit — not a key problem, failing through`, {
@@ -568,7 +592,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             softLimited = true;
             log.warn("CHAT", `node ${r.node.prefix} key "${keyLabel}" rate limited — account kept in rotation (${verdict.reason})`);
           } else if (verdict.verdict === "cooldown") {
-            cooledHere.push(connection.id);
+            if (verdict.reason === "rate limit (unclassified body)") cooledHere.push({ id: connection.id, state: verdict.state, priorState: verdict.priorState });
             log.warn("CHAT", `node ${r.node.prefix} key "${keyLabel}" cooling down ${Math.round(verdict.cooldownMs / 1000)}s: ${verdict.reason}`);
           } else if (verdict.verdict === "disable") {
             log.warn("CHAT", `node ${r.node.prefix} key "${keyLabel}" DISABLED after ${verdict.strikes} strikes: ${verdict.reason}`);
@@ -579,7 +603,6 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
           continue; // rotate to the node's next key
         }
 
-        recordConnectionSuccess(repos, connection.id);
 
         // NOTE: success is recorded when the response is actually known good —
         // headers alone are not enough, since a stream can die mid-flight.
@@ -626,13 +649,33 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             };
             trailingDone = true;
           }
+          let providerStreamError = false;
+          const translateFrame = transform;
+          transform = (frame) => {
+            if (frame.event === "error") providerStreamError = true;
+            if (frame.data !== "[DONE]") {
+              try {
+                const event = JSON.parse(frame.data);
+                if (event?.type === "response.failed" || event?.type === "error" || event?.error) providerStreamError = true;
+              } catch { /* Non-JSON SSE events are valid. */ }
+            }
+            return translateFrame(frame);
+          };
 
-          const { clientGone, completed, stalled, errored, errorDetail, headersCommitted, frames, bytes, durationMs } = await pumpSse({
+          const { clientGone, completed, stalled, errored: pumpErrored, errorDetail, headersCommitted, frames, bytes, durationMs } = await pumpSse({
             upstream: result.response, res, signal: clientAbort.signal, t0, usage, logBuffer,
             transform, flushFrames, trailingDone, idleTimeoutMs,
             onProgress: (progress) => emit("progress", "First response token", { event: "stream", ...progress }),
           });
           const genuineAbort = clientGone && !completed;
+          const errored = pumpErrored || (!completed && !clientGone);
+          const zeroOutput = usage.upstreamOutputTokens === 0;
+          if (errored || genuineAbort || providerStreamError || zeroOutput) {
+            recordHit("error", result.response.status, genuineAbort ? "client_aborted" : zeroOutput ? "empty_output" : providerStreamError ? "upstream_error" : stalled ? "upstream_stalled" : "upstream_stream_failed", zeroOutput ? "Upstream reported zero output tokens" : errorDetail);
+          } else {
+            recordHit("success", result.response.status);
+            recordConnectionSuccess(repos, connection.id);
+          }
           log.debug("UPSTREAM", `← stream end ${r.node.prefix}`, {
             frames, bytes, durationMs, stalled, errored, clientGone, completed,
             ttftMs: usage.ttftMs ?? null,
@@ -677,6 +720,9 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             }
 
             streamErrorCode = errorCode;
+          } else if (providerStreamError || zeroOutput) {
+            streamErrorCode = zeroOutput ? "empty_output" : "upstream_error";
+            recordFailure(repos, r.node, { errorCode: streamErrorCode, status: 502, message: zeroOutput ? "upstream reported zero output tokens" : "upstream stream reported an error" });
           } else if (!genuineAbort) {
             recordSuccess(repos, r.node);
           }
@@ -688,7 +734,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             completionTokens = translator.state.usage.completion_tokens ?? completionTokens;
           }
           const usageEventId = recordUsage(repos, log, r, connection, body.model, {
-            status: errored ? "error" : genuineAbort ? "aborted" : "ok",
+            status: errored || providerStreamError || zeroOutput ? "error" : genuineAbort ? "aborted" : "ok",
             usage: { promptTokens, completionTokens, ttftMs: usage.ttftMs, exact: usage.exact || Boolean(translator?.state?.usage && !translator.state.usage.estimated) },
             durationMs: Date.now() - t0,
             apiKeyId,
@@ -708,6 +754,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         try {
           text = await withIdleTimeout(result.response.text(), idleTimeoutMs, () => result.abort?.());
         } catch (err) {
+          recordHit("error", result.response.status, clientAbort.signal.aborted ? "client_aborted" : "upstream_stalled", err.message);
           // Distinguish "the client left" from "the upstream stalled" — the first is
           // not the provider's fault and must not degrade it.
           if (clientAbort.signal.aborted) {
@@ -753,11 +800,13 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             parsed = parseSSEToOpenAIResponse(text, r.model);
           }
           if (parsed?.error) {
+            recordHit("error", result.response.status, "upstream_error", JSON.stringify(parsed.error));
             recordFailure(repos, r.node, { errorCode: "upstream_error", status: 502, message: JSON.stringify(parsed.error).slice(0, 200) });
             finish("error", 502, "upstream_error", JSON.stringify(parsed.error).slice(0, 300));
             return json(res, 502, { error: { message: "upstream_error", detail: JSON.stringify(parsed.error).slice(0, 300) } });
           }
           if (!parsed) {
+            recordHit("error", result.response.status, "upstream_error");
             recordFailure(repos, r.node, { errorCode: "upstream_error", status: 502, message: "empty stream for a non-streaming request" });
             finish("error", 502, "upstream_error", "upstream sent an empty stream for a non-streaming request");
             return json(res, 502, { error: { message: "upstream_error", detail: "upstream sent an empty stream for a non-streaming request" } });
@@ -765,12 +814,27 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         } else {
           try { parsed = JSON.parse(text); } catch { /* passthrough as-is */ }
         }
+        if (parsed?.error) {
+          recordHit("error", result.response.status, "upstream_error", JSON.stringify(parsed.error));
+          recordFailure(repos, r.node, { errorCode: "upstream_error", status: 502, message: "upstream response reported an error" });
+          finish("error", 502, "upstream_error", "upstream response reported an error");
+          return json(res, 502, { error: { message: "upstream_error", detail: "upstream response reported an error" } });
+        }
         if (parsed?.usage) {
           usage.promptTokens = parsed.usage.prompt_tokens ?? usage.promptTokens;
           usage.completionTokens = parsed.usage.completion_tokens ?? usage.completionTokens;
           usage.exact = true;
         }
-        if (clientAbort.signal.aborted) { finish("aborted", 499, "client_aborted", "client gone"); return; }
+        const reportedOutput = parsed?.usage?.completion_tokens ?? parsed?.usage?.output_tokens;
+        if (reportedOutput === 0 && parsed?.usage?.estimated !== true) {
+          recordHit("error", result.response.status, "empty_output", "Upstream reported zero output tokens");
+          recordFailure(repos, r.node, { errorCode: "empty_output", status: 502, message: "upstream reported zero output tokens" });
+          finish("error", 502, "empty_output", "Upstream reported zero output tokens");
+          return json(res, 502, { error: { message: "empty_output", detail: "Upstream reported zero output tokens" } });
+        }
+        if (clientAbort.signal.aborted) { recordHit("error", result.response.status, "client_aborted"); finish("aborted", 499, "client_aborted", "client gone"); return; }
+        recordHit("success", result.response.status);
+        recordConnectionSuccess(repos, connection.id);
         res.writeHead(result.response.status, { "content-type": "application/json" });
         res.end(JSON.stringify(parsed ?? text));
         recordSuccess(repos, r.node);
@@ -785,18 +849,25 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       // This node's keys are exhausted (cooling/disabled) or the node itself failed.
       // Distinguish them so the response can say which, and when relief arrives.
       if (nodeDied) continue; // combo fallback: next node
+      if (connectionId != null && lastKeyError) {
+        const hit = repos.connections.get(connectionId)?.lastHit;
+        lastError = { ...lastKeyError, message: hit?.message || `Upstream request failed (HTTP ${lastKeyError.status ?? "unknown"})` };
+        continue;
+      }
       const recovery = earliestRecovery(repos, keys);
       const retryAfterMs = recovery ? Math.max(0, recovery - Date.now()) : null;
       if (softLimited && !recovery) {
-        // The only thing that failed was a provider rate limit that wrote no health. Saying
-        // "keys cooling down" would be false — they are not — so report the real condition and
-        // keep it honest for the caller.
+        // A redacted account 429 is not evidence that all accounts share a limit.
         lastError = {
           status: 429,
           errorCode: "upstream_rate_limited",
-          message: `provider ${r.node.prefix} is rate-limiting this model — account kept in rotation; retry or pick another upstream/model`,
+          message: `account for ${r.node.prefix} was rate-limited and kept in rotation; retry or pick another upstream/model`,
           retryAfterMs: lastKeyError?.retryAfterMs ?? null,
         };
+        continue;
+      }
+      if (lastKeyError && ["reauth_required", "oauth_refresh_failed"].includes(lastKeyError.errorCode)) {
+        lastError = lastKeyError;
         continue;
       }
       if (lastKeyError) {
@@ -813,7 +884,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
       }
     }
     const err = lastError || { status: 503, errorCode: "all_unavailable", message: "no healthy route" };
-    const status = err.errorCode === "auth_error" ? 502
+    const status = connectionId != null && Number.isInteger(err.status) && err.status >= 400 && err.status <= 599 ? err.status : err.errorCode === "auth_error" ? 502
       : err.errorCode === "upstream_rate_limited" ? 429
       : err.status === 501 ? 501
       : err.status === 400 ? 400

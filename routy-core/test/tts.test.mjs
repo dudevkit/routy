@@ -58,6 +58,11 @@ beforeEach(async () => {
       stubState.calls.push({ path: req.url, headers: req.headers, body });
       const script = stubState.responses.shift() || { status: 200, contentType: "audio/mpeg", body: AUDIO };
       res.writeHead(script.status, { "content-type": script.contentType ?? "audio/mpeg" });
+      if (script.truncate) {
+        res.write("partial");
+        setTimeout(() => res.destroy(), 10);
+        return;
+      }
       const bytes = Buffer.isBuffer(script.body)
         ? script.body
         : Buffer.from(typeof script.body === "string" ? script.body : JSON.stringify(script.body ?? ""), "utf8");
@@ -102,6 +107,18 @@ function ttsNode(prefix = "voice", keys = ["sk-voice"]) {
 const breaker = (nodeId) => repos.breakers.get(`node:${nodeId}`);
 
 describe("audio as a response", () => {
+  it("records a failed upstream body read instead of an empty audio response", async () => {
+    const node = ttsNode();
+    stubState.responses.push({ status: 200, truncate: true });
+    const r = await post("/v1/audio/speech", { model: "voice/alloy", input: "hello" });
+
+    expect(r.status).toBe(502);
+    const hit = repos.connections.list(node.id)[0].lastHit;
+    expect(hit).toMatchObject({ status: "error", httpStatus: 200, errorCode: "upstream_error" });
+    expect(hit.message).not.toBe("provider returned an empty body");
+    expect(hit.message).toBeTruthy();
+  });
+
   it("returns the provider's bytes with its content type", async () => {
     const node = ttsNode();
     const r = await post("/v1/audio/speech", { model: "voice/alloy", input: "hello world" });
@@ -115,6 +132,7 @@ describe("audio as a response", () => {
     expect(stubState.calls[0].body).toEqual({ model: "alloy", input: "hello world" });
     expect(stubState.calls[0].headers.authorization).toBe("Bearer sk-voice");
     expect(breaker(node.id)?.failures ?? 0).toBe(0);
+    expect(repos.connections.list(node.id)[0].lastHit).toMatchObject({ status: "success", httpStatus: 200 });
   });
 
   it("wraps the same bytes in base64 when the client asks for JSON", async () => {
@@ -151,6 +169,7 @@ describe("audio as a response", () => {
     expect(r.body.error.detail).toContain("instead of audio");
     expect(r.body.error.detail).toContain("voice is busy");
     expect(breaker(node.id).failures).toBe(1); // the provider misbehaved, and the node answers for it
+    expect(repos.connections.list(node.id)[0].lastHit).toMatchObject({ status: "error", httpStatus: 200, errorCode: "upstream_error" });
     expect(r.headers["content-type"]).not.toContain("audio"); // nothing audio-shaped was served
   });
 

@@ -269,4 +269,14 @@ export const MIGRATIONS = [
       ALTER TABLE combos ADD COLUMN kind TEXT NOT NULL DEFAULT 'llm';
     `,
   },
+  {
+    version: 7,
+    up: `
+      ALTER TABLE connections ADD COLUMN last_hit_at TEXT;
+      ALTER TABLE connections ADD COLUMN last_hit_status TEXT;
+      ALTER TABLE connections ADD COLUMN last_hit_http_status INTEGER;
+      ALTER TABLE connections ADD COLUMN last_hit_error_code TEXT;
+      ALTER TABLE connections ADD COLUMN last_hit_message TEXT;
+    `,
+  },
 ];

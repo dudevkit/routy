@@ -49,7 +49,7 @@ describe("driver", () => {
     const tables = migrated.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all().map((r) => r.name);
     expect(tables).toContain("node_models");
     const connCols = migrated.prepare(`PRAGMA table_info(connections)`).all().map((c) => c.name);
-    expect(connCols).toEqual(expect.arrayContaining(["last_test_at", "last_test_ok", "last_test_ttft_ms"]));
+    expect(connCols).toEqual(expect.arrayContaining(["last_test_at", "last_test_ok", "last_test_ttft_ms", "last_hit_at", "last_hit_status", "last_hit_http_status", "last_hit_error_code", "last_hit_message"]));
     const keyCols = migrated.prepare(`PRAGMA table_info(api_keys)`).all().map((c) => c.name);
     expect(keyCols).toContain("key_plain");
     migrated.close();
@@ -86,6 +86,66 @@ describe("nodes + connections", () => {
     expect(repos.connections.list(node.id)).toHaveLength(1);
     repos.nodes.delete(node.id);
     expect(repos.connections.get(conn.id)).toBeNull();
+  });
+
+  it("persists sanitized traffic independently of probes, ordered by start time", () => {
+    const node = repos.nodes.create({ name: "N", prefix: "hits", baseUrl: "http://x/v1" });
+    const conn = repos.connections.create({ nodeId: node.id, name: "key", credentials: { apiKey: "arbitrary-credential-123" } });
+    expect(repos.connections.list(node.id)[0].lastHit).toBeNull();
+    repos.connections.recordTest(conn.id, { ok: false, error: "probe failed" });
+    repos.connections.recordLastHit(conn.id, {
+      at: "2026-01-01T00:00:02.000Z", status: "error", httpStatus: 429, errorCode: "upstream_error",
+      message: 'quota exhausted arbitrary-credential-123 Authorization: Bearer other-secret {"refresh_token":"refresh-value"} https://example.test/?key=hidden',
+    });
+    repos.connections.recordLastHit(conn.id, { at: "2026-01-01T00:00:01.000Z", status: "success", httpStatus: 200 });
+    const hit = repos.connections.list(node.id)[0].lastHit;
+    expect(hit).toMatchObject({ at: "2026-01-01T00:00:02.000000Z", status: "error", httpStatus: 429, errorCode: "upstream_error" });
+    expect(hit.message).toContain("quota exhausted");
+    for (const secret of ["arbitrary-credential-123", "other-secret", "refresh-value", "hidden"]) expect(hit.message).not.toContain(secret);
+    expect(repos.connections.get(conn.id).lastTestOk).toBe(false);
+    repos.close();
+    db.close();
+    db = openDatabase(tmp);
+    repos = createRepos(db);
+    expect(repos.connections.get(conn.id).lastHit).toEqual(hit);
+    repos.connections.recordLastHit(conn.id, { at: "2026-01-01T00:00:03.000Z", status: "success", httpStatus: 201 });
+    expect(repos.connections.get(conn.id).lastHit).toEqual({ at: "2026-01-01T00:00:03.000000Z", status: "success", httpStatus: 201, errorCode: null, message: null });
+  });
+
+  it("orders starts within one millisecond even when they complete out of order", () => {
+    const node = repos.nodes.create({ name: "N", prefix: "precise", baseUrl: "http://x/v1" });
+    const conn = repos.connections.create({ nodeId: node.id, name: "key" });
+    repos.connections.recordLastHit(conn.id, { at: "2026-01-01T00:00:00.123002Z", status: "error", httpStatus: 429 });
+    repos.connections.recordLastHit(conn.id, { at: "2026-01-01T00:00:00.123001Z", status: "success", httpStatus: 200 });
+    expect(repos.connections.get(conn.id).lastHit).toMatchObject({ at: "2026-01-01T00:00:00.123002Z", status: "error" });
+    const first = repos.connections.lastHitStartedAt();
+    const second = repos.connections.lastHitStartedAt();
+    expect(second > first).toBe(true);
+  });
+
+  it("redacts credentials before truncation and omits synthetic HTTP status", () => {
+    const node = repos.nodes.create({ name: "N", prefix: "redact", baseUrl: "http://x/v1" });
+    const conn = repos.connections.create({ nodeId: node.id, name: "key", credentials: { apiKey: "custom-private-key" } });
+    repos.connections.recordLastHit(conn.id, {
+      at: "2026-01-01T00:00:01.000Z", status: "error", httpStatus: 502, errorCode: "network_error",
+      message: `${"x".repeat(490)} custom-private-key Authorization: Bearer another-value`,
+    });
+    const hit = repos.connections.get(conn.id).lastHit;
+    expect(hit.httpStatus).toBeNull();
+    expect(hit.message.length).toBeLessThanOrEqual(500);
+    expect(hit.message).not.toContain("custom-private");
+    expect(hit.message).not.toContain("another-value");
+    repos.connections.recordLastHit(conn.id, {
+      at: "2026-01-01T00:00:02.000Z", status: "error", errorCode: "upstream_error",
+      message: `${"x".repeat(65537)} custom-private-key`,
+    });
+    expect(repos.connections.get(conn.id).lastHit.message).toBe("Upstream error (detail omitted)");
+    repos.connections.recordLastHit(conn.id, {
+      at: "2026-01-01T00:00:03.000Z", status: "error", errorCode: "upstream_error",
+      message: '{"message":"quota exceeded for custom-private... retry later"}',
+    });
+    expect(repos.connections.get(conn.id).lastHit.message).not.toContain("custom-private");
+    expect(repos.connections.get(conn.id).lastHit.message).toContain("quota exceeded");
   });
 });
 

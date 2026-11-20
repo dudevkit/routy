@@ -119,10 +119,11 @@ function systemoneNode(prefix, { model = "jev-1.13-free", keys = ["sk-zen"], url
 
 describe("the body is forwarded, not translated", () => {
   it("sends state and questions as written, with the provider's own model id", async () => {
-    systemoneNode("zen");
+    const node = systemoneNode("zen");
     const r = await post("/v1/systemone", { model: "zen/jev-1.13-free", state: STATE, questions: QUESTIONS });
 
     expect(r.status).toBe(200);
+    expect(repos.connections.list(node.id)[0].lastHit).toMatchObject({ status: "success", httpStatus: 200 });
     const call = stubState.calls[0];
     expect(call.url).toBe("/zen/v1/systemone");
     expect(call.method).toBe("POST");

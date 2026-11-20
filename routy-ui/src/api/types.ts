@@ -233,6 +233,8 @@ export interface NodeConnection {
   lastTestAt?: string | null;
   lastTestOk?: boolean | null;
   lastTestTtftMs?: number | null;
+  /** Latest real upstream attempt, independent of diagnostics and routing health. */
+  lastHit?: { at: string; status: "success" | "error"; httpStatus: number | null; errorCode: string | null; message: string | null } | null;
   /** live rotation state — null while the key has never misbehaved */
   health?: ConnectionHealth | null;
 }

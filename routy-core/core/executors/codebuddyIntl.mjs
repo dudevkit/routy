@@ -138,8 +138,8 @@ export class CodeBuddyIntlExecutor extends DefaultExecutor {
    * API errors, and request-detail captures.
    *
    * This redaction is deliberate and stays: the provider's error text may echo tokens.
-   * key-health knows an OAuth 429 arrives unclassifiable and treats it as provider-wide
-   * instead of cooling the user's only account, so no body signal is needed here.
+   * key-health treats an unclassified OAuth 429 as a soft limit without disabling
+   * the account; it does not infer provider-wide saturation from the redacted body.
    */
   errorMessage(status) {
     if (status === 401 || status === 403) return "codebuddy auth rejected (401/403)";

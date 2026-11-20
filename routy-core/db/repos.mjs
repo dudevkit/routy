@@ -8,6 +8,50 @@ import { CHAT_KIND } from "../core/media.mjs";
 const uuid = () => crypto.randomUUID();
 const DETAIL_CAP_BYTES = 64 * 1024;
 
+// Redact before truncating so no partial credential can be persisted.
+function safeLastHitMessage(value, credentials) {
+  if (typeof value !== "string" || !value) return null;
+  if (value.length > 65536) return "Upstream error (detail omitted)";
+  let text = value;
+  const secrets = [];
+  const collect = (v) => {
+    if (typeof v === "string" && v) secrets.push(v);
+    else if (v && typeof v === "object") for (const child of Object.values(v)) collect(child);
+  };
+  collect(credentials);
+  for (const secret of secrets.sort((a, b) => b.length - a.length)) {
+    let encoded;
+    try { encoded = encodeURIComponent(secret); } catch { return "Upstream error (detail omitted)"; }
+    for (const form of new Set([secret, encoded, JSON.stringify(secret).slice(1, -1)])) {
+      // A provider may echo a clipped credential inside a longer serialized error,
+      // not just at the end of the executor's truncated response.
+      if (form.length >= 8) {
+        text = text.replace(/[a-zA-Z0-9_-]{8,}/g, (word) => {
+          for (let i = 0; i <= word.length - 8; i++) {
+            if (form.includes(word.slice(i, i + 8))) return "[REDACTED]";
+          }
+          return word;
+        });
+      }
+      if (form) text = text.split(form).join("[REDACTED]");
+      // Executors may have truncated a body in the middle of a credential.
+      for (let length = Math.min(form.length - 1, text.length); length >= 4; length--) {
+        if (text.endsWith(form.slice(0, length))) {
+          text = text.slice(0, -length) + "[REDACTED]";
+          break;
+        }
+      }
+    }
+  }
+  text = text
+    .replace(/https?:\/\/[^\s"'<>]+/gi, "[URL REDACTED]")
+    .replace(/\bBearer\s+[^\s,;"'}]+/gi, "Bearer [REDACTED]")
+    .replace(/\b(sk|pk|rk|api)[-_][a-z0-9_-]{8,}\b/gi, "[REDACTED]")
+    .replace(/(["']?(?:authorization|proxy-authorization|api[-_]?key|x-api-key|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|password|passwd|key)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s,;&}\]]+)/gi, "$1[REDACTED]")
+    .replace(/[\x00-\x1f\x7f]+/g, " ");
+  return text.slice(0, 500);
+}
+
 export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, breakerFlushMs = 1000 } = {}) {
   // ── settings ──────────────────────────────────────────────────────────────
   const settingsCache = createCacheLoader(() => {
@@ -122,11 +166,25 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
       // probe results (P6): diagnostics only — never derived from real traffic
       lastTestAt: r.last_test_at, lastTestOk: r.last_test_ok === null ? null : !!r.last_test_ok,
       lastTestTtftMs: r.last_test_ttft_ms,
+      lastHit: r.last_hit_at ? {
+        at: r.last_hit_at, status: r.last_hit_status, httpStatus: r.last_hit_http_status,
+        errorCode: r.last_hit_error_code, message: r.last_hit_message,
+      } : null,
     };
+  }
+
+  let lastHitClock = 0n;
+  // ISO timestamps retain a monotonic microsecond suffix for starts in the same millisecond.
+  function lastHitStartedAt() {
+    const now = BigInt(Date.now()) * 1000n;
+    lastHitClock = now > lastHitClock ? now : lastHitClock + 1n;
+    const ms = lastHitClock / 1000n;
+    return new Date(Number(ms)).toISOString().replace("Z", `${String(lastHitClock % 1000n).padStart(3, "0")}Z`);
   }
 
   const connections = {
     _cache: createMapCache(),
+    lastHitStartedAt,
     invalidateCache() { this._cache.clear(); },
     list(nodeId) {
       if (!this._cache.get(nodeId)) {
@@ -164,6 +222,27 @@ export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, br
              merged.lastTestAt ?? null, merged.lastTestOk === null || merged.lastTestOk === undefined ? null : (merged.lastTestOk ? 1 : 0),
              merged.lastTestTtftMs ?? null, merged.updatedAt, id);
       connections.invalidateCache();
+      return connections.get(id);
+    },
+    /** Persist real traffic, ordered by attempt start rather than completion. */
+    recordLastHit(id, { at, status, httpStatus = null, errorCode = null, message = null }) {
+      if (!at || (status !== "success" && status !== "error")) return null;
+      const timestamp = new Date(at);
+      if (!Number.isFinite(timestamp.getTime())) return null;
+      const existing = connections.get(id);
+      if (!existing) return null;
+      // Normalize all timestamps to six fractional digits for lexical SQLite ordering.
+      const precise = typeof at === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3,6}Z$/.test(at) ? at : timestamp.toISOString();
+      const date = precise.replace(/\.(\d{3,6})Z$/, (_, fraction) => `.${fraction.padEnd(6, "0")}Z`);
+      const syntheticStatus = ["network_error", "connect_timeout", "client_aborted", "proxy_failed", "proxy_exhausted"].includes(errorCode);
+      const http = !syntheticStatus && Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599 ? httpStatus : null;
+      const code = status === "error" && typeof errorCode === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(errorCode)
+        ? safeLastHitMessage(errorCode, existing.credentials) : null;
+      const detail = status === "error" ? safeLastHitMessage(message, existing.credentials) : null;
+      const result = db.prepare(`UPDATE connections SET last_hit_at=?, last_hit_status=?, last_hit_http_status=?,
+        last_hit_error_code=?, last_hit_message=? WHERE id=? AND (last_hit_at IS NULL OR last_hit_at <= ?)`)
+        .run(date, status, http, code, detail, id, date);
+      if (result.changes) connections.invalidateCache();
       return connections.get(id);
     },
     /** Record a probe outcome on the key itself (P6). Diagnostics, not traffic. */

@@ -244,6 +244,10 @@ describe("what a failure is allowed to cost", () => {
     const r = await embed({ model: "prov/e-1", input: "hi" });
     expect(r.status).toBe(200);
     expect(stubState.calls.map((c) => c.headers.authorization)).toEqual(["Bearer sk-one", "Bearer sk-two"]);
+    const [firstHit, secondHit] = repos.connections.list(node.id).map((c) => c.lastHit);
+    expect(firstHit).toMatchObject({ status: "error", httpStatus: 429 });
+    expect(firstHit.message).toContain("slow down");
+    expect(secondHit).toMatchObject({ status: "success", httpStatus: 200, errorCode: null, message: null });
     expect(breaker(node.id)?.failures ?? 0).toBe(0);
     expect(connectionState(repos, keyIds(node.id)[0]).state).not.toBe("closed"); // key one took the hit
   });

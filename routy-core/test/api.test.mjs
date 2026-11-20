@@ -11,7 +11,7 @@ import { createSessionToken, hashPassword, loadOrCreateSessionKey, verifyPasswor
 import { createRouter } from "../lib/router.mjs";
 import { clearLogs, log, logStreamSnapshot } from "../lib/log.mjs";
 
-let tmp, db, repos, server, handlerPort, stubServer, stubPort, stubState, cfg;
+let tmp, db, repos, server, handlerPort, stubServer, stubPort, stubState, cfg, playgroundCalls;
 
 const request = (method, p, body, headers = {}) => new Promise((resolve, reject) => {
   const payload = body === undefined ? null : JSON.stringify(body);
@@ -49,7 +49,12 @@ beforeEach(async () => {
   stubPort = stubServer.address().port;
 
   cfg = { bootstrapToken: "tok-123" };
-  const dispatch = createRouter(buildApiRoutes(repos, cfg, "0.1.0"));
+  playgroundCalls = [];
+  const dispatch = createRouter(buildApiRoutes(repos, cfg, "0.1.0", { chatHandler: (req, res, options) => {
+    playgroundCalls.push(options);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(options));
+  } }));
   await new Promise((resolve) => {
     server = http.createServer((req, res) => dispatch(req, res));
     server.listen(0, "127.0.0.1", () => resolve(server.address().port));
@@ -66,6 +71,35 @@ afterEach(async () => {
 });
 
 describe("management API", () => {
+  it("guards the playground and passes only the selected connection through the trusted hook", async () => {
+    const path = "/api/playground/chat?connectionId=account-1";
+    expect((await request("POST", path, {}, { origin: "http://evil.example", "x-routy-action": "1" })).status).toBe(403);
+    expect((await request("POST", path, {})).status).toBe(400);
+    expect(playgroundCalls).toHaveLength(0);
+    const selected = await request("POST", path, {}, { origin: `http://127.0.0.1:${handlerPort}`, "x-routy-action": "1", "x-connection-id": "forged" });
+    expect(selected.body).toEqual({ trustedPlayground: true, connectionId: "account-1" });
+    const automatic = await request("POST", "/api/playground/chat", {}, { "x-routy-action": "1", "x-connection-id": "forged" });
+    expect(automatic.body).toEqual({ trustedPlayground: true, connectionId: null });
+  });
+
+  it("preserves manual disables on reset and explicitly enables accounts", async () => {
+    const node = repos.nodes.create({ name: "Manual", prefix: "manual", apiType: "openai", baseUrl: "http://127.0.0.1:1/v1" });
+    const manual = repos.connections.create({ nodeId: node.id, name: "manual", credentials: { apiKey: "manual-key" } });
+    const automatic = repos.connections.create({ nodeId: node.id, name: "automatic", credentials: { apiKey: "automatic-key" } });
+    repos.connections.update(manual.id, { status: "disabled" });
+    repos.connections.update(automatic.id, { status: "disabled" });
+    repos.breakers.record(`conn:${automatic.id}`, { state: "disabled", failures: 2 });
+    expect((await post(`/api/nodes/${node.id}/reset`, {})).status).toBe(200);
+    expect(repos.connections.get(manual.id).status).toBe("disabled");
+    expect(repos.connections.get(automatic.id).status).toBe("active");
+    expect((await put(`/api/connections/${manual.id}`, { status: "active" })).body.status).toBe("active");
+    repos.breakers.record(`conn:${manual.id}`, { state: "disabled", failures: 2 });
+    repos.connections.update(manual.id, { status: "disabled" });
+    await put(`/api/connections/${manual.id}`, { status: "disabled" });
+    await post(`/api/breakers/${encodeURIComponent(`conn:${manual.id}`)}/reset`, {});
+    expect(repos.connections.get(manual.id).status).toBe("disabled");
+  });
+
   it("creates a node with key (masked in view), lists, deletes", async () => {
     const created = await post("/api/nodes", { name: "Up A", baseUrl: `http://127.0.0.1:${stubPort}/v1`, apiKey: "sk-super-secret-key-99", prefix: "upa" });
     expect(created.status).toBe(201);

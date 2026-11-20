@@ -6,7 +6,7 @@
 // than grow a second, subtly different copy of them. (The copy is always where the bug is: a
 // rotation that skips a cooling key in one handler and not the other is invisible until a
 // provider is failing.)
-import { classifyConnectionError, recordConnectionFailure, connectionState, isConnectionAvailable, earliestRecovery } from "./key-health.mjs";
+import { classifyConnectionError, recordConnectionFailure, rollbackConnectionCooldown, connectionState, isConnectionAvailable, earliestRecovery } from "./key-health.mjs";
 import { FAILURE_THRESHOLD, OPEN_MS, MAX_OPEN_MS, UPSTREAM_429_MEMO_MS } from "./limits.mjs";
 import { maskKey } from "../lib/mask.mjs";
 import { json } from "../lib/router.mjs";
@@ -30,7 +30,7 @@ const rrCursor = new Map();
  *                           carries everything until it fails; the failover to the
  *                           next key still happens inside the same request
  */
-export function pickConnections(repos, node) {
+export function pickConnections(repos, node, { connectionId = null } = {}) {
   const all = repos.connections.list(node.id);
   const usable = all
     .filter((c) => c.status === "active")
@@ -39,6 +39,7 @@ export function pickConnections(repos, node) {
     // the two lifecycles independent (see core/oauth/credentials.mjs).
     .filter((c) => c.credentials?.authState !== "reauth-required")
     .filter((c) => isConnectionAvailable(connectionState(repos, c.id)));
+  if (connectionId != null) return usable.filter((c) => c.id === connectionId);
   if (usable.length === 0) {
     // A keyless preset (registry category "free" — data.noAuth) has no connections BY DESIGN:
     // opencode authenticates itself, mimo-free needs nothing. One anonymous attempt keeps the
@@ -176,7 +177,7 @@ export function settleFailure(repos, { node, connection, result, settings = {}, 
   if (verdict.verdict === "global") {
     // Provider-wide saturation: no key is at fault, so a cooldown this request already
     // applied was based on evidence that has just been overruled — put it back.
-    for (const id of cooledHere) recordSuccess(repos, id);
+    for (const entry of cooledHere) rollbackConnectionCooldown(repos, entry);
     const until = Date.now() + (result.retryAfterMs ?? UPSTREAM_429_MEMO_MS);
     log?.warn?.(tag, `node ${node.prefix}: upstream-wide rate limit — not a key problem, failing through`, {
       errorCode: result.errorCode, rolledBack: cooledHere.length,
@@ -190,8 +191,8 @@ export function settleFailure(repos, { node, connection, result, settings = {}, 
     return { action: "node" };
   }
 
-  // Only a cooldown is rollback-able; a disable is a strike the key earned.
-  if (verdict.verdict === "cooldown" && !verdict.soft) cooledHere.push(connection.id);
+  // Explicit per-key limits remain valid even if a later response is provider-wide.
+  if (verdict.verdict === "cooldown" && !verdict.soft && verdict.reason === "rate limit (unclassified body)") cooledHere.push({ id: connection.id, state: verdict.state, priorState: verdict.priorState });
   log?.warn?.(tag, verdict.soft
     ? `node ${node.prefix}: key ${connection.name} — rate limited, account kept in rotation (${verdict.reason})`
     : `node ${node.prefix}: key ${connection.name} — ${verdict.verdict} (${result.errorCode})`, {

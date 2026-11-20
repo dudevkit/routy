@@ -120,9 +120,9 @@ export function createEmbeddingsHandler(repos, { timeoutMs = EMBEDDINGS_TIMEOUT_
       ? AbortSignal.any([clientGone.signal, AbortSignal.timeout(timeoutMs)])
       : clientGone.signal;
 
-    // Which connection ids 429'd on this request (the behavior that says "provider-wide"),
-    // and which this request has cooled — the latter is rolled back if the verdict turns out
-    // to be provider-wide, because a limit that hits everyone was never the key's fault.
+    // Track keys that returned 429 and tentative cooldowns. Explicit provider-wide
+    // saturation can roll back unclassified cooldowns applied during this request;
+    // multiple 429s alone are not evidence of a global limit.
     const recent429 = new Map();
     const cooledHere = [];
 
@@ -160,6 +160,7 @@ export function createEmbeddingsHandler(repos, { timeoutMs = EMBEDDINGS_TIMEOUT_
       auth.secret = connection.credentials?.apiKey || connection.credentials?.accessToken || null;
 
       const executor = new DefaultExecutor(node, connection, { proxy });
+      const hitAt = repos.connections.lastHitStartedAt();
       const result = await executor.execute({
         model: route.model,
         // `stream: undefined` makes JSON.stringify drop it — embeddings have no stream
@@ -173,6 +174,9 @@ export function createEmbeddingsHandler(repos, { timeoutMs = EMBEDDINGS_TIMEOUT_
       });
 
       if (!result.ok) {
+        if (!["client_aborted", "proxy_failed", "proxy_exhausted"].includes(result.errorCode)) {
+          repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.status, errorCode: result.errorCode, message: result.message });
+        }
         // Settled once, by the shared rule — see dispatch.mjs `settleFailure`.
         lastError = result;
         const settled = settleFailure(repos, {
@@ -214,15 +218,26 @@ export function createEmbeddingsHandler(repos, { timeoutMs = EMBEDDINGS_TIMEOUT_
         continue;                             // the key's problem: the next key may serve it
       }
 
-      const text = await result.response.text().catch(() => "");
+      let text;
+      try {
+        text = await result.response.text();
+      } catch (err) {
+        if (clientGone.signal.aborted) return;
+        lastError = { ok: false, status: 502, errorCode: signal.aborted ? "upstream_stalled" : "upstream_error", message: String(err?.message || err) };
+        repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.response.status, errorCode: lastError.errorCode, message: lastError.message });
+        recordFailure(repos, node, lastError);
+        continue;
+      }
       const parsed = safeJson(text);
       if (!parsed) {
         lastError = { ok: false, status: 502, errorCode: "upstream_error", message: "provider returned a non-JSON body" };
+        repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.response.status, errorCode: lastError.errorCode, message: lastError.message });
         recordFailure(repos, node, lastError);
         log.warn("EMBED", `node ${node.prefix}: non-JSON response for an embeddings request`);
         continue;
       }
 
+      repos.connections.recordLastHit(connection.id, { at: hitAt, status: "success", httpStatus: result.response.status });
       recordConnectionSuccess(repos, connection.id);
       recordSuccess(repos, node);
       const usage = {

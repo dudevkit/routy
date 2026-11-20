@@ -245,6 +245,7 @@ function connectionView(c, health = null) {
     // per-key probe result (P6) — diagnostics, never derived from traffic
     lastTestAt: c.lastTestAt ?? null,
     lastTestOk: c.lastTestOk ?? null,
+    lastHit: c.lastHit ?? null,
     lastTestTtftMs: c.lastTestTtftMs ?? null,
     // live rotation health (cooldown expiry, strikes) — null when nothing to show
     health: health ? {
@@ -362,6 +363,13 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   const antigravityQuota = createAntigravityQuotaTracker({ repos, now: () => Date.now(), fetchQuota: hooks.antigravityQuotaFetch });
   const codexQuota = createCodexQuotaTracker({ repos, now: () => Date.now(), fetchQuota: hooks.codexQuotaFetch });
 
+  route("POST", /^\/api\/playground\/chat$/, async (req, res, _params, url) => {
+    if (!sameOriginAction(req, res, cfg)) return;
+    if (!hooks.chatHandler) return json(res, 503, { error: { message: "unavailable" } });
+    const connectionId = url.searchParams.get("connectionId") || null;
+    return hooks.chatHandler(req, res, { trustedPlayground: true, connectionId });
+  });
+
   // nodes
   route("GET", /^\/api\/nodes$/, (req, res) => {
     json(res, 200, repos.nodes.list().map((n) => nodeView(repos, n)));
@@ -463,19 +471,21 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   /**
    * Reset a breaker by scope.
    *
-   * `conn:<id>` and `proxy:*` scopes name a connection, so resetting one must also flip that
-   * connection's `status` back to `active` — the breaker alone is not what routing reads.
+   * `conn:<id>` resets the connection before recording the breaker, so its prior
+   * disabled state can distinguish automatic disablement from an operator's choice.
    * `node:<id>` is a subject the operator can see in the dashboard, so "reset this provider"
    * has to mean the provider's keys too, not just the node row behind them.
    */
   route("POST", /^\/api\/breakers\/(?<scope>[^/]+)\/reset$/, (req, res, p) => {
     const scope = decodeURIComponent(p.scope);
-    const b = repos.breakers.record(scope, { state: "closed", failures: 0, openUntil: null, lastError: null, cooldownStreak: 0 });
+    let b;
     let keysReset = 0;
     const connMatch = /^conn:(.+)$/.exec(scope);
     if (connMatch) {
       if (resetConnection(repos, connMatch[1])) keysReset = 1;
+      b = repos.breakers.record(scope, { state: "closed", failures: 0, openUntil: null, lastError: null, cooldownStreak: 0 });
     } else {
+      b = repos.breakers.record(scope, { state: "closed", failures: 0, openUntil: null, lastError: null, cooldownStreak: 0 });
       const nodeMatch = /^node:(.+)$/.exec(scope);
       if (nodeMatch) {
         for (const c of connectionsForNode(repos, nodeMatch[1])) { resetConnection(repos, c.id); keysReset += 1; }
@@ -1543,6 +1553,7 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       const { proxyPoolId: _drop, ...rest } = existing.credentials || {};
       patch.credentials = poolId ? { ...rest, proxyPoolId: poolId } : rest;
     }
+    if (input.status === "active" || input.status === "disabled") resetConnection(repos, p.id);
     const conn = repos.connections.update(p.id, patch);
     if (!conn) return json(res, 404, { error: { message: "not_found" } });
     json(res, 200, connectionViewWith(repos, conn));

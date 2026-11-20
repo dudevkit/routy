@@ -4,7 +4,7 @@
 // round-robin spreads requests, a dead key rotates to the next one transparently, and a
 // provider-wide 429 reaches the client as upstream_rate_limited instead of torching
 // every key.
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
@@ -14,9 +14,10 @@ import { createRepos } from "../db/repos.mjs";
 import { createChatHandler } from "../core/handlers/chat.mjs";
 import { connectionState } from "../core/key-health.mjs";
 import { subscribeLog } from "../lib/log.mjs";
+import { DefaultExecutor } from "../core/executors/default.mjs";
 
 let tmp, db, repos, handlerServer, handlerPort, stubServer, stubPort, stubState;
-let keyA, keyB;
+let keyA, keyB, trustedSelection;
 
 const chat = (stream = true) =>
   new Promise((resolve, reject) => {
@@ -38,6 +39,7 @@ beforeEach(async () => {
   db = openDatabase(tmp);
   repos = createRepos(db);
   const handler = createChatHandler(repos);
+  trustedSelection = null;
 
   stubPort = await new Promise((resolve) => {
     stubServer = http.createServer((req, res) => {
@@ -55,7 +57,7 @@ beforeEach(async () => {
   });
 
   handlerPort = await new Promise((resolve) => {
-    handlerServer = http.createServer((req, res) => handler(req, res));
+    handlerServer = http.createServer((req, res) => handler(req, res, trustedSelection ?? {}));
     handlerServer.listen(0, "127.0.0.1", () => resolve(handlerServer.address().port));
   });
 
@@ -99,6 +101,29 @@ describe("key rotation through the chat handler", () => {
     expect(seen.filter((k) => k === keyB.id)).toHaveLength(2);
   }, 15_000);
 
+  it("uses only the trusted selected account without falling back", async () => {
+    trustedSelection = { trustedPlayground: true, connectionId: keyB.id };
+    stubState.handler = (req, res) => {
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "invalid key" } }));
+    };
+    await chat(false);
+    expect(stubState.requests).toHaveLength(1);
+    expect(whichKey(stubState.requests[0].auth)).toBe(keyB.id);
+    repos.connections.update(keyB.id, { status: "disabled" });
+    const before = stubState.requests.length;
+    expect((await chat(false)).status).toBe(503);
+    expect(stubState.requests).toHaveLength(before);
+  });
+
+  it("rejects a selected account belonging to another provider", async () => {
+    const other = repos.nodes.create({ name: "Other", prefix: "other", apiType: "openai", baseUrl: "https://example.invalid/v1" });
+    const account = repos.connections.create({ nodeId: other.id, name: "other", credentials: { apiKey: "other-key" } });
+    trustedSelection = { trustedPlayground: true, connectionId: account.id };
+    expect((await chat(false)).status).toBe(400);
+    expect(stubState.requests).toHaveLength(0);
+  });
+
   it("falls through a broken key to the healthy one in the same request", async () => {
     stubState.handler = (req, res) => {
       if (whichKey(req.headers.authorization) === keyA.id) {
@@ -114,7 +139,43 @@ describe("key rotation through the chat handler", () => {
     expect(connectionState(repos, keyA.id).failures).toBe(1);
     expect(repos.connections.get(keyA.id).status).toBe("active");
     expect(connectionState(repos, keyB.id).state).toBe("closed");
+    expect(repos.connections.get(keyA.id).lastHit).toMatchObject({ status: "error", httpStatus: 401 });
+    expect(repos.connections.get(keyB.id).lastHit).toMatchObject({ status: "success", httpStatus: 200 });
   }, 15_000);
+
+  it("refreshes and replays each rejected OAuth account independently", async () => {
+    const credentials = (name) => ({ authType: "oauth", authState: "active", accessToken: `old-${name}`, refreshToken: `refresh-${name}`, expiresAt: "2099-01-01T00:00:00.000Z", oauthRevision: 1 });
+    repos.connections.update(keyA.id, { credentials: credentials("a") });
+    repos.connections.update(keyB.id, { credentials: credentials("b") });
+    const seen = [];
+    const execute = vi.spyOn(DefaultExecutor.prototype, "execute").mockImplementation(async function () {
+      const token = this.connection.credentials.accessToken;
+      seen.push(token);
+      return token.startsWith("old-")
+        ? { ok: false, status: 401, errorCode: "auth_error", message: "rejected" }
+        : { ok: true, response: new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), { status: 200, headers: { "content-type": "application/json" } }) };
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ code: 0, data: { accessToken: "new-token", refreshToken: "new-refresh", expiresIn: 3600 } }), { status: 200 }));
+    try {
+      expect((await chat(false)).status).toBe(200);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(seen.filter((token) => token.startsWith("old-"))).toHaveLength(2);
+      expect(seen.filter((token) => token === "new-token")).toHaveLength(1);
+    } finally { execute.mockRestore(); fetchSpy.mockRestore(); }
+  });
+
+  it("keeps an OAuth account active after a transient forced refresh failure", async () => {
+    repos.connections.delete(keyB.id);
+    repos.connections.update(keyA.id, { credentials: { authType: "oauth", authState: "active", accessToken: "old", refreshToken: "refresh", expiresAt: "2099-01-01T00:00:00.000Z", oauthRevision: 1 } });
+    const execute = vi.spyOn(DefaultExecutor.prototype, "execute").mockResolvedValue({ ok: false, status: 401, errorCode: "auth_error", message: "rejected" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}", { status: 503 }));
+    try {
+      const response = await chat(false);
+      expect(response.status).toBe(503);
+      expect(JSON.parse(response.body).error.message).toBe("oauth_refresh_failed");
+      expect(repos.connections.get(keyA.id).credentials.authState).toBe("active");
+    } finally { execute.mockRestore(); fetchSpy.mockRestore(); }
+  });
 
   it("disables a key after a second hard failure and then skips it", async () => {
     stubState.handler = (req, res) => {
@@ -141,7 +202,7 @@ describe("key rotation through the chat handler", () => {
   it("reports a provider-wide 429 body as upstream_rate_limited, touching no key", async () => {
     stubState.handler = (req, res) => {
       res.writeHead(429, { "content-type": "application/json", "retry-after": "30" });
-      res.end(JSON.stringify({ error: { message: "rate limited by upstream, try again later" } }));
+      res.end(JSON.stringify({ error: { message: "upstream capacity exhausted" } }));
     };
     const r = await chat();
     expect(r.status).toBe(429);
@@ -160,18 +221,17 @@ describe("key rotation through the chat handler", () => {
     expect(stubState.requests.length).toBe(attempts);
   }, 15_000);
 
-  it("flips to provider-wide on behavior when the body is ambiguous, undoing the cooldown", async () => {
-    // Body matches neither the per-key nor the provider-wide patterns: the first key
-    // cools on a guess, the second distinct 429 is what proves it was never the keys.
+  it("does not infer a provider-wide limit from multiple ambiguous 429s", async () => {
     stubState.handler = (req, res) => {
       res.writeHead(429, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: { message: "slow down" } }));
     };
     const r = await chat();
-    expect(r.status).toBe(429);
-    expect(JSON.parse(r.body).error.message).toBe("upstream_rate_limited");
-    // the guess that cooled key A has been rolled back — a wrong cooldown is a bug
-    expect(connectionState(repos, keyA.id).state).not.toBe("cooldown");
+    expect(r.status).toBe(503);
+    expect(JSON.parse(r.body).error.message).toBe("all_keys_exhausted");
+    expect(stubState.requests).toHaveLength(2);
+    expect(connectionState(repos, keyA.id).state).toBe("cooldown");
+    expect(connectionState(repos, keyB.id).state).toBe("cooldown");
   }, 15_000);
 
   it("returns all_keys_exhausted with the soonest recovery when every key is cooling", async () => {

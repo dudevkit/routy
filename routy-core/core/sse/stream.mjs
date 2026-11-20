@@ -34,6 +34,7 @@ export class UsageTracker {
   constructor({ promptText = "" } = {}) {
     this.promptTokens = estimateTokens(promptText);
     this.completionTokens = 0;
+    this.upstreamOutputTokens = null;
     this.exact = false;
     this.ttftMs = null;
     this.firstByteAt = null;
@@ -64,6 +65,9 @@ export class UsageTracker {
     if (data === "[DONE]") return;
     try {
       const parsed = JSON.parse(data);
+      const rawUsage = parsed.response?.usage ?? parsed.usage;
+      const output = rawUsage?.output_tokens ?? rawUsage?.completion_tokens ?? rawUsage?.candidatesTokenCount ?? parsed.usageMetadata?.candidatesTokenCount;
+      if (Number.isFinite(output) && rawUsage?.estimated !== true) this.upstreamOutputTokens = output;
       if (parsed.usage && typeof parsed.usage === "object") {
         if (Number.isFinite(parsed.usage.prompt_tokens)) {
           this.promptTokens = parsed.usage.prompt_tokens;
@@ -209,6 +213,7 @@ export async function pumpSse({ upstream, res, signal, t0, transform = null, flu
       }
     }
     for (const frame of parser.end()) {
+      usage?.observeChunk(frame.data);
       const outFrames = transform ? transform(frame) : [formatSse(frame.event, frame.data)];
       for (const out of outFrames) {
         frames++; bytes += out.length;

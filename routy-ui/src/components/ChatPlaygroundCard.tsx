@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useGateway, useKeys, useNodeModels } from "../api/hooks";
+import { useConnections, useGateway, useKeys, useNodeModels } from "../api/hooks";
 import type { UpstreamNode } from "../api/types";
 import { COPY_FAILED_HINT, useCopy } from "../hooks/useCopy";
 import { Button } from "./ui/Button";
@@ -16,11 +16,11 @@ export function ChatPlaygroundCard({ node }: { node: UpstreamNode }) {
   const gateway = useGateway();
   const keys = useKeys();
   const models = useNodeModels(node.id);
+  const connections = useConnections(node.id);
+  const [connectionId, setConnectionId] = useState("");
 
   const clientKey = (keys.data ?? []).find((k) => k.enabled !== false)?.key ?? "";
-  // For in-browser execution, prefer same-origin relative path /v1/chat/completions
-  // so browsers don't trip over mixed-content (http vs https) or external domain routing.
-  const executeEndpoint = "/v1/chat/completions";
+  const executeEndpoint = `/api/playground/chat${connectionId ? `?connectionId=${encodeURIComponent(connectionId)}` : ""}`;
   const displayEndpoint = useMemo(() => {
     const base = gateway.data?.endpoint ?? `${window.location.origin}/v1`;
     return `${base.replace(/\/+$/, "")}/chat/completions`;
@@ -99,10 +99,8 @@ export function ChatPlaygroundCard({ node }: { node: UpstreamNode }) {
     let accumulatedReasoning = "";
 
     try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (clientKey) {
-        headers["Authorization"] = `Bearer ${clientKey}`;
-      }
+      const headers: Record<string, string> = { "Content-Type": "application/json", "X-Routy-Action": "1" };
+      // Dashboard authentication is carried by the same-origin session.
 
       const res = await fetch(executeEndpoint, {
         method: "POST",
@@ -200,6 +198,7 @@ export function ChatPlaygroundCard({ node }: { node: UpstreamNode }) {
       toast("Request failed", "error");
     } finally {
       setBusy(false);
+      void connections.refetch();
     }
   };
 
@@ -250,6 +249,18 @@ export function ChatPlaygroundCard({ node }: { node: UpstreamNode }) {
               />
             )}
           </div>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium text-text-muted">Account / API key</span>
+            <select aria-label="Account / API key" value={connectionId} onChange={(e) => setConnectionId(e.target.value)} className="h-9 w-full rounded-[10px] border border-transparent bg-surface-2 px-3 text-sm text-text-main focus:ring-2 focus:ring-brand-500/30">
+              <option value="">Automatic — provider strategy</option>
+              {(connections.data ?? []).map((c) => {
+                const cooling = c.health?.state === "cooldown" && c.health.openUntil && Date.parse(c.health.openUntil) > Date.now();
+                const unavailable = c.status !== "active" || c.authState === "reauth-required" || c.health?.state === "disabled" || Boolean(cooling);
+                return <option key={c.id} value={c.id} disabled={unavailable}>{c.name || c.keyMasked} · {c.authState === "reauth-required" ? "Reconnect required" : c.status !== "active" || c.health?.state === "disabled" ? "Disabled" : cooling ? "Cooling down" : "Available"}</option>;
+              })}
+            </select>
+          </label>
 
           <div className="flex flex-col gap-1">
             <span className="text-[11px] font-medium text-text-muted">Temperature</span>

@@ -409,10 +409,8 @@ export async function refreshTokens(refreshToken, { signal } = {}) {
   }
   if (!res.ok) {
     const err = new OAuthError("upstream_error", `the provider rejected the refresh (HTTP ${res.status})`);
-    // 5xx is transient; a 4xx is a statement about the credential. We do not have a
-    // verified code that proves revocation, so even 4xx stays transient here — the
-    // caller only marks reauth-required on an explicit definitive code (below).
-    err.transient = res.status >= 500 || res.status === 408 || res.status === 429;
+    // No provider response code has been verified to prove revocation.
+    err.transient = true;
     err.status = res.status;
     throw err;
   }

@@ -110,10 +110,11 @@ function fetchNode(prefix, map, { url, keys = ["sk-fetch"] } = {}) {
 
 describe("a fetch provider, normalized", () => {
   it("renames the request, sends its static header, and normalizes nested content", async () => {
-    fetchNode("reader", POST_MAP);
+    const node = fetchNode("reader", POST_MAP);
     const r = await post("/v1/web/fetch", { model: "reader/fetch", url: "https://example.org/page", format: "markdown" });
 
     expect(r.status).toBe(200);
+    expect(repos.connections.list(node.id)[0].lastHit).toMatchObject({ status: "success", httpStatus: 200 });
     expect(r.body.provider).toBe("reader");
     expect(r.body.url).toBe("https://example.org/page");
     expect(r.body.title).toBe("Example Page");

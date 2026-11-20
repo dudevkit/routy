@@ -322,6 +322,22 @@ disconnect says nothing about the provider's health, so it leaves the breaker
 untouched (otherwise your own Ctrl-C could take a healthy provider offline). Reset
 manually with `POST /api/nodes/{id}/reset` or `POST /api/breakers/{scope}/reset`.
 
+Provider key strategy controls the starting connection: `round-robin` spreads requests
+across eligible accounts; `fallback` starts with the first eligible account by priority.
+Both try another account on a key-scoped failure. An ambiguous 429 is not proof that
+the entire provider is unavailable; other eligible accounts remain candidates.
+Explicit provider-wide limits may still route to another provider. Re-enabling an
+automatically disabled key clears its key breaker; resetting a provider does not
+re-enable accounts disabled manually.
+
+The provider's account list distinguishes the most recent real-traffic attempt from
+its routing state and diagnostic probe. The dashboard Playground can use the normal
+strategy or pin a request to one eligible account without falling back to another.
+When an upstream explicitly reports zero output tokens, the account's last hit and
+request usage are marked `empty_output` instead of success. Missing or estimated token
+usage is not treated as zero. A streaming response may already have sent HTTP 200 by
+the time the final usage arrives; the failure is recorded in status and logs.
+
 ---
 
 ## Timeouts and failure modes

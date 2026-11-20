@@ -141,10 +141,11 @@ const breaker = (nodeId) => repos.breakers.get(`node:${nodeId}`);
 
 describe("one shape, two providers", () => {
   it("builds a GET with renamed params and normalizes nested results", async () => {
-    searchNode("getty", GET_MAP);
+    const node = searchNode("getty", GET_MAP);
     const r = await post("/v1/search", { model: "getty/search", query: "routy gateway", max_results: 3, search_type: "news" });
 
     expect(r.status).toBe(200);
+    expect(repos.connections.list(node.id)[0].lastHit).toMatchObject({ status: "success", httpStatus: 200 });
     expect(r.body.provider).toBe("getty");
     expect(r.body.query).toBe("routy gateway");
     expect(r.body.results).toHaveLength(2);

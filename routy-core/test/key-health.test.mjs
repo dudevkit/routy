@@ -11,9 +11,9 @@ import { openDatabase } from "../db/driver.mjs";
 import { createRepos } from "../db/repos.mjs";
 import {
   classifyConnectionError, recordConnectionFailure, recordConnectionSuccess,
-  connectionState, isConnectionAvailable, earliestRecovery, connectionScope,
+  connectionState, isConnectionAvailable, earliestRecovery, connectionScope, resetConnection,
 } from "../core/key-health.mjs";
-import { settleFailure } from "../core/dispatch.mjs";
+import { settleFailure, pickConnections } from "../core/dispatch.mjs";
 import { CONNECTION_COOLDOWN_MS, CONNECTION_COOLDOWN_MAX_MS } from "../core/limits.mjs";
 
 let tmp, db, repos, node;
@@ -100,23 +100,15 @@ describe("classifyConnectionError", () => {
     expect(classifyConnectionError(err(429, "your api key has exceeded its per-key rate limit")).verdict).toBe("cooldown");
   });
 
-  it("flips to provider-wide once a second distinct key 429s in the window", () => {
-    const connA = { id: "a" };
-    const connB = { id: "b" };
-    const set = new Set(["a"]); // a already 429'd this request
-    const v = classifyConnectionError(err(429, "rate limited"), { connection: connB, recent429: set });
-    expect(v.verdict).toBe("global");
-    expect(v.others).toBe(1);
-    // the same key again is still just its own problem
-    const same = classifyConnectionError(err(429, "rate limited"), { connection: connA, recent429: set });
-    expect(same.verdict).not.toBe("global");
+  it("does not infer a provider-wide limit from multiple ambiguous 429s", () => {
+    const recent429 = new Set(["a"]);
+    expect(classifyConnectionError(err(429, "rate limited"), { connection: { id: "b" }, recent429 }).verdict).toBe("cooldown");
+    expect(classifyConnectionError(err(429, "upstream rate limited, try again later"), { connection: { id: "b" }, recent429 }).verdict).toBe("cooldown");
+    expect(classifyConnectionError(err(429, "upstream capacity"), { connection: { id: "b" }, recent429 }).verdict).toBe("global");
   });
 
   it("does not cool a lone OAuth account on an unclassifiable 429", () => {
-    // The CodeBuddy executor redacts the provider body (it can echo tokens), so its 429
-    // arrives as this exact sanitized message. A subscription has no sibling credential,
-    // so the multi-key heuristic can never fire — the old default cooled the user's only
-    // account for 5-10 minutes over a provider-wide limit.
+    // A redacted response does not establish whether the limit is account-scoped.
     const oauth = { id: "o1", credentials: { authType: "oauth", accessToken: "at" } };
     const v = classifyConnectionError(err(429, "codebuddy rate limited (429)"), { connection: oauth, recent429: new Set(["o1"]) });
     expect(v.verdict).toBe("cooldown");
@@ -233,6 +225,44 @@ describe("recordConnectionFailure", () => {
   });
 });
 
+describe("resetConnection", () => {
+  it("resets only the selected connection and ignores unknown IDs", () => {
+    const a = makeConnection("a");
+    const b = makeConnection("b");
+    recordConnectionFailure(repos, a, err(429, "slow down"));
+    recordConnectionFailure(repos, b, err(429, "slow down"));
+    resetConnection(repos, a.id);
+    expect(connectionState(repos, a.id).state).toBe("closed");
+    expect(connectionState(repos, b.id).state).toBe("cooldown");
+    expect(resetConnection(repos, "missing")).toBeNull();
+    expect(repos.breakers.get("conn:missing")).toBeFalsy();
+  });
+
+  it("preserves manual disables but restores auto-disabled keys", () => {
+    const manual = makeConnection("manual");
+    const automatic = makeConnection("automatic");
+    repos.connections.update(manual.id, { status: "disabled" });
+    recordConnectionFailure(repos, automatic, err(401));
+    recordConnectionFailure(repos, automatic, err(401));
+    resetConnection(repos, manual.id);
+    resetConnection(repos, automatic.id);
+    expect(repos.connections.get(manual.id).status).toBe("disabled");
+    expect(repos.connections.get(automatic.id).status).toBe("active");
+  });
+});
+describe("targeted connection selection", () => {
+  it("selects only the requested eligible connection", () => {
+    const a = makeConnection("a");
+    const b = makeConnection("b");
+    expect(pickConnections(repos, node, { connectionId: b.id }).map((c) => c.id)).toEqual([b.id]);
+    repos.connections.update(b.id, { status: "disabled" });
+    expect(pickConnections(repos, node, { connectionId: b.id })).toEqual([]);
+    expect(pickConnections(repos, node, { connectionId: "missing" })).toEqual([]);
+    expect(pickConnections(repos, node).map((c) => c.id)).toEqual([a.id]);
+  });
+});
+
+
 describe("settleFailure", () => {
   it("reports a soft OAuth 429 as a key action without writing health", () => {
     const now = Date.now();
@@ -251,6 +281,30 @@ describe("settleFailure", () => {
     // nothing was rolled back (nothing was cooled), and nothing is on cooldown
     expect(connectionState(repos, oauth.id).state).not.toBe("cooldown");
     expect(isConnectionAvailable(connectionState(repos, oauth.id), now)).toBe(true);
+  });
+
+  it("rolls back only connection cooldowns when media sees an explicit global limit", () => {
+    const a = makeConnection("a");
+    const b = makeConnection("b");
+    recordConnectionFailure(repos, a, err(401, "rejected"));
+    const cooledHere = [];
+    settleFailure(repos, { node, connection: a, result: err(429, "slow down"), cooledHere });
+    expect(connectionState(repos, a.id).state).toBe("cooldown");
+    const verdict = settleFailure(repos, { node, connection: b, result: err(429, "upstream capacity"), cooledHere });
+    expect(verdict.action).toBe("global");
+    expect(connectionState(repos, a.id).failures).toBe(1);
+    expect(connectionState(repos, a.id).state).toBe("closed");
+    expect(repos.breakers.get(`node:${node.id}`)).toBeFalsy();
+  });
+
+  it("does not overwrite a concurrent health update during rollback", () => {
+    const a = makeConnection("a");
+    const b = makeConnection("b");
+    const cooledHere = [];
+    settleFailure(repos, { node, connection: a, result: err(429, "slow down"), cooledHere });
+    repos.breakers.record(connectionScope(a.id), { state: "disabled", failures: 2 });
+    settleFailure(repos, { node, connection: b, result: err(429, "upstream capacity"), cooledHere });
+    expect(connectionState(repos, a.id)).toMatchObject({ state: "disabled", failures: 2 });
   });
 });
 

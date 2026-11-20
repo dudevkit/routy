@@ -117,10 +117,11 @@ const breaker = (nodeId) => repos.breakers.get(`node:${nodeId}`);
 
 describe("what the client asked to receive", () => {
   it("passes the request through and the provider's answer back untouched", async () => {
-    imageNode();
+    const node = imageNode();
     const r = await post("/v1/images/generations", { model: "pix/img-1", prompt: "a blue square", size: "1024x1024" });
 
     expect(r.status).toBe(200);
+    expect(repos.connections.list(node.id)[0].lastHit).toMatchObject({ status: "success", httpStatus: 200 });
     expect(r.body).toMatchObject(urlImage);
     expect(stubState.lastBody).toEqual({ model: "img-1", prompt: "a blue square", size: "1024x1024" });
     expect(stubState.lastBody).not.toHaveProperty("response_format"); // nothing injected when the client said nothing
@@ -229,6 +230,7 @@ describe("what the gateway refuses before any provider call", () => {
     expect(r.status).toBe(502);
     expect(r.body.error.message).toBe("all_keys_failed");
     expect(r.body.error.detail).toContain("no image data");
+    expect(repos.connections.list(node.id)[0].lastHit).toMatchObject({ status: "error", httpStatus: 200, errorCode: "upstream_error" });
     expect(breaker(node.id).failures).toBe(1);
   });
 });

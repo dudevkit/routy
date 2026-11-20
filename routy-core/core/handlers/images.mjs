@@ -165,6 +165,7 @@ export function createImagesHandler(repos, { timeoutMs = IMAGE_TIMEOUT_MS, maxBy
       auth.secret = connection.credentials?.apiKey || connection.credentials?.accessToken || null;
 
       const executor = new DefaultExecutor(node, connection, { proxy });
+      const hitAt = repos.connections.lastHitStartedAt();
       const result = await executor.execute({
         model: route.model,
         body: outbound,
@@ -176,6 +177,9 @@ export function createImagesHandler(repos, { timeoutMs = IMAGE_TIMEOUT_MS, maxBy
       });
 
       if (!result.ok) {
+        if (!["client_aborted", "proxy_failed", "proxy_exhausted"].includes(result.errorCode)) {
+          repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.status, errorCode: result.errorCode, message: result.message });
+        }
         lastError = result;
         const settled = settleFailure(repos, {
           node, connection, result, settings,
@@ -211,10 +215,20 @@ export function createImagesHandler(repos, { timeoutMs = IMAGE_TIMEOUT_MS, maxBy
         continue;
       }
 
-      const text = await result.response.text().catch(() => "");
+      let text;
+      try {
+        text = await result.response.text();
+      } catch (err) {
+        if (clientGone.signal.aborted) return;
+        lastError = { ok: false, status: 502, errorCode: signal.aborted ? "upstream_stalled" : "upstream_error", message: String(err?.message || err) };
+        repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.response.status, errorCode: lastError.errorCode, message: lastError.message });
+        recordFailure(repos, node, lastError);
+        continue;
+      }
       const parsed = safeJson(text);
       if (!parsed || !Array.isArray(parsed.data) || parsed.data.length === 0) {
         lastError = { ok: false, status: 502, errorCode: "upstream_error", message: "provider returned no image data" };
+        repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.response.status, errorCode: lastError.errorCode, message: lastError.message });
         recordFailure(repos, node, lastError);
         log.warn("IMAGE", `node ${node.prefix}: response carries no image data`);
         continue;
@@ -235,6 +249,7 @@ export function createImagesHandler(repos, { timeoutMs = IMAGE_TIMEOUT_MS, maxBy
           bytes = Buffer.from(first.b64_json, "base64");
           if (bytes.length > maxBytes) {
             lastError = { ok: false, status: 502, errorCode: "upstream_error", message: `image of ${bytes.length} bytes exceeds the ${maxBytes} byte cap` };
+            repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.response.status, errorCode: lastError.errorCode, message: lastError.message });
             recordFailure(repos, node, lastError);
             log.warn("IMAGE", `node ${node.prefix}: ${lastError.message}`);
             continue;
@@ -245,6 +260,7 @@ export function createImagesHandler(repos, { timeoutMs = IMAGE_TIMEOUT_MS, maxBy
           const fetched = await safeFetch(first.url, { maxBytes, allowHosts, expectImage: true, timeoutMs: timeoutMs });
           if (!fetched.ok) {
             lastError = { ok: false, status: 502, errorCode: "image_fetch_failed", message: fetched.reason };
+            repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.response.status, errorCode: lastError.errorCode, message: lastError.message });
             recordFailure(repos, node, lastError);
             log.warn("IMAGE", `node ${node.prefix}: image fetch refused — ${fetched.reason}`, { url: first.url });
             return json(res, 502, {
@@ -259,6 +275,7 @@ export function createImagesHandler(repos, { timeoutMs = IMAGE_TIMEOUT_MS, maxBy
           contentType = fetched.contentType || imageContentType(bytes);
         } else {
           lastError = { ok: false, status: 502, errorCode: "upstream_error", message: "image entry has neither b64_json nor url" };
+          repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.response.status, errorCode: lastError.errorCode, message: lastError.message });
           recordFailure(repos, node, lastError);
           log.warn("IMAGE", `node ${node.prefix}: image entry carries neither b64_json nor url`);
           continue;
@@ -266,6 +283,7 @@ export function createImagesHandler(repos, { timeoutMs = IMAGE_TIMEOUT_MS, maxBy
 
         if (!looksLikeImage(bytes)) {
           lastError = { ok: false, status: 502, errorCode: "upstream_error", message: "provider returned bytes that are not an image" };
+          repos.connections.recordLastHit(connection.id, { at: hitAt, status: "error", httpStatus: result.response.status, errorCode: lastError.errorCode, message: lastError.message });
           recordFailure(repos, node, lastError);
           log.warn("IMAGE", `node ${node.prefix}: payload is not an image (${bytes.length} bytes)`);
           continue;
@@ -277,6 +295,7 @@ export function createImagesHandler(repos, { timeoutMs = IMAGE_TIMEOUT_MS, maxBy
         filename = `image.${ext}`;
       }
 
+      repos.connections.recordLastHit(connection.id, { at: hitAt, status: "success", httpStatus: result.response.status });
       const usageEventId = recordMediaUsage(repos, log, {
         route: { node }, connection, clientModel: model, kind: KIND, status: "ok",
         usage: {}, // images carry no token usage; recording zeros would look like data
