@@ -287,7 +287,7 @@ export const api = {
     putJson<UpstreamNode>(`/api/nodes/${enc(id)}`, patch),
   removeNode: (id: string): Promise<void> => deleteJson(`/api/nodes/${enc(id)}`),
   resetBreaker: (id: string): Promise<UpstreamNode> => postJson<UpstreamNode>(`/api/nodes/${enc(id)}/reset`),
-  testConnection: (input: { baseUrl: string; apiKey?: string }): Promise<TestResult> =>
+  testConnection: (input: { baseUrl: string; apiKey?: string; headers?: Record<string, string> }): Promise<TestResult> =>
     postJson<TestResult>("/api/nodes/test", input),
 
   /* models — discovery-only list, plus per-model probes (P6) */

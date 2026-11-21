@@ -26,13 +26,14 @@ function startStub() {
       req.on("data", (c) => (body += c));
       req.on("end", () => {
         if (req.url.includes("/models")) {
+          stubState.listHeaders = req.headers;
           if (stubState.listFails) { res.writeHead(401).end("bad key"); return; }
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify({ object: "list", data: stubState.listed.map((id) => ({ id })) }));
           return;
         }
         const parsed = JSON.parse(body || "{}");
-        stubState.chatRequests.push({ model: parsed.model, auth: req.headers.authorization ?? null, maxTokens: parsed.max_tokens, stream: parsed.stream });
+        stubState.chatRequests.push({ model: parsed.model, auth: req.headers.authorization ?? null, maxTokens: parsed.max_tokens, stream: parsed.stream, originator: req.headers.originator ?? null });
         const behavior = stubState.behavior;
         if (behavior === "error") {
           res.writeHead(404, { "content-type": "application/json" });
@@ -70,7 +71,7 @@ beforeEach(async () => {
   db = openDatabase(tmp);
   repos = createRepos(db);
   resetBudget();
-  stubState = { listed: ["m-alpha", "m-beta", "m-gamma"], behavior: "ok", chatRequests: [], listFails: false };
+  stubState = { listed: ["m-alpha", "m-beta", "m-gamma"], behavior: "ok", chatRequests: [], listFails: false, listHeaders: null };
   stubPort = await startStub();
   const dispatch = createRouter(buildApiRoutes(repos, { bootstrapToken: "t" }, "0.1.0"));
   apiPort = await new Promise((resolve) => {
@@ -212,6 +213,19 @@ describe("probes are diagnostics, not traffic", () => {
     // enough not to starve a reasoning model (max_tokens:1 yields an empty answer)
     expect(stubState.chatRequests).toHaveLength(1);
     expect(stubState.chatRequests[0]).toMatchObject({ model: "m-alpha", auth: "Bearer k-model", maxTokens: 1024, stream: true });
+  });
+
+  it("a probe carries the node's custom headers (client-identity gates)", async () => {
+    // A relay that refuses non-CLI traffic answers the probe with 403 while accepting the
+    // real request — the probe must send what the chat path sends, or its verdict is a lie.
+    const node = mkNode("h", { headers: { originator: "codex_cli_rs" } });
+    const conn = mkKey(node);
+
+    expect((await probeModel(node, "m-alpha", conn)).ok).toBe(true);
+    expect(stubState.chatRequests[0].originator).toBe("codex_cli_rs");
+
+    expect((await probeKey(node, conn)).ok).toBe(true);
+    expect(stubState.listHeaders.originator).toBe("codex_cli_rs");
   });
 
   it("counts a reasoning-only stream as alive (9Router issue #3010)", async () => {

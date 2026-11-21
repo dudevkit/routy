@@ -207,11 +207,15 @@ export function NodeFormModal({
 
   const urlLooksValid = /^https?:\/\/.+/.test(form.baseUrl.trim());
   const canSave = form.name.trim().length > 0 && urlLooksValid && form.prefix.trim().length > 0;
+  // A blank name is a row the operator added and did not fill in — dropped, not sent.
+  const headers = Object.fromEntries(headerRows.filter((r) => r.name.trim()).map((r) => [r.name.trim(), r.value]));
 
   const runTest = () => {
     setTest("testing");
     testConnection.mutate(
-      { baseUrl: form.baseUrl.trim(), apiKey: form.apiKey || undefined },
+      // Test sends the custom headers too: a relay that gates on client identity would
+      // otherwise reject the probe while accepting the real request.
+      { baseUrl: form.baseUrl.trim(), apiKey: form.apiKey || undefined, headers },
       {
         onSuccess: (result) => setTest(result),
         onError: (err) => {
@@ -227,8 +231,6 @@ export function NodeFormModal({
     const inUsd = priceOrUndefined(priceIn);
     const outUsd = priceOrUndefined(priceOut);
     const pricing = inUsd === undefined && outUsd === undefined ? undefined : { ...(inUsd !== undefined ? { inputPer1M: inUsd } : {}), ...(outUsd !== undefined ? { outputPer1M: outUsd } : {}) };
-    // A blank name is a row the operator added and did not fill in — dropped, not sent.
-    const headers = Object.fromEntries(headerRows.filter((r) => r.name.trim()).map((r) => [r.name.trim(), r.value]));
 
     if (!node) {
       const data = { ...(pricing ? { pricing } : {}), ...(Object.keys(headers).length ? { headers } : {}) };

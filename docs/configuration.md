@@ -95,6 +95,10 @@ requests pass that gate. The dashboard's **Custom headers** field offers presets
 Claude Code, OpenCode) and a free-form editor; nothing else in the request is changed — the
 node's key still supplies `authorization`, and a media call's own credential style still wins.
 
+**Probes send them too** — a *Test Connection* (models list) and a per-model test both carry
+`headers`, so a relay that would reject a bare script does not report a healthy provider as
+broken.
+
 The model list used to live in this blob; it has its own table now — see **Models**.
 A provider is addressed as `<prefix>/<model>`; see **Models** and **Probes** for the
 per-model and per-key testing surface.

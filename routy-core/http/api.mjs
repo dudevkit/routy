@@ -805,7 +805,9 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
   route("POST", /^\/api\/nodes\/test$/, async (req, res) => {
     const input = await readBody(req).then((b) => JSON.parse(b.toString("utf8")));
     if (!input?.baseUrl) return json(res, 400, { error: { message: "bad_request", detail: "baseUrl required" } });
-    json(res, 200, await probeNode(input.baseUrl, input.apiKey || null));
+    // The form's Custom headers ride along: a relay that gates on client identity would
+    // answer 403 here while accepting the real request, which reads as a broken provider.
+    json(res, 200, await probeNode(input.baseUrl, input.apiKey || null, { headers: input.headers ?? null }));
   });
 
   // usage

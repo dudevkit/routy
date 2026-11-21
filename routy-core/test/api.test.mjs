@@ -37,10 +37,11 @@ beforeEach(async () => {
   repos = createRepos(db);
   repos.settings.update({ requireApiKey: false });
 
-  stubState = { requests: [] };
+  stubState = { requests: [], headers: [] };
   await new Promise((resolve) => {
     stubServer = http.createServer((req, res) => {
       stubState.requests.push(req.headers.authorization || null);
+      stubState.headers.push(req.headers);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ object: "list", data: [{ id: "m1" }, { id: "m2" }, { id: "m3" }] }));
     });
@@ -144,6 +145,18 @@ describe("management API", () => {
     expect(r.status).toBe(200);
     expect(r.body.ok).toBe(true);
     expect(r.body.modelCount).toBe(3);
+  });
+
+  it("forwards the form's custom headers on the unsaved-url probe", async () => {
+    // Test Connection must exercise the same identity the real request will: a relay that
+    // gates on client identity would otherwise reject the probe and pass the traffic.
+    const r = await post("/api/nodes/test", {
+      baseUrl: `http://127.0.0.1:${stubPort}/v1`,
+      headers: { originator: "codex_cli_rs", "user-agent": "codex_cli_rs/0.51.0" },
+    });
+    expect(r.body.ok).toBe(true);
+    expect(stubState.headers[0].originator).toBe("codex_cli_rs");
+    expect(stubState.headers[0]["user-agent"]).toBe("codex_cli_rs/0.51.0");
   });
 
   it("import uses the stored key and fills the model list", async () => {

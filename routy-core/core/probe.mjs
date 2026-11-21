@@ -117,14 +117,25 @@ function shapeError(err) {
 }
 
 /**
+ * The node's per-provider custom headers (`data.headers`). A probe must send what the chat
+ * path sends, or its verdict describes a request routy would never make — a relay who gates
+ * on client identity answers 403 to the probe and 200 to real traffic, which reads as "broken".
+ */
+const customHeaders = (node) => {
+  const h = node?.data?.headers;
+  return h && typeof h === "object" ? h : null;
+};
+
+/**
  * Probe a node's model list. Returns { ok, latencyMs, modelCount, models } on
  * success, { ok:false, latencyMs, error } otherwise. An endpoint that answers
  * without a JSON body still counts as reachable (modelCount 0).
  */
-export async function probeNode(baseUrl, apiKey = null, { timeoutMs = DEFAULT_TIMEOUT_MS, proxy = null } = {}) {
+export async function probeNode(baseUrl, apiKey = null, { timeoutMs = DEFAULT_TIMEOUT_MS, proxy = null, headers = null } = {}) {
   const t0 = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const reqHeaders = { ...(headers ?? {}), ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) };
   try {
     // A probe from the caller's own address answers a different question than the
     // request path does when a proxy is bound: the provider sees the proxy's IP, so a
@@ -136,12 +147,12 @@ export async function probeNode(baseUrl, apiKey = null, { timeoutMs = DEFAULT_TI
     const agent = getProxyAgent(primaryProxyUrl(proxy));
     const res = agent
       ? await undiciFetch(`${trimBase(baseUrl)}/models`, {
-          headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+          headers: reqHeaders,
           signal: controller.signal,
           dispatcher: agent,
         })
       : await fetch(`${trimBase(baseUrl)}/models`, {
-          headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+          headers: reqHeaders,
           signal: controller.signal,
         });
     const latencyMs = Date.now() - t0;
@@ -166,7 +177,7 @@ export async function probeNode(baseUrl, apiKey = null, { timeoutMs = DEFAULT_TI
 /** Probe one API key against a node's base URL. */
 export async function probeKey(node, connection, opts = {}) {
   const apiKey = connection?.credentials?.apiKey ?? null;
-  return probeNode(node?.baseUrl, apiKey, opts);
+  return probeNode(node?.baseUrl, apiKey, { ...opts, headers: { ...(customHeaders(node) ?? {}), ...(opts.headers ?? {}) } });
 }
 
 /**
@@ -190,6 +201,7 @@ export async function probeSystemone(node, model, connection = null, { timeoutMs
   const headers = {
     "content-type": "application/json",
     ...headersFor(mediaConfigOf(node).map?.systemone ?? {}),
+    ...(customHeaders(node) ?? {}),
     // `none` yields no header and a null secret sends nothing — a keyless probe is the point.
     ...(secret ? authHeadersFor(authStyleFor(node, "systemone"), secret, null) : {}),
   };
@@ -294,6 +306,7 @@ export async function probeModel(node, model, connection = null, { timeoutMs, lo
         "content-length": String(Buffer.byteLength(payload)),
         [PROBE_ID_HEADER]: probeId,
         ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+        ...(customHeaders(node) ?? {}),
         // opencode's canonical target headers (public bearer, versioned UA, canonical
         // session) win over any stray key — that gateway is keyless, and the probe must
         // send what the chat path sends.
