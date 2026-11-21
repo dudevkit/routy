@@ -19,6 +19,32 @@ const API_TYPES = [
   { value: "responses", label: "OpenAI — Responses API (/responses)" },
 ];
 
+/** Extra headers a relay may demand before it answers — it refuses requests that do not look
+ *  like a coding CLI (403 `client_not_allowed`). Codex is the one verified end-to-end against
+ *  such a relay; the others mirror routy's own client mappings (`opencode.mjs`,
+ *  `mediaCatalog.mjs`). "Custom" is the editor below, for values you have to find yourself. */
+type HeaderRow = { name: string; value: string };
+const HEADER_PRESETS: { value: string; label: string; headers: HeaderRow[] }[] = [
+  { value: "", label: "None", headers: [] },
+  {
+    value: "codex",
+    label: "Codex CLI — verified",
+    headers: [
+      { name: "originator", value: "codex_cli_rs" },
+      { name: "user-agent", value: "codex_cli_rs/0.51.0 (Windows 10.0.19045; x86_64)" },
+    ],
+  },
+  { value: "claude", label: "Claude Code", headers: [{ name: "user-agent", value: "claude-cli/1.0.0" }] },
+  {
+    value: "opencode",
+    label: "OpenCode",
+    headers: [
+      { name: "user-agent", value: "opencode/1.18.31" },
+      { name: "x-opencode-client", value: "desktop" },
+    ],
+  },
+];
+
 /** "" stays distinguishable from 0 so a blank field means "unpriced", not "free". */
 const priceOrUndefined = (raw: string): number | undefined => {
   const t = raw.trim();
@@ -64,7 +90,72 @@ function PricingFields({
 }
 
 /**
- * The connect-in-under-60s flow: one modal, four fields, inline probe.
+ * Extra headers sent to this upstream. A row is dropped when its name is blank, so adding a
+ * row and not filling it in is harmless. Presets write rows; everything stays editable.
+ */
+function HeaderFields({
+  rows,
+  disabled,
+  onRows,
+}: {
+  rows: HeaderRow[];
+  disabled: boolean;
+  onRows: (next: HeaderRow[]) => void;
+}) {
+  const field =
+    "w-full rounded-md border border-border-subtle bg-surface-2 px-3 py-2 font-mono text-xs text-text-main placeholder:text-text-main/40 focus:ring-2 focus:ring-accent/40";
+  const set = (i: number, patch: Partial<HeaderRow>) => onRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const matches = HEADER_PRESETS.find(
+    (p) => p.value && p.headers.length === rows.length && p.headers.every((h, i) => h.name === rows[i]?.name && h.value === rows[i]?.value),
+  );
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-text-main">Custom headers</span>
+      <div className="flex items-center gap-2">
+        <select
+          className="h-8 rounded-md border border-border-subtle bg-surface-2 px-2 text-xs text-text-main"
+          disabled={disabled}
+          value={matches?.value ?? ""}
+          onChange={(e) => onRows(e.target.value ? (HEADER_PRESETS.find((p) => p.value === e.target.value)?.headers ?? []).map((h) => ({ ...h })) : [])}
+        >
+          <option value="">Preset: Custom</option>
+          {HEADER_PRESETS.filter((p) => p.value).map((p) => (
+            <option key={p.value} value={p.value}>{p.label}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="text-xs text-accent hover:underline disabled:opacity-50"
+          disabled={disabled}
+          onClick={() => onRows([...rows, { name: "", value: "" }])}
+        >
+          + Add header
+        </button>
+      </div>
+      {rows.map((r, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <input className={field} placeholder="user-agent" disabled={disabled} value={r.name} onChange={(e) => set(i, { name: e.target.value })} />
+          <input className={field} placeholder="codex_cli_rs/0.51.0" disabled={disabled} value={r.value} onChange={(e) => set(i, { value: e.target.value })} />
+          <button
+            type="button"
+            className="shrink-0 px-1 text-text-muted hover:text-danger disabled:opacity-50"
+            disabled={disabled}
+            aria-label="Remove header"
+            onClick={() => onRows(rows.filter((_, j) => j !== i))}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <p className="text-[11px] text-text-main/50">
+        Sent on every request to this upstream. Some relays reject anything that does not look like a coding CLI — pick{" "}
+        <span className="font-mono">Codex CLI</span> for a Responses-only relay.
+      </p>
+    </div>
+  );
+}
+
+/**
  * `prefix` is required by the backend (400 otherwise) and `modelCount` stays 0
  * on the saved node until a probe succeeds — Test here probes before saving.
  */
@@ -82,6 +173,7 @@ export function NodeFormModal({
   const [form, setForm] = useState<NewNodeInput>(emptyForm);
   const [priceIn, setPriceIn] = useState("");
   const [priceOut, setPriceOut] = useState("");
+  const [headerRows, setHeaderRows] = useState<HeaderRow[]>([]);
   const [test, setTest] = useState<TestState>(null);
   const testConnection = useTestConnection();
   const addNode = useAddNode();
@@ -95,6 +187,7 @@ export function NodeFormModal({
     const pricing = node?.data?.pricing;
     setPriceIn(pricing?.inputPer1M !== undefined ? String(pricing.inputPer1M) : "");
     setPriceOut(pricing?.outputPer1M !== undefined ? String(pricing.outputPer1M) : "");
+    setHeaderRows(Object.entries(node?.data?.headers ?? {}).map(([name, value]) => ({ name, value: String(value) })));
     setTest(null);
   }, [isOpen, node]);
 
@@ -102,6 +195,7 @@ export function NodeFormModal({
     setForm(emptyForm);
     setPriceIn("");
     setPriceOut("");
+    setHeaderRows([]);
     setTest(null);
     onClose();
   };
@@ -133,9 +227,12 @@ export function NodeFormModal({
     const inUsd = priceOrUndefined(priceIn);
     const outUsd = priceOrUndefined(priceOut);
     const pricing = inUsd === undefined && outUsd === undefined ? undefined : { ...(inUsd !== undefined ? { inputPer1M: inUsd } : {}), ...(outUsd !== undefined ? { outputPer1M: outUsd } : {}) };
+    // A blank name is a row the operator added and did not fill in — dropped, not sent.
+    const headers = Object.fromEntries(headerRows.filter((r) => r.name.trim()).map((r) => [r.name.trim(), r.value]));
 
     if (!node) {
-      addNode.mutate({ ...form, data: pricing ? { pricing } : undefined }, {
+      const data = { ...(pricing ? { pricing } : {}), ...(Object.keys(headers).length ? { headers } : {}) };
+      addNode.mutate({ ...form, data: Object.keys(data).length ? data : undefined }, {
         onSuccess: () => {
           toast("Provider added");
           close();
@@ -149,8 +246,8 @@ export function NodeFormModal({
       name: form.name.trim(),
       baseUrl: form.baseUrl.trim(),
       prefix: form.prefix.trim(),
-      // merges into the node's data blob, so the cached model list survives
-      data: { pricing: pricing ?? null },
+      // merges into the node's data blob, so the cached model list survives; `null` clears a key
+      data: { pricing: pricing ?? null, headers: Object.keys(headers).length ? headers : null },
     };
     if (form.apiKey.trim()) patch.apiKey = form.apiKey.trim();
     /* apiType is server-managed on OAuth nodes (the API answers 409) — only send it when
@@ -212,6 +309,11 @@ export function NodeFormModal({
           disabled={!!node?.authProvider}
           value={form.apiType ?? "openai"}
           onChange={(e) => set({ apiType: e.target.value })}
+        />
+        <HeaderFields
+          rows={headerRows}
+          disabled={addNode.isPending || updateNode.isPending}
+          onRows={setHeaderRows}
         />
         <Input
           label="API Key"

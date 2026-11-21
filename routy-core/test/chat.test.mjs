@@ -133,6 +133,23 @@ describe("chat handler (end-to-end)", () => {
     expect(events[0].completion_tokens).toBe(1);
   });
 
+  it("sends a node's custom headers upstream", async () => {
+    // Relays that gate on client identity (403 client_not_allowed) are served by these:
+    // they must reach the wire, and must not replace the credential.
+    repos.settings.update({ requireApiKey: false });
+    let seen = null;
+    stubState.handler = (req, res) => { seen = req.headers; sseResponse(res); };
+    const node = repos.nodes.byPrefix("a");
+    repos.nodes.update(node.id, {
+      data: { headers: { originator: "codex_cli_rs", "user-agent": "codex_cli_rs/0.51.0 (Windows 10.0.19045; x86_64)" } },
+    });
+
+    expect((await post({ model: "a/m1", stream: true, messages: [{ role: "user", content: "hi" }] })).status).toBe(200);
+    expect(seen.originator).toBe("codex_cli_rs");
+    expect(seen["user-agent"]).toBe("codex_cli_rs/0.51.0 (Windows 10.0.19045; x86_64)");
+    expect(seen.authorization).toBe("Bearer k-a"); // a custom header never displaces the key
+  });
+
   it("enforces api key when required", async () => {
     repos.apiKeys.create("k1");
     const r = await post({ model: "a/m1", messages: [] });

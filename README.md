@@ -32,6 +32,7 @@ in an afternoon and deliberately loud about what it is doing:
 |---|---|
 | **Formats** | OpenAI ↔ Anthropic translation in both directions, including tool calls and thinking blocks. `/v1/chat/completions`, `/v1/messages`, `/v1/models`. |
 | **Routing** | Per-provider prefixes (`mp/gpt-4o`), aliases, and combos with `fastest` / `cheapest` strategies. Unknown model ids pass through — the model list is discovery, never a gate. |
+| **Per-provider headers** | Extra headers on every request, for relays that answer only coding-CLI traffic and refuse scripts (403). Presets for Codex CLI, Claude Code and OpenCode, or your own. |
 | **Media & web** | Six non-chat kinds, one endpoint each, all behind the same keys, breakers and combos chat uses: `/v1/embeddings`, `/v1/images/generations`, `/v1/audio/speech`, `/v1/search`, `/v1/web/fetch`, `/v1/systemone` (structured classification — a situation in, typed answers out). Providers are cards in the dashboard: pick one and its endpoint, credential style and mappings are filled in. |
 | **OAuth providers** | Sign in with a browser instead of pasting a key. WorkBuddy, Antigravity and OpenAI Codex support independently managed accounts, token refresh, and reconnect/remove. Codex uses ChatGPT's backend, which can change independently of routy. |
 | **Health** | Circuit breakers with exponential backoff (60s → 30min), a stream stall watchdog, and latency memory that routes to the fastest healthy node. |

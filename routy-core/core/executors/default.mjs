@@ -94,14 +94,20 @@ export class DefaultExecutor {
 
   buildHeaders(auth = null, contentType = null, extra = null) {
     const headers = { "content-type": contentType ?? "application/json" };
+    // Per-node custom headers (`data.headers`) — a relay that gates on client identity
+    // (User-Agent / originator) is served by writing those here. Applied BEFORE the
+    // per-call `extra`, which is the media path's own credential style, so a media call
+    // still wins; and after the default credential, so a node may override it deliberately.
+    const custom = this.node.data?.headers;
+    const extraHeaders = custom && typeof custom === "object" ? custom : null;
     // Media calls arrive with their own credential style (bearer/token/x-api-key/key/none,
     // from `node.data.media.auth`) — see core/media.mjs `authHeadersFor`. `none` legitimately
     // yields no header, so this cannot be expressed as "override the default": the default
     // would still be added for a local endpoint that needs no key.
-    if (auth) return { ...headers, ...authHeadersFor(auth.style, auth.secret, auth.header ?? null), ...(extra ?? {}) };
+    if (auth) return { ...headers, ...authHeadersFor(auth.style, auth.secret, auth.header ?? null), ...(extraHeaders ?? {}), ...(extra ?? {}) };
     const key = this.connection?.credentials?.apiKey;
     if (key) headers.authorization = `Bearer ${key}`;
-    return { ...headers, ...(extra ?? {}) };
+    return { ...headers, ...(extraHeaders ?? {}), ...(extra ?? {}) };
   }
 
   /**

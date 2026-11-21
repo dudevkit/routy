@@ -630,6 +630,9 @@ export interface NodeData {
   /** non-chat kinds this node serves. REPLACED on update (not merged) — that is how a kind
    *  gets removed, which a merge could never express. */
   media?: NodeMediaConfig;
+  /** Extra headers sent to this upstream on every request — for relays that gate on client
+   *  identity (`user-agent`, `originator`). REPLACED on update; `null` clears. */
+  headers?: Record<string, string> | null;
   [k: string]: unknown;
 }
 

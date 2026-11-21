@@ -85,7 +85,15 @@ on update, so editing one field never drops the others.
 | `probeTimeoutMs` | Budget for a model probe; default 45000. Reasoning models on free tiers routinely need 5-30s to a first token |
 | `pool` | Upstream connection pool: `connections` (64), `pipelining` (1), `keepAliveTimeoutMs` (60000), `keepAliveMaxTimeoutMs` (600000), `noDelay` (true) |
 | `retry` | Per-status retry overrides, e.g. `{ "503": { "attempts": 0 } }`. Defaults mirror upstream 9Router: 502 → 3×3s, 503 → 3×2s, 429 → no retry (fall back instead); `Retry-After` is honoured |
-| `proxy` | Which pools this provider may egress through: `{ "poolIds": ["<pool id>", …], "strategy": "none" \| "round-robin" \| "random", "strict": true }`. Empty `poolIds` means every enabled pool; `strategy: "none"` with one pool is a fixed proxy |
+| `proxy` | Which pools this provider may egress through: `{ "poolIds": ["<pool id>", ...], "strategy": "none" \| "round-robin" \| "random", "strict": true }`. Empty `poolIds` means every enabled pool; `strategy: "none"` with one pool is a fixed proxy |
+| `headers` | Extra headers sent on every request to this provider, e.g. `{ "originator": "codex_cli_rs", "user-agent": "codex_cli_rs/0.51.0 (Windows 10.0.19045; x86_64)" }`. REPLACED on update (a merge could never remove one); `null` clears the set |
+
+`headers` exists for relays that gate on **client identity**: they answer `403`
+(`client_not_allowed`) unless the request looks like a coding CLI, refusing scripts and
+SDK traffic outright. Writing a CLI's `user-agent` and/or `originator` here makes routy's
+requests pass that gate. The dashboard's **Custom headers** field offers presets (Codex CLI,
+Claude Code, OpenCode) and a free-form editor; nothing else in the request is changed — the
+node's key still supplies `authorization`, and a media call's own credential style still wins.
 
 The model list used to live in this blob; it has its own table now — see **Models**.
 A provider is addressed as `<prefix>/<model>`; see **Models** and **Probes** for the
