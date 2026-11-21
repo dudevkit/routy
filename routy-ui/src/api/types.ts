@@ -137,6 +137,8 @@ export interface UpstreamNode {
   /** always masked - plaintext never returns */
   keyMasked: string;
   lastError?: string;
+  /** wire protocol routy speaks upstream: "openai" (chat) | "responses" */
+  apiType?: string;
   /** server-owned OAuth marker; present only on a CodeBuddy Intl OAuth node */
   authProvider?: string | null;
 }

@@ -157,6 +157,22 @@ describe("management API", () => {
     expect(view.models).toEqual(["m1", "m2", "m3"]);
   });
 
+  it("exposes and updates a node's apiType (chat ⇄ responses)", async () => {
+    // A responses-protocol relay refuses /chat/completions, so the operator picks the
+    // dialect in the edit form — which reads the current value and PUTs a new one.
+    const created = await post("/api/nodes", { name: "Resp", baseUrl: `http://127.0.0.1:${stubPort}/v1`, apiKey: "k", prefix: "rs", apiType: "responses" });
+    expect(created.body.apiType).toBe("responses");
+    expect((await get("/api/nodes")).body[0].apiType).toBe("responses");
+
+    const swapped = await put(`/api/nodes/${created.body.id}`, { apiType: "openai" });
+    expect(swapped.status).toBe(200);
+    expect(swapped.body.apiType).toBe("openai");
+
+    // Omitted on create = the OpenAI chat default, so the view never returns undefined.
+    const plain = await post("/api/nodes", { name: "Plain", baseUrl: `http://127.0.0.1:${stubPort}/v1`, apiKey: "k", prefix: "pl" });
+    expect(plain.body.apiType).toBe("openai");
+  });
+
   it("returns usage stats shape and failures", async () => {
     repos.usage.record({ nodeId: "n1", model: "m", status: "ok", promptTokens: 10, completionTokens: 5, ttftMs: 42 });
     repos.usage.record({ nodeId: "n1", model: "m", status: "error", errorCode: "upstream_error", promptTokens: 3, ttftMs: 9 });

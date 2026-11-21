@@ -6,10 +6,18 @@ import { CheckCircle, Plus, WifiHigh, XCircle } from "./icons";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
 import { Modal } from "./ui/Modal";
+import { Select } from "./ui/Select";
 import { useToast } from "./ui/Toast";
 
-const emptyForm: NewNodeInput = { name: "", baseUrl: "", apiKey: "", prefix: "" };
+const emptyForm: NewNodeInput = { name: "", baseUrl: "", apiKey: "", prefix: "", apiType: "openai" };
 type TestState = null | "testing" | TestResult;
+
+/** Wire format routy speaks to the upstream. Both are OpenAI-shaped; only the path and
+ *  the request/response dialect differ (`core/executors/default.mjs` buildUrl). */
+const API_TYPES = [
+  { value: "openai", label: "OpenAI — Chat Completions (/chat/completions)" },
+  { value: "responses", label: "OpenAI — Responses API (/responses)" },
+];
 
 /** "" stays distinguishable from 0 so a blank field means "unpriced", not "free". */
 const priceOrUndefined = (raw: string): number | undefined => {
@@ -83,7 +91,7 @@ export function NodeFormModal({
   /* one modal for both flows: reseed when the target changes */
   useEffect(() => {
     if (!isOpen) return;
-    setForm(node ? { name: node.name, baseUrl: node.baseUrl, apiKey: "", prefix: node.prefix } : emptyForm);
+    setForm(node ? { name: node.name, baseUrl: node.baseUrl, apiKey: "", prefix: node.prefix, apiType: node.apiType ?? "openai" } : emptyForm);
     const pricing = node?.data?.pricing;
     setPriceIn(pricing?.inputPer1M !== undefined ? String(pricing.inputPer1M) : "");
     setPriceOut(pricing?.outputPer1M !== undefined ? String(pricing.outputPer1M) : "");
@@ -145,6 +153,9 @@ export function NodeFormModal({
       data: { pricing: pricing ?? null },
     };
     if (form.apiKey.trim()) patch.apiKey = form.apiKey.trim();
+    /* apiType is server-managed on OAuth nodes (the API answers 409) — only send it when
+       the operator actually changed it, and never for a node that owns its own protocol. */
+    if ((form.apiType ?? "openai") !== (node.apiType ?? "openai")) patch.apiType = form.apiType;
     updateNode.mutate(
       { id: node.id, patch },
       {
@@ -193,6 +204,14 @@ export function NodeFormModal({
           value={form.baseUrl}
           onChange={(e) => set({ baseUrl: e.target.value })}
           placeholder="https://api.example.com/v1"
+        />
+        <Select
+          label="API type"
+          hint="Wire format routy speaks upstream. Responses API sends to /responses; pick it for a relay that refuses /chat/completions."
+          options={API_TYPES}
+          disabled={!!node?.authProvider}
+          value={form.apiType ?? "openai"}
+          onChange={(e) => set({ apiType: e.target.value })}
         />
         <Input
           label="API Key"

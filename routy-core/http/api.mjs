@@ -221,6 +221,9 @@ function nodeView(repos, node, now = Date.now()) {
     })(),
     keyMasked: maskKey(primary?.credentials?.apiKey),
     lastError: breaker?.lastError || undefined,
+    /** Wire protocol routy speaks upstream ("openai" chat | "responses"). The edit form
+     *  reads it to show the current value; the OAuth flow owns it on server-managed nodes. */
+    apiType: node.apiType ?? "openai",
     // Server-owned OAuth marker (present only for a CodeBuddy Intl OAuth node). The UI
     // uses it to render the OAuth management surface; it is never client-settable.
     authProvider: node.data?.authProvider ?? null,
