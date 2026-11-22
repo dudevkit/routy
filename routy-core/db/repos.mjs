@@ -3,6 +3,7 @@
 import crypto from "node:crypto";
 import { createCacheLoader, createMapCache } from "./cache.mjs";
 import { createApiKey } from "../lib/auth.mjs";
+import { redactUpstreamText } from "../lib/mask.mjs";
 import { CHAT_KIND } from "../core/media.mjs";
 
 const uuid = () => crypto.randomUUID();
@@ -43,13 +44,9 @@ function safeLastHitMessage(value, credentials) {
       }
     }
   }
-  text = text
-    .replace(/https?:\/\/[^\s"'<>]+/gi, "[URL REDACTED]")
-    .replace(/\bBearer\s+[^\s,;"'}]+/gi, "Bearer [REDACTED]")
-    .replace(/\b(sk|pk|rk|api)[-_][a-z0-9_-]{8,}\b/gi, "[REDACTED]")
-    .replace(/(["']?(?:authorization|proxy-authorization|api[-_]?key|x-api-key|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|password|passwd|key)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s,;&}\]]+)/gi, "$1[REDACTED]")
-    .replace(/[\x00-\x1f\x7f]+/g, " ");
-  return text.slice(0, 500);
+  // The trailing pass is shared with the executors, which need the same sanitizing when they
+  // put a provider's own sentence into an error message (lib/mask.mjs).
+  return redactUpstreamText(text, { max: 500 });
 }
 
 export function createRepos(db, { flushIntervalMs = 250, flushBatchSize = 50, breakerFlushMs = 1000 } = {}) {

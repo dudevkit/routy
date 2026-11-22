@@ -31,6 +31,27 @@ describe("Codex executor", () => {
     } finally { execute.mockRestore(); }
   });
 
+  it("asks for encrypted reasoning only when the request asks for reasoning", () => {
+    // store:false keeps nothing server-side, so the reasoning a caller asks for can only come
+    // back encrypted and be replayed next turn — the backend refuses the request without it.
+    expect(transformCodexBody("m", { input: [] }).include).toBeUndefined();
+    expect(transformCodexBody("m", { input: [], reasoning: { effort: "high" } }).include).toEqual(["reasoning.encrypted_content"]);
+    // A caller (or the translator) that already asked for it is not doubled.
+    expect(transformCodexBody("m", { input: [], reasoning: { effort: "high" }, include: ["reasoning.encrypted_content"] }).include)
+      .toEqual(["reasoning.encrypted_content"]);
+  });
+
+  it("keeps the upstream error body, sanitized, instead of a bare status", () => {
+    // A bare "Codex upstream HTTP 400" is why this failure could not be diagnosed — and why the
+    // param-retry saw every Codex 400 as opaque and always spent a retry.
+    const message = new CodexExecutor(node, connection).errorMessage(400, "Unsupported parameter: reasoning — see https://x.example/p then Authorization: Bearer sk-abcdefgh1234");
+    expect(message).toContain("Codex upstream HTTP 400:");
+    expect(message).toContain("Unsupported parameter: reasoning");
+    expect(message).not.toContain("sk-abcdefgh1234");
+    expect(message).not.toContain("https://x.example/p");
+    expect(new CodexExecutor(node, connection).errorMessage(400, "")).toBe("Codex upstream HTTP 400");
+  });
+
   it.each([FORMATS.OPENAI, FORMATS.CLAUDE])("converts %s tools into Responses input", (format) => {
     const body = format === FORMATS.OPENAI
       ? { messages: [{ role: "user", content: "hi" }], tools: [{ type: "function", function: { name: "lookup", parameters: { type: "object", properties: {} } } }] }
