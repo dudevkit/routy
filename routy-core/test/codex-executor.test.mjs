@@ -52,6 +52,34 @@ describe("Codex executor", () => {
     expect(new CodexExecutor(node, connection).errorMessage(400, "")).toBe("Codex upstream HTTP 400");
   });
 
+  it("converts the caller's reasoning_effort into the shape the backend accepts", () => {
+    // Measured on the wire: the ChatGPT backend answers
+    // 400 {"detail":"Unsupported parameter: reasoning_effort"} — the translation tree re-emits
+    // the OpenAI parameter name for this wire, so the conversion belongs at this boundary.
+    const translated = translateRequest(FORMATS.OPENAI, FORMATS.OPENAI_RESPONSES, "gpt-6.1-terra", { messages: [{ role: "user", content: "hi" }], reasoning_effort: "high" }, true);
+    expect(translated.reasoning_effort).toBe("high"); // the leak this test pins
+
+    const body = transformCodexBody("gpt-6.1-terra", translated);
+    expect(body.reasoning_effort).toBeUndefined();
+    expect(body.include).toEqual(["reasoning.encrypted_content"]);
+    // terra is a "lite" model: a context, never a summary (9Router's registry).
+    expect(body.reasoning).toEqual({ effort: "high", context: "all_turns" });
+
+    // Every other codex model takes the summary form instead.
+    const plain = transformCodexBody("gpt-5.6-terra", { input: [], reasoning_effort: "high" });
+    expect(plain.reasoning).toEqual({ effort: "high", summary: "auto" });
+    // The [1m] marker is context, not identity — it must not change which family a model is in.
+    expect(transformCodexBody("gpt-6.1-terra[1m]", { input: [], reasoning_effort: "high" }).reasoning)
+      .toEqual({ effort: "high", context: "all_turns" });
+  });
+
+  it("asks for no reasoning when the caller asks for none", () => {
+    const body = transformCodexBody("m", { input: [], reasoning_effort: "none" });
+    expect(body.reasoning_effort).toBeUndefined();
+    expect(body.reasoning).toBeUndefined();
+    expect(body.include).toBeUndefined();
+  });
+
   it.each([FORMATS.OPENAI, FORMATS.CLAUDE])("converts %s tools into Responses input", (format) => {
     const body = format === FORMATS.OPENAI
       ? { messages: [{ role: "user", content: "hi" }], tools: [{ type: "function", function: { name: "lookup", parameters: { type: "object", properties: {} } } }] }
