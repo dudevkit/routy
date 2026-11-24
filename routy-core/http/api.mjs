@@ -4,6 +4,7 @@
 import { json, readBody } from "../lib/router.mjs";
 import { COMBO_STRATEGIES, listModels, toolModelIds } from "../core/routing.mjs";
 import { CHAT_KIND, MEDIA_KIND_IDS, authStyleFor, expandKind, mediaConfigOf, mediaKindsOf, mediaUrlFor, validateMediaConfig } from "../core/media.mjs";
+import { validateThinking } from "../core/thinking.mjs";
 import { catalogFor, catalogMeta, presetFor } from "../core/mediaCatalog.mjs";
 import { PROVIDERS } from "../core/providerCatalog.mjs";
 import { isKeyless } from "../core/keyless.mjs";
@@ -224,6 +225,8 @@ function nodeView(repos, node, now = Date.now()) {
     /** Wire protocol routy speaks upstream ("openai" chat | "responses"). The edit form
      *  reads it to show the current value; the OAuth flow owns it on server-managed nodes. */
     apiType: node.apiType ?? "openai",
+    /** The node's thinking policy ("auto" | "off" | a level) — applied to every request. */
+    thinking: node.data?.thinking ?? null,
     // Server-owned OAuth marker (present only for a CodeBuddy Intl OAuth node). The UI
     // uses it to render the OAuth management surface; it is never client-settable.
     authProvider: node.data?.authProvider ?? null,
@@ -387,6 +390,11 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       if (!checked.ok) return json(res, 400, { error: { message: "bad_request", detail: checked.detail } });
       input.data = { ...input.data, media: checked.value };
     }
+    if (input.data?.thinking !== undefined) {
+      const checked = validateThinking(input.data.thinking);
+      if (!checked.ok) return json(res, 400, { error: { message: "bad_request", detail: checked.detail } });
+      input.data = { ...input.data, thinking: checked.value };
+    }
     // The OAuth provider marker is server-owned — only the OAuth flow may set it. A generic
     // create that carried it would let a client mint an OAuth-looking node the executor
     // would then trust.
@@ -449,6 +457,11 @@ export function buildApiRoutes(repos, cfg, version, hooks = {}) {
       const checked = validateMediaConfig(input.data.media);
       if (!checked.ok) return json(res, 400, { error: { message: "bad_request", detail: checked.detail } });
       patch.data = { ...input.data, media: checked.value };
+    }
+    if (input.data?.thinking !== undefined) {
+      const checked = validateThinking(input.data.thinking);
+      if (!checked.ok) return json(res, 400, { error: { message: "bad_request", detail: checked.detail } });
+      patch.data = { ...(patch.data ?? input.data), thinking: checked.value };
     }
     const node = repos.nodes.update(p.id, patch);
     if (!node) return json(res, 404, { error: { message: "not_found" } });

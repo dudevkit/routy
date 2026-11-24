@@ -139,6 +139,8 @@ export interface UpstreamNode {
   lastError?: string;
   /** wire protocol routy speaks upstream: "openai" (chat) | "responses" */
   apiType?: string;
+  /** the node's thinking policy: null/"auto", "off", or a forced level */
+  thinking?: string | null;
   /** server-owned OAuth marker; present only on a CodeBuddy Intl OAuth node */
   authProvider?: string | null;
 }
@@ -633,6 +635,9 @@ export interface NodeData {
   /** Extra headers sent to this upstream on every request — for relays that gate on client
    *  identity (`user-agent`, `originator`). REPLACED on update; `null` clears. */
   headers?: Record<string, string> | null;
+  /** The node's thinking policy: `auto` (whatever the client sends — the default, stored as
+   *  null), `off` (send no reasoning), or a level (`minimal`…`max`) forced on every request. */
+  thinking?: string | null;
   [k: string]: unknown;
 }
 

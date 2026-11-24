@@ -31,6 +31,7 @@ import { translateRequest, needsTranslation } from "../translate/index.js";
 import { FORMATS, detectFormatByEndpoint } from "../translate/formats.js";
 import { detectFormat } from "../translate/deps/detectFormat.js";
 import { compressMessages, formatRtkLog } from "../rtk/index.js";
+import { applyThinking } from "../thinking.mjs";
 import { STREAM_IDLE_TIMEOUT_MS, UPSTREAM_429_MEMO_MS } from "../limits.mjs";
 import { colorForRequestId, detectClient, nextSeqId } from "../../lib/lifecycle.mjs";
 
@@ -376,7 +377,20 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
         // provider-native thinking field from the source, so the retry would resend the exact
         // request that just failed while the log reported a successful drop.
         const sourceBody = retryBody ?? body;
-        let outbound = { ...sourceBody, model: r.model };
+        // The node's own thinking policy. Set on the node because the CLIENT is the wrong place:
+        // a caller that sends a level this upstream refuses gets a 400 it cannot diagnose, and
+        // one provider's level vocabulary is not another's. Applied to the source body, before
+        // translation, so every target format derives its own native field from it — and the
+        // passthrough path (source body IS the outbound body) is covered by the same call.
+        const thinkApplied = applyThinking(sourceBody, r.node.data?.thinking);
+        const thinkingPolicySet = thinkApplied !== sourceBody;
+        if (thinkingPolicySet) {
+          log.info("THINK", `${r.node.prefix} sets thinking to ${r.node.data.thinking === "off" ? "off (no reasoning sent)" : r.node.data.thinking} — overriding the caller`, {
+            model: r.model, requested: sourceBody.reasoning_effort ?? sourceBody.reasoning ?? sourceBody.thinking ?? null,
+          });
+        }
+        const policyBody = thinkingPolicySet ? thinkApplied : sourceBody;
+        let outbound = { ...policyBody, model: r.model };
         let toolNameMap = null;
         let customToolNames = null;
         if (translate) {
@@ -386,7 +400,7 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             break;
           }
           try {
-            outbound = translateRequest(sourceFormat, targetFormat, r.model, structuredClone(sourceBody), stream, connection?.credentials || {}, null, null, [], null, null);
+            outbound = translateRequest(sourceFormat, targetFormat, r.model, structuredClone(policyBody), stream, connection?.credentials || {}, null, null, [], null, null);
             if (!outbound) throw new Error("translateRequest returned falsy");
             toolNameMap = outbound._toolNameMap; delete outbound._toolNameMap;
             customToolNames = outbound._customToolNames; delete outbound._customToolNames;
@@ -541,7 +555,10 @@ export function createChatHandler(repos, { streamIdleTimeoutMs } = {}) {
             // ("MaaS reject: reasoning_effort medium"), the caller can fix it — retrying would
             // mask a real diagnosis behind a silent rewrite.
             const opaque = strippable.every((k) => !detailLower.includes(k));
-            if (!paramRetryUsed && opaque && strippable.length > 0 && result.status === 400) {
+            // A node whose thinking policy is set does not qualify: the requeued body is rebuilt
+            // from the source and the policy re-applies to it, so the retry would send the very
+            // request that just failed while the log reported a drop that never happened.
+            if (!paramRetryUsed && opaque && strippable.length > 0 && result.status === 400 && !thinkingPolicySet) {
               paramRetryUsed = true;
               const strippedSource = { ...sourceBody };
               const dropped = {};

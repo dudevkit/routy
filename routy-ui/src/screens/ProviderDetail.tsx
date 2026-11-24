@@ -26,6 +26,7 @@ import {
 import type { KeyTestResult, ModelBulkAction, ModelBulkResult, NodeConnection, NodeModel, UpstreamNode } from "../api/types";
 import { toastApiError } from "../utils/errors";
 import { fmtMs } from "../utils/format";
+import { THINKING_OPTIONS } from "../utils/thinking";
 import { cn } from "../utils/cn";
 import {
   ArrowLeft, ArrowsClockwise, Check, CheckCircle, CheckSquare, DownloadSimple, PencilSimple,
@@ -255,6 +256,7 @@ export function ModelsTab({ node }: { node: UpstreamNode }) {
   const importModels = useImportModels();
   const testModel = useTestModel();
   const bulkModels = useBulkModels();
+  const updateNode = useUpdateNode();
   const [draft, setDraft] = useState("");
   const [testingId, setTestingId] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -371,6 +373,32 @@ export function ModelsTab({ node }: { node: UpstreamNode }) {
             Import from provider
           </Button>
           <span className="text-xs text-text-subtle sm:text-[11px]">optional — add ids by hand instead</span>
+
+          {/* The reasoning level this provider is asked for, right where its models are — the
+              operator's answer to a client whose own level the upstream refuses. */}
+          <select
+            aria-label="Thinking level"
+            title="Applies to every request to this provider. Force replaces what the client sends."
+            value={node.thinking ?? "auto"}
+            disabled={updateNode.isPending}
+            onChange={(e) => {
+              const mode = e.target.value;
+              updateNode.mutate(
+                { id: node.id, patch: { data: { thinking: mode === "auto" ? null : mode } } },
+                {
+                  onSuccess: () => toast(`Thinking: ${mode}`),
+                  onError: (err) => toastApiError(toast, err, "Failed to set the thinking level"),
+                },
+              );
+            }}
+            className="h-8 rounded-md border border-border-subtle bg-surface-2 px-2 text-xs text-text-main focus:ring-2 focus:ring-accent/40 disabled:opacity-50 sm:h-7"
+          >
+            {THINKING_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
 
           <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
             <input

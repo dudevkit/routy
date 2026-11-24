@@ -150,6 +150,35 @@ describe("chat handler (end-to-end)", () => {
     expect(seen.authorization).toBe("Bearer k-a"); // a custom header never displaces the key
   });
 
+  it("forces the node's thinking level on the upstream request", async () => {
+    // The operator's answer to a client whose own level the upstream refuses: routy replaces it.
+    repos.settings.update({ requireApiKey: false });
+    const node = repos.nodes.byPrefix("a");
+    repos.nodes.update(node.id, { data: { thinking: "low" } });
+
+    const r = await post({ model: "a/m1", stream: true, reasoning_effort: "high", messages: [{ role: "user", content: "hi" }] });
+    expect(r.status).toBe(200);
+    expect(stubState.requests).toHaveLength(1); // the policy removes the reason to retry
+    expect(stubState.requests[0].reasoning_effort).toBe("low");
+  });
+
+  it("sends no reasoning at all when the node's thinking is off", async () => {
+    repos.settings.update({ requireApiKey: false });
+    const node = repos.nodes.byPrefix("a");
+    repos.nodes.update(node.id, { data: { thinking: "off" } });
+
+    const r = await post({ model: "a/m1", stream: true, reasoning_effort: "high", messages: [{ role: "user", content: "hi" }] });
+    expect(r.status).toBe(200);
+    expect(stubState.requests[0].reasoning_effort).toBeUndefined();
+  });
+
+  it("leaves the caller's level alone when the node has no policy", async () => {
+    repos.settings.update({ requireApiKey: false });
+    const r = await post({ model: "a/m1", stream: true, reasoning_effort: "high", messages: [{ role: "user", content: "hi" }] });
+    expect(r.status).toBe(200);
+    expect(stubState.requests[0].reasoning_effort).toBe("high");
+  });
+
   it("enforces api key when required", async () => {
     repos.apiKeys.create("k1");
     const r = await post({ model: "a/m1", messages: [] });

@@ -186,6 +186,25 @@ describe("management API", () => {
     expect(plain.body.apiType).toBe("openai");
   });
 
+  it("validates, stores and clears a node's thinking policy", async () => {
+    const created = await post("/api/nodes", { name: "Think", baseUrl: `http://127.0.0.1:${stubPort}/v1`, apiKey: "k", prefix: "tk", data: { thinking: "high" } });
+    expect(created.status).toBe(201);
+    expect(created.body.thinking).toBe("high");
+    expect(created.body.data.thinking).toBe("high");
+
+    // A typo must not sit on the node looking applied while the gateway ignores it.
+    expect((await post("/api/nodes", { name: "Bad", baseUrl: `http://127.0.0.1:${stubPort}/v1`, apiKey: "k", prefix: "bd", data: { thinking: "ultra" } })).status).toBe(400);
+
+    // null is "no policy", which is how the form's Auto clears it.
+    const cleared = await put(`/api/nodes/${created.body.id}`, { data: { thinking: null } });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.thinking).toBeNull();
+
+    const set = await put(`/api/nodes/${created.body.id}`, { data: { thinking: "off" } });
+    expect(set.body.thinking).toBe("off");
+    expect(set.body.data.thinking).toBe("off");
+  });
+
   it("returns usage stats shape and failures", async () => {
     repos.usage.record({ nodeId: "n1", model: "m", status: "ok", promptTokens: 10, completionTokens: 5, ttftMs: 42 });
     repos.usage.record({ nodeId: "n1", model: "m", status: "error", errorCode: "upstream_error", promptTokens: 3, ttftMs: 9 });

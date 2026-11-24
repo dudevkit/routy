@@ -87,6 +87,7 @@ on update, so editing one field never drops the others.
 | `retry` | Per-status retry overrides, e.g. `{ "503": { "attempts": 0 } }`. Defaults mirror upstream 9Router: 502 → 3×3s, 503 → 3×2s, 429 → no retry (fall back instead); `Retry-After` is honoured |
 | `proxy` | Which pools this provider may egress through: `{ "poolIds": ["<pool id>", ...], "strategy": "none" \| "round-robin" \| "random", "strict": true }`. Empty `poolIds` means every enabled pool; `strategy: "none"` with one pool is a fixed proxy |
 | `headers` | Extra headers sent on every request to this provider, e.g. `{ "originator": "codex_cli_rs", "user-agent": "codex_cli_rs/0.51.0 (Windows 10.0.19045; x86_64)" }`. REPLACED on update (a merge could never remove one); `null` clears the set |
+| `thinking` | The reasoning level this provider is asked for: `"off"` sends none, a level (`"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`) is sent on every request in place of the caller's own, `null`/absent keeps the caller's (`auto`). Applies to the source body, so it reaches every target format |
 
 `headers` exists for relays that gate on **client identity**: they answer `403`
 (`client_not_allowed`) unless the request looks like a coding CLI, refusing scripts and
@@ -98,6 +99,15 @@ node's key still supplies `authorization`, and a media call's own credential sty
 **Probes send them too** — a *Test Connection* (models list) and a per-model test both carry
 `headers`, so a relay that would reject a bare script does not report a healthy provider as
 broken.
+
+`thinking` exists because the **client is the wrong place** for a reasoning level. Providers
+disagree about the vocabulary, and a caller's own value can be one the upstream refuses — a
+ChatGPT/Codex backend answers `400` to a reasoning request whose shape it does not serve, which
+is an error the client cannot diagnose and the operator cannot fix from the client. `off` is the
+one setting every provider accepts, and it is the escape hatch for a client whose level is
+rejected; a forced level is sent instead of the caller's, and the log says so (`THINK`). The
+policy is applied before translation, so it is honoured on a Claude, Gemini or Responses
+upstream and on the passthrough path alike.
 
 The model list used to live in this blob; it has its own table now — see **Models**.
 A provider is addressed as `<prefix>/<model>`; see **Models** and **Probes** for the

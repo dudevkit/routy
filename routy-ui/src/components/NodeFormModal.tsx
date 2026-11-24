@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAddNode, useTestConnection, useUpdateNode } from "../api/hooks";
 import { toastApiError } from "../utils/errors";
+import { THINKING_OPTIONS } from "../utils/thinking";
 import type { NewNodeInput, TestResult, UpstreamNode } from "../api/types";
 import { CheckCircle, Plus, WifiHigh, XCircle } from "./icons";
 import { Button } from "./ui/Button";
@@ -174,6 +175,7 @@ export function NodeFormModal({
   const [priceIn, setPriceIn] = useState("");
   const [priceOut, setPriceOut] = useState("");
   const [headerRows, setHeaderRows] = useState<HeaderRow[]>([]);
+  const [thinking, setThinking] = useState("auto");
   const [test, setTest] = useState<TestState>(null);
   const testConnection = useTestConnection();
   const addNode = useAddNode();
@@ -188,6 +190,7 @@ export function NodeFormModal({
     setPriceIn(pricing?.inputPer1M !== undefined ? String(pricing.inputPer1M) : "");
     setPriceOut(pricing?.outputPer1M !== undefined ? String(pricing.outputPer1M) : "");
     setHeaderRows(Object.entries(node?.data?.headers ?? {}).map(([name, value]) => ({ name, value: String(value) })));
+    setThinking(node?.thinking ?? "auto");
     setTest(null);
   }, [isOpen, node]);
 
@@ -196,6 +199,7 @@ export function NodeFormModal({
     setPriceIn("");
     setPriceOut("");
     setHeaderRows([]);
+    setThinking("auto");
     setTest(null);
     onClose();
   };
@@ -231,9 +235,16 @@ export function NodeFormModal({
     const inUsd = priceOrUndefined(priceIn);
     const outUsd = priceOrUndefined(priceOut);
     const pricing = inUsd === undefined && outUsd === undefined ? undefined : { ...(inUsd !== undefined ? { inputPer1M: inUsd } : {}), ...(outUsd !== undefined ? { outputPer1M: outUsd } : {}) };
+    // "auto" is the absence of a policy, so it is stored as null — the same way `media` and
+    // `headers` clear.
+    const thinkingValue = thinking === "auto" ? null : thinking;
 
     if (!node) {
-      const data = { ...(pricing ? { pricing } : {}), ...(Object.keys(headers).length ? { headers } : {}) };
+      const data = {
+        ...(pricing ? { pricing } : {}),
+        ...(Object.keys(headers).length ? { headers } : {}),
+        ...(thinkingValue ? { thinking: thinkingValue } : {}),
+      };
       addNode.mutate({ ...form, data: Object.keys(data).length ? data : undefined }, {
         onSuccess: () => {
           toast("Provider added");
@@ -249,7 +260,7 @@ export function NodeFormModal({
       baseUrl: form.baseUrl.trim(),
       prefix: form.prefix.trim(),
       // merges into the node's data blob, so the cached model list survives; `null` clears a key
-      data: { pricing: pricing ?? null, headers: Object.keys(headers).length ? headers : null },
+      data: { pricing: pricing ?? null, headers: Object.keys(headers).length ? headers : null, thinking: thinkingValue },
     };
     if (form.apiKey.trim()) patch.apiKey = form.apiKey.trim();
     /* apiType is server-managed on OAuth nodes (the API answers 409) — only send it when
@@ -311,6 +322,13 @@ export function NodeFormModal({
           disabled={!!node?.authProvider}
           value={form.apiType ?? "openai"}
           onChange={(e) => set({ apiType: e.target.value })}
+        />
+        <Select
+          label="Thinking level"
+          hint="Applies to every request to this provider. “Force” replaces what the client sends — pick one when a client's own level is refused upstream."
+          options={THINKING_OPTIONS}
+          value={thinking}
+          onChange={(e) => setThinking(e.target.value)}
         />
         <HeaderFields
           rows={headerRows}
