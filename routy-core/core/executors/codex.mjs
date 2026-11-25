@@ -34,7 +34,7 @@ export function transformCodexBody(model, body) {
   const effort = typeof requested === "string" && requested.toLowerCase() !== "none" ? requested : null;
   if (effort) {
     out.reasoning = CODEX_LITE_RE.test(upstreamModel)
-      ? { effort, context: "all_turns" }
+      ? { effort, context: "all_turns", summary: out.reasoning?.summary ?? "auto" }
       : { ...(out.reasoning ?? {}), effort, summary: out.reasoning?.summary ?? "auto" };
   } else if (out.reasoning) {
     delete out.reasoning.effort;

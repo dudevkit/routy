@@ -62,15 +62,29 @@ describe("Codex executor", () => {
     const body = transformCodexBody("gpt-6.1-terra", translated);
     expect(body.reasoning_effort).toBeUndefined();
     expect(body.include).toEqual(["reasoning.encrypted_content"]);
-    // terra is a "lite" model: a context, never a summary (9Router's registry).
-    expect(body.reasoning).toEqual({ effort: "high", context: "all_turns" });
+    // terra is a "lite" model: it carries a context instead of the summary form — but it still
+    // asks for a summary, because that is the only channel the backend sends readable thinking
+    // on (see the test below).
+    expect(body.reasoning).toEqual({ effort: "high", context: "all_turns", summary: "auto" });
 
     // Every other codex model takes the summary form instead.
     const plain = transformCodexBody("gpt-5.6-terra", { input: [], reasoning_effort: "high" });
     expect(plain.reasoning).toEqual({ effort: "high", summary: "auto" });
     // The [1m] marker is context, not identity — it must not change which family a model is in.
     expect(transformCodexBody("gpt-6.1-terra[1m]", { input: [], reasoning_effort: "high" }).reasoning)
-      .toEqual({ effort: "high", context: "all_turns" });
+      .toEqual({ effort: "high", context: "all_turns", summary: "auto" });
+  });
+
+  it("asks for a reasoning summary on the lite family too", () => {
+    // Measured against the live backend: with only `{ effort, context }` the lite models
+    // (gpt-6.x sol/terra/luna) returned no readable thinking at all — the request completed,
+    // the usage showed the tokens had been spent, and the client saw nothing. Asking for the
+    // summary alongside the context is what makes the thinking visible as reasoning_content.
+    const lite = transformCodexBody("gpt-6.1-terra", { input: [], reasoning_effort: "high" });
+    expect(lite.reasoning.summary).toBe("auto");
+    // A caller that asked for the summary form explicitly keeps it.
+    expect(transformCodexBody("gpt-6.1-terra", { input: [], reasoning: { effort: "high", summary: "concise" } }).reasoning.summary)
+      .toBe("concise");
   });
 
   it("asks for no reasoning when the caller asks for none", () => {
